@@ -1,16 +1,26 @@
 from search import semantic_search
 
-# print("FAISS idx:", id, "file_id:", file_id)
+print("IntelliFile Semantic Search")
+print("Type your query or 'exit' to quit.")
 
 while True:
-    q = input("\n Search query (or 'exit'): ")
-    if q.lower() == "exit":
+    query = input("\nSearch query (or 'exit'): ").strip()
+
+    if query.lower() == "exit":
+        print("Exiting...")
         break
-    
-    results = semantic_search(q, top_k=1)
-    
-    if results:
-        path, score = results[0]
-        print(f"1. {path} (Score: {score:.4f})")
-    else:
-        print("No results found.")
+
+    if not query:
+        print("Please enter a valid query.")
+        continue
+
+    results = semantic_search(query, top_k=20)
+
+    if not results:
+        print("No relevant files found.")
+        continue
+
+    print("\nTop Results:")
+    for i, (path, score) in enumerate(results, 1):
+        print(f"{i}. {path}")
+        print(f"   Similarity score: {score:.3f}")
