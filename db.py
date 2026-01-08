@@ -11,8 +11,17 @@ def init_db():
                 CREATE TABLE IF NOT EXISTS files (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     path TEXT UNIQUE,
-                    content TEXT
+                    filename TEXT,
+                    modified_time INTEGER
                 );
+                ''')
+    cur.execute('''
+                CREATE TABLE IF NOT EXISTS chunks(
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    file_id INTEGER,
+                    chunk_index INTEGER,
+                    FOREIGN KEY(file_id) REFERENCES files(id)
+                )
                 ''')
     
     conn.commit()
