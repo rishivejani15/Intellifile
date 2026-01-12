@@ -102,7 +102,7 @@ Search uses normalized embeddings and FAISS L2 distances, converted to a similar
 3. `search.py`: loads the model and FAISS index, embeds the query, retrieves nearest chunk vectors, maps them back to files, and aggregates the best score per file.
 4. `query.py`: lightweight CLI loop that prints ranked results.
 
-## Notes & Limitations
+## Limitations
 - Chunking is word-count based with no overlap; consider overlap for better recall on long passages.
 - `build_index.py` re-extracts and re-chunks text when embedding; for very large corpora, consider caching extracted text/chunks.
 - The DB currently doesn’t handle updates/deletes; a future improvement is tracking `modified_time` to refresh affected chunks.
