@@ -112,5 +112,3 @@ Search uses normalized embeddings and FAISS L2 distances, converted to a similar
 - Empty or short files: files with less than 50 characters are skipped.
 - No results: try lowering `min_similarity` in `semantic_search(query, min_similarity=0.2)`.
 
-## License
-No license specified. Add one if you plan to distribute.
