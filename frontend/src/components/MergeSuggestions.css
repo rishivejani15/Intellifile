@@ -1,0 +1,86 @@
+.suggestions {
+  margin-top: 20px;
+}
+
+.suggestions h2 {
+  margin-bottom: 20px;
+  color: #333;
+}
+
+.suggestions-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 15px;
+}
+
+.suggestion-card {
+  border: 2px solid #e0e0e0;
+  border-radius: 8px;
+  padding: 20px;
+  cursor: pointer;
+  transition: all 0.3s;
+  background: #fafafa;
+}
+
+.suggestion-card:hover {
+  border-color: #667eea;
+  box-shadow: 0 2px 10px rgba(102, 126, 234, 0.2);
+  background: white;
+}
+
+.suggestion-card.selected {
+  border-color: #667eea;
+  background: #f0f0ff;
+  box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
+}
+
+.suggestion-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.suggestion-header h3 {
+  margin: 0;
+  color: #333;
+}
+
+.score {
+  background: #667eea;
+  color: white;
+  padding: 4px 10px;
+  border-radius: 20px;
+  font-size: 0.9em;
+  font-weight: bold;
+}
+
+.description {
+  margin: 10px 0;
+  color: #666;
+  font-size: 0.95em;
+}
+
+.suggestion-meta {
+  display: flex;
+  gap: 10px;
+  margin: 10px 0;
+  font-size: 0.85em;
+  color: #999;
+}
+
+.select-btn {
+  width: 100%;
+  padding: 10px;
+  background: #667eea;
+  color: white;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  font-weight: bold;
+  transition: background 0.3s;
+}
+
+.select-btn:hover {
+  background: #764ba2;
+}
