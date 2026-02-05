@@ -1,12 +1,114 @@
 const { app, BrowserWindow, Menu, ipcMain, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const { execSync } = require('child_process');
 
 // Check if running in development mode (force true for now since React dev server is running)
 const isDev = true;
 
 // Supported file extensions
 const EDITABLE_EXTENSIONS = ['.py', '.js', '.java', '.cpp', '.c', '.go', '.txt', '.md', '.json', '.xml', '.html', '.css', '.ts', '.jsx', '.tsx'];
+
+// Windows system files and folders to hide from users
+const SYSTEM_FILES_TO_HIDE = [
+  'config.msi',
+  'dumpstack.log',
+  'dumpstack.log.tmp',
+  'hiberfil.sys',
+  'pagefile.sys',
+  'swapfile.sys',
+  'bootmgr',
+  'bootsect.bak',
+  'boot.ini',
+  'ntldr',
+  'ntdetect.com',
+  'io.sys',
+  'msdos.sys',
+  'autoexec.bat',
+  'config.sys'
+];
+
+const SYSTEM_FOLDERS_TO_HIDE = [
+  'recovery',
+  'system volume information',
+  '$recycle.bin',
+  'perflogs',
+  '$windows.~bt',
+  '$windows.~ws'
+];
+
+// System file extensions to hide from users
+const SYSTEM_FILE_EXTENSIONS = [
+  '.dll',    // Dynamic Link Libraries
+  '.sys',    // System files
+  '.ini',    // Configuration files
+  '.tmp',    // Temporary files
+  '.log',    // Log files
+  '.bak',    // Backup files
+  '.old',    // Old backup files
+  '.cache',  // Cache files
+  '.dat',    // Data files (often system)
+  '.db',     // Database files (like Thumbs.db)
+  '.ldf',    // SQL Log files
+  '.mdf'     // SQL Database files
+];
+
+// Protected system paths that cannot be deleted, moved, or renamed
+const PROTECTED_PATHS = [
+  /^[A-Z]:\\Windows/i,
+  /^[A-Z]:\\Program Files/i,
+  /^[A-Z]:\\Program Files \(x86\)/i,
+  /^[A-Z]:\\ProgramData/i,
+  /^[A-Z]:\\System Volume Information/i,
+  /^[A-Z]:\\Recovery/i,
+  /^[A-Z]:\\Config\.Msi/i
+];
+
+function isSystemFile(filename) {
+  const lower = filename.toLowerCase();
+  const ext = path.extname(lower);
+  
+  return SYSTEM_FILES_TO_HIDE.includes(lower) || 
+         SYSTEM_FOLDERS_TO_HIDE.includes(lower) ||
+         SYSTEM_FILE_EXTENSIONS.includes(ext) ||
+         lower === 'desktop.ini' || 
+         lower === 'thumbs.db' || 
+         filename.startsWith('.');
+}
+
+function isProtectedPath(filePath) {
+  return PROTECTED_PATHS.some(pattern => pattern.test(filePath));
+}
+
+// Calculate folder size recursively
+function calculateFolderSize(folderPath) {
+  let totalSize = 0;
+  
+  try {
+    const items = fs.readdirSync(folderPath);
+    
+    for (const item of items) {
+      try {
+        const itemPath = path.join(folderPath, item);
+        const stats = fs.statSync(itemPath);
+        
+        if (stats.isDirectory()) {
+          totalSize += calculateFolderSize(itemPath);
+        } else {
+          totalSize += stats.size;
+        }
+      } catch (err) {
+        // Skip items that can't be accessed
+        continue;
+      }
+    }
+  } catch (err) {
+    // If we can't read the folder, return 0
+    return 0;
+  }
+  
+  return totalSize;
+}
 
 let mainWindow;
 let ipcHandlersRegistered = false;
@@ -37,10 +139,28 @@ function registerIpcHandlers() {
   // IPC Handlers for file operations
   ipcMain.handle('list-directory', async (event, dirPath) => {
     try {
+      console.log('[list-directory] called with:', dirPath);
       let resolvedPath = dirPath;
       
       // Handle special folder names
-      if (!dirPath || dirPath === 'Documents') {
+      if (dirPath === 'This PC') {
+        // Return list of drives for This PC view
+        const drivesResult = await getDrivesInfo();
+        if (drivesResult.success) {
+          const driveItems = drivesResult.drives.map(drive => ({
+            name: drive.description,
+            path: drive.device,
+            type: 'drive',
+            ext: '',
+            editable: false,
+            size: drive.size,
+            available: drive.available,
+            modified: Date.now()
+          }));
+          return { items: driveItems, error: null };
+        }
+        return { items: [], error: 'Could not load drives' };
+      } else if (!dirPath || dirPath === 'Documents') {
         resolvedPath = path.join(process.env.USERPROFILE, 'Documents');
       } else if (dirPath === 'Desktop') {
         resolvedPath = path.join(process.env.USERPROFILE, 'Desktop');
@@ -52,43 +172,65 @@ function registerIpcHandlers() {
         resolvedPath = path.join(process.env.USERPROFILE, 'Music');
       } else if (dirPath === 'Videos') {
         resolvedPath = path.join(process.env.USERPROFILE, 'Videos');
+      } else if (dirPath && dirPath.match(/^[A-Z]:$/i)) {
+        // Handle drive letters like "C:" by converting to "C:\\"
+        resolvedPath = dirPath + '\\';
       }
       
+      console.log('[list-directory] resolved path:', resolvedPath);
+      
       if (!fs.existsSync(resolvedPath)) {
+        console.warn('[list-directory] Path not found:', resolvedPath);
         return { items: [], error: 'Path not found' };
       }
 
-      const items = fs.readdirSync(resolvedPath)
-        .filter(item => {
-          // Filter out Windows system files
-          const lowerName = item.toLowerCase();
-          return lowerName !== 'desktop.ini' && 
-                 lowerName !== 'thumbs.db' && 
-                 !item.startsWith('.');
-        })
-        .map(item => {
-          const fullPath = path.join(resolvedPath, item);
-          const stats = fs.statSync(fullPath);
-          const ext = path.extname(item).toLowerCase();
-          const isEditable = EDITABLE_EXTENSIONS.includes(ext);
+      console.log('[list-directory] reading directory...');
+      const fileList = fs.readdirSync(resolvedPath);
+      console.log('[list-directory] found', fileList.length, 'items');
 
-          return {
-            name: item,
-            path: fullPath,
-            type: stats.isDirectory() ? 'folder' : 'file',
-            ext: ext,
-            editable: !stats.isDirectory() && isEditable,
-            size: stats.size,
-            modified: stats.mtimeMs
-          };
-        }).sort((a, b) => {
+      const items = fileList
+        .filter(item => !isSystemFile(item))
+        .map(item => {
+          try {
+            const fullPath = path.join(resolvedPath, item);
+            const stats = fs.statSync(fullPath);
+            const ext = path.extname(item).toLowerCase();
+            const isEditable = EDITABLE_EXTENSIONS.includes(ext);
+            const isProtected = isProtectedPath(fullPath);
+            
+            // Calculate folder size
+            let size = stats.size;
+            if (stats.isDirectory()) {
+              size = calculateFolderSize(fullPath);
+            }
+
+            return {
+              name: item,
+              path: fullPath,
+              type: stats.isDirectory() ? 'folder' : 'file',
+              ext: ext,
+              editable: !stats.isDirectory() && isEditable && !isProtected,
+              protected: isProtected,
+              size: size,
+              modified: stats.mtimeMs
+            };
+          } catch (err) {
+            // Skip files/folders that can't be accessed due to permissions
+            console.warn('[list-directory] Skipping inaccessible item:', item, err.message);
+            return null;
+          }
+        })
+        .filter(item => item !== null)
+        .sort((a, b) => {
           if (a.type !== b.type) return a.type === 'folder' ? -1 : 1;
           return a.name.localeCompare(b.name);
         });
 
+      console.log('[list-directory] returning', items.length, 'items');
       return { items, error: null };
     } catch (err) {
-      return { items: [], error: err.message };
+      console.error('[list-directory] error:', err);
+      return { items: [], error: err && err.message ? err.message : String(err) };
     }
   });
 
@@ -185,6 +327,10 @@ function registerIpcHandlers() {
 
   ipcMain.handle('move-file', async (event, sourcePath, destPath) => {
     try {
+      // Check if source is protected
+      if (isProtectedPath(sourcePath)) {
+        return { success: false, error: 'Cannot move system files or folders' };
+      }
       if (fs.existsSync(destPath)) {
         const dir = path.dirname(destPath);
         const ext = path.extname(destPath);
@@ -206,6 +352,10 @@ function registerIpcHandlers() {
 
   ipcMain.handle('rename-file', async (event, oldPath, newPath) => {
     try {
+      // Check if source is protected
+      if (isProtectedPath(oldPath)) {
+        return { success: false, error: 'Cannot rename system files or folders' };
+      }
       if (oldPath === newPath) {
         return { success: true };
       }
@@ -221,6 +371,10 @@ function registerIpcHandlers() {
 
   ipcMain.handle('delete-file', async (event, filePath) => {
     try {
+      // Check if path is protected
+      if (isProtectedPath(filePath)) {
+        return { success: false, error: 'Cannot delete system files or folders' };
+      }
       // Move to Recycle Bin using Windows API
       const { exec } = require('child_process');
       const stats = fs.statSync(filePath);
@@ -262,6 +416,97 @@ function registerIpcHandlers() {
     }
   });
 
+  ipcMain.handle('get-drives-info', getDrivesInfo);
+
+}
+
+// Separate function to get drives info (can be called internally)
+async function getDrivesInfo() {
+  return new Promise((resolve) => {
+    try {
+      // Use PowerShell to get volume labels dynamically
+      const { exec } = require('child_process');
+      exec('powershell -NoProfile -Command "Get-Volume | Where-Object {$_.DriveLetter} | Select-Object DriveLetter, FileSystemLabel, Size, SizeRemaining | ConvertTo-Json"', 
+        { timeout: 5000 },
+        (error, stdout, stderr) => {
+          const drives = [];
+          const letters = 'CDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
+          
+          // Parse PowerShell output
+          let volumeInfo = {};
+          try {
+            if (stdout && stdout.trim()) {
+              const volumes = JSON.parse(stdout);
+              const volumeArray = Array.isArray(volumes) ? volumes : [volumes];
+              volumeArray.forEach(vol => {
+                if (vol.DriveLetter) {
+                  volumeInfo[vol.DriveLetter] = {
+                    label: vol.FileSystemLabel || null,
+                    size: parseInt(vol.Size) || 0,
+                    available: parseInt(vol.SizeRemaining) || 0
+                  };
+                }
+              });
+              console.log('[get-drives-info] PowerShell data:', volumeInfo);
+            }
+          } catch (parseErr) {
+            console.warn('[get-drives-info] Could not parse PowerShell output:', parseErr.message);
+          }
+          
+          // Check each drive letter
+          for (const letter of letters) {
+            const drive = letter + ':';
+            const drivePath = drive + '\\';
+            
+            // Check if drive exists
+            if (!fs.existsSync(drivePath)) continue;
+            
+            try {
+              const volInfo = volumeInfo[letter];
+              let description, size, available;
+              
+              if (volInfo && volInfo.size > 0) {
+                // Use PowerShell data
+                const label = volInfo.label || 'Local Disk';
+                description = volInfo.label ? `${volInfo.label} (${drive})` : `Local Disk (${drive})`;
+                size = volInfo.size;
+                available = volInfo.available;
+              } else {
+                // Fallback to fs.statfsSync
+                const stats = fs.statfsSync ? fs.statfsSync(drivePath) : null;
+                description = `Local Disk (${drive})`;
+                size = stats ? stats.blocks * stats.bsize : 0;
+                available = stats ? stats.bavail * stats.bsize : 0;
+              }
+              
+              console.log(`[get-drives-info] Drive ${drive}: size=${size}, available=${available}`);
+              
+              drives.push({
+                device: drive,
+                description: description,
+                mountpoints: [{ path: drivePath }],
+                size: size,
+                available: available,
+                isSystem: letter === 'C',
+                isRemovable: false,
+                isUSB: false,
+                isCard: false,
+                isReadOnly: false
+              });
+            } catch (err) {
+              console.warn(`[get-drives-info] Could not get stats for ${drive}:`, err.message);
+            }
+          }
+          
+          console.log(`[get-drives-info] Returning ${drives.length} drives`);
+          resolve({ success: true, drives });
+        }
+      );
+    } catch (err) {
+      console.error('[get-drives-info] error:', err);
+      resolve({ success: false, drives: [], error: err.message });
+    }
+  });
 }
 
 function createWindow() {
