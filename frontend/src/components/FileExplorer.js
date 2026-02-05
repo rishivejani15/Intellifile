@@ -3,7 +3,7 @@ import './FileExplorer.css';
 
 const ipcRenderer = window.electron?.ipcRenderer;
 
-function FileExplorer({ onFileSelect, selectedFiles = {} }) {
+function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [] }) {
   const [currentPath, setCurrentPath] = useState(null);
   const [items, setItems] = useState([]);
   const [breadcrumb, setBreadcrumb] = useState([]);
@@ -23,9 +23,6 @@ function FileExplorer({ onFileSelect, selectedFiles = {} }) {
   const [activeTabId, setActiveTabId] = useState('tab-1');
   const [addressPath, setAddressPath] = useState('');
   const [groupBy, setGroupBy] = useState('none'); // none, type, date
-  const [previewData, setPreviewData] = useState(null);
-  const [previewType, setPreviewType] = useState('none'); // none, image, text
-  const [previewLoading, setPreviewLoading] = useState(false);
   const [showProperties, setShowProperties] = useState(false);
   const [showContextMenu, setShowContextMenu] = useState(false);
   const [contextMenuPos, setContextMenuPos] = useState({x: 0, y: 0});
@@ -49,8 +46,8 @@ function FileExplorer({ onFileSelect, selectedFiles = {} }) {
     setShowContextMenu(false);
     try {
       const result = await ipcRenderer?.invoke('list-directory', dirPath);
-      if (result.error) {
-        console.error('Error loading directory:', result.error);
+      if (!result || result.error) {
+        console.error('Error loading directory:', result?.error || 'Unknown error');
         setItems([]);
       } else {
         let items = result.items || [];
@@ -92,8 +89,6 @@ function FileExplorer({ onFileSelect, selectedFiles = {} }) {
           setSelectedItem(null);
           setSelectedItems([]);
           setLastSelectedIndex(null);
-          setPreviewData(null);
-          setPreviewType('none');
           
           // Update history
           setHistory(prev => {
@@ -170,48 +165,6 @@ function FileExplorer({ onFileSelect, selectedFiles = {} }) {
     return 'none';
   };
 
-  useEffect(() => {
-    const loadPreview = async () => {
-      if (!selectedItem || selectedItem.type !== 'file') {
-        setPreviewType('none');
-        setPreviewData(null);
-        return;
-      }
-
-      const ext = selectedItem.ext?.toLowerCase() || '';
-      const type = getPreviewTypeForExt(ext);
-      setPreviewType(type);
-      setPreviewLoading(true);
-      try {
-        if (type === 'image') {
-          const result = await ipcRenderer?.invoke('read-file-base64', selectedItem.path);
-          if (result?.success) {
-            setPreviewData(`data:image/${ext.replace('.', '')};base64,${result.data}`);
-          } else {
-            setPreviewData(null);
-          }
-        } else if (type === 'text') {
-          const result = await ipcRenderer?.invoke('read-file', selectedItem.path);
-          if (result?.success) {
-            const snippet = result.content.slice(0, 4000);
-            setPreviewData(snippet);
-          } else {
-            setPreviewData(null);
-          }
-        } else {
-          setPreviewData(null);
-        }
-      } catch (err) {
-        console.error('Preview error:', err);
-        setPreviewData(null);
-      } finally {
-        setPreviewLoading(false);
-      }
-    };
-
-    loadPreview();
-  }, [selectedItem]);
-
   const openFileWithDefaultApp = async (filePath) => {
     try {
       const result = await window.electron.ipcRenderer.invoke('open-file', filePath);
@@ -224,7 +177,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {} }) {
   };
 
   const handleFolderClick = (item) => {
-    if (item.type === 'folder') {
+    if (item.type === 'folder' || item.type === 'drive') {
       loadDirectory(item.path);
     } else if (item.type === 'file') {
       openFileWithDefaultApp(item.path);
@@ -299,6 +252,14 @@ function FileExplorer({ onFileSelect, selectedFiles = {} }) {
 
   const handleCut = async () => {
     const itemsToCut = selectedItems.length > 0 ? selectedItems : (selectedItem ? [selectedItem] : []);
+    
+    // Check if any items are protected
+    const protectedItems = itemsToCut.filter(item => item.protected);
+    if (protectedItems.length > 0) {
+      alert('Cannot move system files or folders');
+      return;
+    }
+    
     if (itemsToCut.length > 0) {
       setClipboard({ items: itemsToCut, operation: 'cut' });
       setShowContextMenu(false);
@@ -314,10 +275,16 @@ function FileExplorer({ onFileSelect, selectedFiles = {} }) {
           
           if (operation === 'copy') {
             const result = await ipcRenderer?.invoke('copy-file', item.path, destPath);
-            if (!result.success) console.error('Copy error:', result.error);
+            if (!result.success) {
+              console.error('Copy error:', result.error);
+              alert('Error copying: ' + result.error);
+            }
           } else {
             const result = await ipcRenderer?.invoke('move-file', item.path, destPath);
-            if (!result.success) console.error('Move error:', result.error);
+            if (!result.success) {
+              console.error('Move error:', result.error);
+              alert('Error moving: ' + result.error);
+            }
           }
         }
         
@@ -333,6 +300,13 @@ function FileExplorer({ onFileSelect, selectedFiles = {} }) {
 
   const handleRename = async () => {
     if (renamingItem && renameValue && renameValue !== renamingItem.name) {
+      // Check if item is protected
+      if (renamingItem.protected) {
+        alert('Cannot rename system files or folders');
+        setRenamingItem(null);
+        return;
+      }
+      
       try {
         const newPath = currentPath + '\\' + renameValue;
         const result = await ipcRenderer?.invoke('rename-file', renamingItem.path, newPath);
@@ -340,6 +314,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {} }) {
           loadDirectory(currentPath);
         } else {
           console.error('Rename error:', result.error);
+          alert('Error renaming: ' + result.error);
         }
       } catch (err) {
         console.error('Rename error:', err);
@@ -350,12 +325,21 @@ function FileExplorer({ onFileSelect, selectedFiles = {} }) {
 
   const handleDelete = async () => {
     const itemsToDelete = selectedItems.length > 0 ? selectedItems : (selectedItem ? [selectedItem] : []);
+    
+    // Check if any items are protected
+    const protectedItems = itemsToDelete.filter(item => item.protected);
+    if (protectedItems.length > 0) {
+      alert('Cannot delete system files or folders');
+      return;
+    }
+    
     if (itemsToDelete.length > 0) {
       try {
         for (const item of itemsToDelete) {
           const result = await ipcRenderer?.invoke('delete-file', item.path);
           if (!result.success) {
             console.error('Delete error:', result.error);
+            alert('Error: ' + result.error);
           }
         }
         loadDirectory(currentPath);
@@ -485,6 +469,9 @@ function FileExplorer({ onFileSelect, selectedFiles = {} }) {
   }, [selectedItem, selectedItems, clipboard, renamingItem, currentPath, historyIndex, displayItems]);
 
   const getFileIcon = (item) => {
+    if (item.type === 'drive') {
+      return '💾';
+    }
     if (item.type === 'folder') {
       return '📁';
     }
@@ -574,6 +561,13 @@ function FileExplorer({ onFileSelect, selectedFiles = {} }) {
           <div className="sidebar-title">Quick access</div>
           <div 
             className="sidebar-item"
+            onClick={() => navigateToQuickAccess('This PC')}
+          >
+            <span className="sidebar-icon">💻</span>
+            <span className="sidebar-label">This PC</span>
+          </div>
+          <div 
+            className="sidebar-item"
             onClick={() => navigateToQuickAccess('Desktop')}
           >
             <span className="sidebar-icon">🖥️</span>
@@ -614,6 +608,39 @@ function FileExplorer({ onFileSelect, selectedFiles = {} }) {
             <span className="sidebar-icon">🎬</span>
             <span className="sidebar-label">Videos</span>
           </div>
+
+          {/* Drives Section */}
+          {drives.length > 0 && (
+            <>
+              <div className="sidebar-title" style={{ marginTop: '20px' }}>Drives</div>
+              {drives.map((drive, idx) => {
+                const usedSpace = drive.size - (drive.available || 0);
+                const usedPercent = drive.size > 0 ? Math.round((usedSpace / drive.size) * 100) : 0;
+                const availableGB = Math.round((drive.available || 0) / (1024 ** 3));
+                const totalGB = Math.round(drive.size / (1024 ** 3));
+                
+                return (
+                  <div key={drive.device || idx} className="drive-item" onClick={() => loadDirectory(drive.device)}>
+                    <div className="drive-header">
+                      <span className="drive-icon">💾</span>
+                      <div className="drive-name-info">
+                        <div className="drive-name">{drive.description}</div>
+                        <div className="drive-space-text">{availableGB} GB free of {totalGB} GB</div>
+                      </div>
+                    </div>
+                    <div className="drive-progress-container">
+                      <div className="drive-progress-bar">
+                        <div 
+                          className="drive-progress-fill" 
+                          style={{ width: `${usedPercent}%` }}
+                        ></div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </>
+          )}
         </div>
       </div>
 
@@ -818,14 +845,14 @@ function FileExplorer({ onFileSelect, selectedFiles = {} }) {
                               <div className="file-name">{item.name}</div>
                               {viewMode === 'details' && (
                                 <div className="file-meta-details">
-                                  <span className="file-type">{item.type === 'folder' ? 'Folder' : item.ext}</span>
-                                  <span className="file-size">{formatFileSize(item.size)}</span>
+                                  <span className="file-type">{item.type === 'folder' ? 'Folder' : item.type === 'drive' ? 'Drive' : item.ext}</span>
+                                  <span className="file-size">{item.type === 'drive' ? `${Math.round(item.size / (1024 ** 3))} GB` : formatFileSize(item.size)}</span>
                                   <span className="file-date">{formatDate(item.modified)}</span>
                                 </div>
                               )}
                               {viewMode !== 'details' && (
                                 <div className="file-meta">
-                                  {item.type === 'folder' ? 'Folder' : formatFileSize(item.size)}
+                                  {item.type === 'folder' ? 'Folder' : item.type === 'drive' ? `${Math.round(item.size / (1024 ** 3))} GB total` : formatFileSize(item.size)}
                                 </div>
                               )}
                             </>
@@ -839,30 +866,6 @@ function FileExplorer({ onFileSelect, selectedFiles = {} }) {
               ))}
             </div>
           )}
-          </div>
-
-          {/* Preview Pane */}
-          <div className="preview-pane">
-            <div className="preview-title">Preview</div>
-            {previewLoading ? (
-              <div className="preview-loading">Loading preview...</div>
-            ) : previewType === 'image' && previewData ? (
-              <img src={previewData} alt="Preview" className="preview-image" />
-            ) : previewType === 'text' && previewData ? (
-              <pre className="preview-text">{previewData}</pre>
-            ) : (
-              <div className="preview-empty">Select a file to preview</div>
-            )}
-
-            {selectedItem && (
-              <div className="preview-details">
-                <div className="detail-row"><span>Name</span><span>{selectedItem.name}</span></div>
-                <div className="detail-row"><span>Type</span><span>{selectedItem.type === 'folder' ? 'Folder' : selectedItem.ext}</span></div>
-                <div className="detail-row"><span>Size</span><span>{selectedItem.type === 'folder' ? '-' : formatFileSize(selectedItem.size)}</span></div>
-                <div className="detail-row"><span>Modified</span><span>{formatDate(selectedItem.modified)}</span></div>
-                <button className="properties-btn" onClick={() => setShowProperties(true)}>Properties</button>
-              </div>
-            )}
           </div>
         </div>
 
@@ -888,7 +891,10 @@ function FileExplorer({ onFileSelect, selectedFiles = {} }) {
             Open
           </div>
           <div className="context-menu-divider"></div>
-          <div className="context-menu-item" onClick={handleCut}>
+          <div 
+            className={`context-menu-item ${selectedItem?.protected ? 'disabled' : ''}`} 
+            onClick={selectedItem?.protected ? null : handleCut}
+          >
             ✂️ Cut (Ctrl+X)
           </div>
           <div className="context-menu-item" onClick={handleCopy}>
@@ -898,14 +904,20 @@ function FileExplorer({ onFileSelect, selectedFiles = {} }) {
             📌 Paste (Ctrl+V)
           </div>
           <div className="context-menu-divider"></div>
-          <div className="context-menu-item" onClick={() => {
-            setRenamingItem(selectedItem);
-            setRenameValue(selectedItem.name);
-            setShowContextMenu(false);
-          }}>
+          <div 
+            className={`context-menu-item ${selectedItem?.protected ? 'disabled' : ''}`} 
+            onClick={selectedItem?.protected ? null : () => {
+              setRenamingItem(selectedItem);
+              setRenameValue(selectedItem.name);
+              setShowContextMenu(false);
+            }}
+          >
             ✏️ Rename (F2)
           </div>
-          <div className="context-menu-item delete" onClick={handleDelete}>
+          <div 
+            className={`context-menu-item delete ${selectedItem?.protected ? 'disabled' : ''}`} 
+            onClick={selectedItem?.protected ? null : handleDelete}
+          >
             🗑️ Delete
           </div>
           <div className="context-menu-divider"></div>
