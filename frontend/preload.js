@@ -11,3 +11,16 @@ contextBridge.exposeInMainWorld('electron', {
     openPath: (path) => shell.openPath(path)
   }
 });
+
+// intellifile api
+contextBridge.exposeInMainWorld('intellifile', {
+  search: (query) => {
+    return ipcRenderer.invoke('search', query);
+  },
+  searchStatus: () => {
+    return ipcRenderer.invoke('search-status');
+  },
+  indexFolder: (folder) => {
+    return ipcRenderer.invoke('index-folder', folder);
+  },
+});

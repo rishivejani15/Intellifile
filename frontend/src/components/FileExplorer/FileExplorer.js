@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { searchFiles, indexFolder } from '../../services/searchService';
 import './FileExplorer.css';
 
 const ipcRenderer = window.electron?.ipcRenderer;
@@ -25,7 +26,12 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [] }) {
   const [groupBy, setGroupBy] = useState('none'); // none, type, date
   const [showProperties, setShowProperties] = useState(false);
   const [showContextMenu, setShowContextMenu] = useState(false);
-  const [contextMenuPos, setContextMenuPos] = useState({x: 0, y: 0});
+  const [contextMenuPos, setContextMenuPos] = useState({ x: 0, y: 0 });
+  const [semanticResults, setSemanticResults] = useState(null); // null = not searching, [] = no results
+  const [semanticLoading, setSemanticLoading] = useState(false);
+  const [engineReady, setEngineReady] = useState(false);
+  const [indexing, setIndexing] = useState(false);
+  const [indexedFolder, setIndexedFolder] = useState('');
   const contextMenuRef = useRef(null);
   const inputRef = useRef(null);
 
@@ -51,18 +57,18 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [] }) {
         setItems([]);
       } else {
         let items = result.items || [];
-        
+
         // Apply search filter
         if (searchQuery) {
-          items = items.filter(item => 
+          items = items.filter(item =>
             item.name.toLowerCase().includes(searchQuery.toLowerCase())
           );
         }
-        
+
         // Apply sorting
         items.sort((a, b) => {
           let compareValue = 0;
-          switch(sortBy) {
+          switch (sortBy) {
             case 'date':
               compareValue = a.modified - b.modified;
               break;
@@ -77,10 +83,10 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [] }) {
           }
           return compareValue;
         });
-        
+
         setItems(items);
-        const actualPath = items && items.length > 0 ? 
-          items[0].path.substring(0, items[0].path.lastIndexOf('\\')) : 
+        const actualPath = items && items.length > 0 ?
+          items[0].path.substring(0, items[0].path.lastIndexOf('\\')) :
           dirPath;
         if (actualPath) {
           setCurrentPath(actualPath);
@@ -89,7 +95,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [] }) {
           setSelectedItem(null);
           setSelectedItems([]);
           setLastSelectedIndex(null);
-          
+
           // Update history
           setHistory(prev => {
             const newHistory = prev.slice(0, historyIndex + 1);
@@ -252,14 +258,14 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [] }) {
 
   const handleCut = async () => {
     const itemsToCut = selectedItems.length > 0 ? selectedItems : (selectedItem ? [selectedItem] : []);
-    
+
     // Check if any items are protected
     const protectedItems = itemsToCut.filter(item => item.protected);
     if (protectedItems.length > 0) {
       alert('Cannot move system files or folders');
       return;
     }
-    
+
     if (itemsToCut.length > 0) {
       setClipboard({ items: itemsToCut, operation: 'cut' });
       setShowContextMenu(false);
@@ -272,7 +278,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [] }) {
         for (const item of clipboard.items) {
           const operation = clipboard.operation === 'cut' ? 'move' : 'copy';
           const destPath = currentPath + '\\' + item.name;
-          
+
           if (operation === 'copy') {
             const result = await ipcRenderer?.invoke('copy-file', item.path, destPath);
             if (!result.success) {
@@ -287,7 +293,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [] }) {
             }
           }
         }
-        
+
         if (clipboard.operation === 'cut') {
           setClipboard(null);
         }
@@ -306,7 +312,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [] }) {
         setRenamingItem(null);
         return;
       }
-      
+
       try {
         const newPath = currentPath + '\\' + renameValue;
         const result = await ipcRenderer?.invoke('rename-file', renamingItem.path, newPath);
@@ -325,14 +331,14 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [] }) {
 
   const handleDelete = async () => {
     const itemsToDelete = selectedItems.length > 0 ? selectedItems : (selectedItem ? [selectedItem] : []);
-    
+
     // Check if any items are protected
     const protectedItems = itemsToDelete.filter(item => item.protected);
     if (protectedItems.length > 0) {
       alert('Cannot delete system files or folders');
       return;
     }
-    
+
     if (itemsToDelete.length > 0) {
       try {
         for (const item of itemsToDelete) {
@@ -463,7 +469,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [] }) {
         setShowContextMenu(false);
       }
     };
-    
+
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [selectedItem, selectedItems, clipboard, renamingItem, currentPath, historyIndex, displayItems]);
@@ -543,15 +549,95 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [] }) {
   }, [displayItems, groupBy]);
 
   const isFileSelected = (item) => {
-      return selectedFiles.base?.path === item.path ||
-        selectedFiles.ours?.path === item.path ||
-        selectedFiles.theirs?.path === item.path ||
-        selectedItems.some(i => i.path === item.path);
+    return selectedFiles.base?.path === item.path ||
+      selectedFiles.ours?.path === item.path ||
+      selectedFiles.theirs?.path === item.path ||
+      selectedItems.some(i => i.path === item.path);
   };
 
   const navigateToQuickAccess = (folderName) => {
     loadDirectory(folderName);
   };
+
+  // Check engine readiness on mount
+  useEffect(() => {
+    const checkEngine = async () => {
+      try {
+        const status = await window.intellifile?.searchStatus();
+        console.log('[FileExplorer] Engine status:', status);
+        if (status && status.ready) {
+          setEngineReady(true);
+          console.log('[FileExplorer] ✅ Engine ready');
+        } else {
+          console.log('[FileExplorer] Engine not ready yet, retrying...');
+          setTimeout(checkEngine, 2000);
+        }
+      } catch (err) {
+        console.error('[FileExplorer] Engine check error:', err);
+        setTimeout(checkEngine, 3000);
+      }
+    };
+    checkEngine();
+  }, []);
+
+  async function handleSearch(query) {
+    if (!query || !query.trim()) {
+      setSemanticResults(null);
+      return;
+    }
+    console.log('[FileExplorer] Running semantic search for:', query);
+    setSemanticLoading(true);
+    try {
+      const results = await searchFiles(query);
+      console.log('[FileExplorer] Search results:', results);
+      setSemanticResults(results || []);
+    } catch (err) {
+      console.error('[FileExplorer] Semantic search error:', err);
+      setSemanticResults([]);
+    } finally {
+      setSemanticLoading(false);
+    }
+  }
+
+  async function handleIndexFolder() {
+    console.log('[FileExplorer] Index folder clicked, engineReady:', engineReady);
+    try {
+      const result = await ipcRenderer?.invoke('dialog-select-folder');
+      console.log('[FileExplorer] Folder selected:', result);
+      if (!result || !result.path) return;
+      setIndexing(true);
+      setIndexedFolder('');
+      const res = await indexFolder(result.path);
+      console.log('[FileExplorer] Index result:', res);
+      if (res && !res.error) {
+        setIndexedFolder(result.path);
+      } else {
+        console.error('[FileExplorer] Indexing error:', res?.error);
+      }
+    } catch (err) {
+      console.error('[FileExplorer] Index folder error:', err);
+    } finally {
+      setIndexing(false);
+    }
+  }
+
+  function handleSearchKeyDown(e) {
+    if (e.key === 'Enter' && searchQuery.trim()) {
+      e.preventDefault();
+      console.log('[FileExplorer] Enter pressed, triggering search:', searchQuery);
+      handleSearch(searchQuery);
+    } else if (e.key === 'Escape') {
+      setSemanticResults(null);
+      setSearchQuery('');
+    }
+  }
+
+  function handleSearchResultClick(filePath) {
+    // Open the file with the OS default application
+    if (window.electron?.ipcRenderer) {
+      window.electron.ipcRenderer.invoke('open-file', filePath);
+    }
+  }
 
   return (
     <div className="file-explorer">
@@ -559,49 +645,49 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [] }) {
       <div className="explorer-sidebar">
         <div className="sidebar-section">
           <div className="sidebar-title">Quick access</div>
-          <div 
+          <div
             className="sidebar-item"
             onClick={() => navigateToQuickAccess('This PC')}
           >
             <span className="sidebar-icon">💻</span>
             <span className="sidebar-label">This PC</span>
           </div>
-          <div 
+          <div
             className="sidebar-item"
             onClick={() => navigateToQuickAccess('Desktop')}
           >
             <span className="sidebar-icon">🖥️</span>
             <span className="sidebar-label">Desktop</span>
           </div>
-          <div 
+          <div
             className="sidebar-item"
             onClick={() => navigateToQuickAccess('Documents')}
           >
             <span className="sidebar-icon">📄</span>
             <span className="sidebar-label">Documents</span>
           </div>
-          <div 
+          <div
             className="sidebar-item"
             onClick={() => navigateToQuickAccess('Downloads')}
           >
             <span className="sidebar-icon">⬇️</span>
             <span className="sidebar-label">Downloads</span>
           </div>
-          <div 
+          <div
             className="sidebar-item"
             onClick={() => navigateToQuickAccess('Pictures')}
           >
             <span className="sidebar-icon">🖼️</span>
             <span className="sidebar-label">Pictures</span>
           </div>
-          <div 
+          <div
             className="sidebar-item"
             onClick={() => navigateToQuickAccess('Music')}
           >
             <span className="sidebar-icon">🎵</span>
             <span className="sidebar-label">Music</span>
           </div>
-          <div 
+          <div
             className="sidebar-item"
             onClick={() => navigateToQuickAccess('Videos')}
           >
@@ -618,7 +704,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [] }) {
                 const usedPercent = drive.size > 0 ? Math.round((usedSpace / drive.size) * 100) : 0;
                 const availableGB = Math.round((drive.available || 0) / (1024 ** 3));
                 const totalGB = Math.round(drive.size / (1024 ** 3));
-                
+
                 return (
                   <div key={drive.device || idx} className="drive-item" onClick={() => loadDirectory(drive.device)}>
                     <div className="drive-header">
@@ -630,8 +716,8 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [] }) {
                     </div>
                     <div className="drive-progress-container">
                       <div className="drive-progress-bar">
-                        <div 
-                          className="drive-progress-fill" 
+                        <div
+                          className="drive-progress-fill"
                           style={{ width: `${usedPercent}%` }}
                         ></div>
                       </div>
@@ -678,24 +764,24 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [] }) {
         <div className="explorer-navbar">
           <div className="nav-row">
             <div className="nav-buttons">
-              <button 
-                className="nav-btn back-btn" 
+              <button
+                className="nav-btn back-btn"
                 onClick={handleBack}
                 disabled={historyIndex <= 0}
                 title="Back (Alt+←)"
               >
                 ◀
               </button>
-              <button 
-                className="nav-btn forward-btn" 
+              <button
+                className="nav-btn forward-btn"
                 onClick={handleForward}
                 disabled={historyIndex >= history.length - 1}
                 title="Forward (Alt+→)"
               >
                 ▶
               </button>
-              <button 
-                className="nav-btn up-btn" 
+              <button
+                className="nav-btn up-btn"
                 onClick={handleUp}
                 disabled={!currentPath}
                 title="Up (Alt+↑)"
@@ -703,13 +789,13 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [] }) {
                 ⬆️
               </button>
             </div>
-            
+
             {/* Breadcrumb */}
             <div className="breadcrumb">
               {breadcrumb.map((crumb, idx) => (
                 <React.Fragment key={idx}>
                   {idx > 0 && <span className="breadcrumb-sep">›</span>}
-                  <button 
+                  <button
                     className="breadcrumb-item"
                     onClick={() => handleBreadcrumbClick(crumb.path)}
                   >
@@ -735,28 +821,33 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [] }) {
             <div className="search-box">
               <input
                 type="text"
-                placeholder="🔍 Search"
+                placeholder={engineReady ? "🔍 Search (Enter for AI search)" : "🔍 Search (engine loading...)"}
                 value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
+                onChange={(e) => {
+                  setSearchQuery(e.target.value);
+                  if (!e.target.value) setSemanticResults(null);
+                }}
+                onKeyDown={handleSearchKeyDown}
               />
+              {semanticLoading && <span className="search-spinner">⏳</span>}
             </div>
 
             <div className="view-controls">
-              <button 
+              <button
                 className={`view-btn ${viewMode === 'icons' ? 'active' : ''}`}
                 onClick={() => setViewMode('icons')}
                 title="Icons view"
               >
                 ⊞
               </button>
-              <button 
+              <button
                 className={`view-btn ${viewMode === 'list' ? 'active' : ''}`}
                 onClick={() => setViewMode('list')}
                 title="List view"
               >
                 ≡
               </button>
-              <button 
+              <button
                 className={`view-btn ${viewMode === 'details' ? 'active' : ''}`}
                 onClick={() => setViewMode('details')}
                 title="Details view"
@@ -783,13 +874,24 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [] }) {
             </div>
 
             <div className="action-buttons">
-              <button 
+              <button
                 className="action-btn"
                 onClick={handleCreateFolder}
                 title="Create folder (Ctrl+N)"
               >
                 ➕ New Folder
               </button>
+              <button
+                className="action-btn index-btn"
+                onClick={handleIndexFolder}
+                disabled={indexing}
+                title={indexing ? 'Indexing in progress...' : engineReady ? 'Index a folder for AI search' : 'Engine loading... click to try anyway'}
+              >
+                {indexing ? '⏳ Indexing…' : '🧠 Index Folder'}
+              </button>
+              {indexedFolder && (
+                <span className="indexed-label" title={indexedFolder}>✅ Indexed</span>
+              )}
             </div>
           </div>
         </div>
@@ -797,75 +899,116 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [] }) {
         {/* File List + Preview Pane */}
         <div className="explorer-content-area">
           <div className="explorer-content">
-          {loading ? (
-            <div className="loading">Loading...</div>
-          ) : items.length === 0 ? (
-            <div className="empty-state">📁 No files found</div>
-          ) : (
-            <div className={`file-list ${viewMode}`}>
-              {groupedItems.map(group => (
-                <React.Fragment key={group.key}>
-                  {groupBy !== 'none' && (
-                    <div className="group-header">
-                      {group.key} ({group.items.length})
-                    </div>
-                  )}
-                  {group.items.map((item) => {
-                    const idx = displayItems.findIndex(i => i.path === item.path);
-                    return (
-                      <div
-                        key={item.path}
-                        className={`file-item ${item.type} ${isFileSelected(item) ? 'selected' : ''} ${renamingItem?.path === item.path ? 'renaming' : ''}`}
-                        onDoubleClick={() => handleFolderClick(item)}
-                        onClick={(e) => handleItemClick(item, idx, e)}
-                        onContextMenu={(e) => handleContextMenu(e, item)}
-                        draggable
-                        onDragStart={(e) => handleDragStart(e, item)}
-                        onDragOver={handleDragOver}
-                        onDrop={(e) => handleDropOnItem(e, item)}
-                      >
-                        <div className="file-icon">{getFileIcon(item)}</div>
-                        <div className="file-info">
-                          {renamingItem?.path === item.path ? (
-                            <input
-                              ref={inputRef}
-                              type="text"
-                              className="file-name-input"
-                              value={renameValue}
-                              onChange={(e) => setRenameValue(e.target.value)}
-                              onBlur={handleRename}
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter') handleRename();
-                                if (e.key === 'Escape') setRenamingItem(null);
-                              }}
-                              autoFocus
-                            />
-                          ) : (
-                            <>
-                              <div className="file-name">{item.name}</div>
-                              {viewMode === 'details' && (
-                                <div className="file-meta-details">
-                                  <span className="file-type">{item.type === 'folder' ? 'Folder' : item.type === 'drive' ? 'Drive' : item.ext}</span>
-                                  <span className="file-size">{item.type === 'drive' ? `${Math.round(item.size / (1024 ** 3))} GB` : formatFileSize(item.size)}</span>
-                                  <span className="file-date">{formatDate(item.modified)}</span>
-                                </div>
-                              )}
-                              {viewMode !== 'details' && (
-                                <div className="file-meta">
-                                  {item.type === 'folder' ? 'Folder' : item.type === 'drive' ? `${Math.round(item.size / (1024 ** 3))} GB total` : formatFileSize(item.size)}
-                                </div>
-                              )}
-                            </>
-                          )}
+            {/* Semantic Search Results Overlay */}
+            {semanticResults !== null ? (
+              <div className="semantic-results">
+                <div className="semantic-results-header">
+                  <h3>🧠 AI Search Results</h3>
+                  <button className="close-results-btn" onClick={() => {
+                    setSemanticResults(null);
+                    setSearchQuery('');
+                  }}>✕ Close</button>
+                </div>
+                {semanticResults.length === 0 ? (
+                  <div className="empty-state">No matching files found</div>
+                ) : (
+                  <div className="file-list list">
+                    {semanticResults.map((result, idx) => {
+                      const fileName = result.path.split('\\').pop() || result.path.split('/').pop();
+                      const scorePercent = Math.round(result.score * 100);
+                      return (
+                        <div
+                          key={result.path + idx}
+                          className="file-item file search-result-item"
+                          onClick={() => handleSearchResultClick(result.path)}
+                          title={result.path}
+                        >
+                          <div className="file-icon">📄</div>
+                          <div className="file-info">
+                            <div className="file-name">{fileName}</div>
+                            <div className="file-meta">{result.path}</div>
+                          </div>
+                          <div className="search-score">
+                            <div className="score-bar">
+                              <div className="score-fill" style={{ width: `${scorePercent}%` }}></div>
+                            </div>
+                            <span className="score-text">{scorePercent}%</span>
+                          </div>
                         </div>
-                        {isFileSelected(item) && <div className="selected-badge">✓</div>}
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            ) : loading ? (
+              <div className="loading">Loading...</div>
+            ) : items.length === 0 ? (
+              <div className="empty-state">📁 No files found</div>
+            ) : (
+              <div className={`file-list ${viewMode}`}>
+                {groupedItems.map(group => (
+                  <React.Fragment key={group.key}>
+                    {groupBy !== 'none' && (
+                      <div className="group-header">
+                        {group.key} ({group.items.length})
                       </div>
-                    );
-                  })}
-                </React.Fragment>
-              ))}
-            </div>
-          )}
+                    )}
+                    {group.items.map((item) => {
+                      const idx = displayItems.findIndex(i => i.path === item.path);
+                      return (
+                        <div
+                          key={item.path}
+                          className={`file-item ${item.type} ${isFileSelected(item) ? 'selected' : ''} ${renamingItem?.path === item.path ? 'renaming' : ''}`}
+                          onDoubleClick={() => handleFolderClick(item)}
+                          onClick={(e) => handleItemClick(item, idx, e)}
+                          onContextMenu={(e) => handleContextMenu(e, item)}
+                          draggable
+                          onDragStart={(e) => handleDragStart(e, item)}
+                          onDragOver={handleDragOver}
+                          onDrop={(e) => handleDropOnItem(e, item)}
+                        >
+                          <div className="file-icon">{getFileIcon(item)}</div>
+                          <div className="file-info">
+                            {renamingItem?.path === item.path ? (
+                              <input
+                                ref={inputRef}
+                                type="text"
+                                className="file-name-input"
+                                value={renameValue}
+                                onChange={(e) => setRenameValue(e.target.value)}
+                                onBlur={handleRename}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') handleRename();
+                                  if (e.key === 'Escape') setRenamingItem(null);
+                                }}
+                                autoFocus
+                              />
+                            ) : (
+                              <>
+                                <div className="file-name">{item.name}</div>
+                                {viewMode === 'details' && (
+                                  <div className="file-meta-details">
+                                    <span className="file-type">{item.type === 'folder' ? 'Folder' : item.type === 'drive' ? 'Drive' : item.ext}</span>
+                                    <span className="file-size">{item.type === 'drive' ? `${Math.round(item.size / (1024 ** 3))} GB` : formatFileSize(item.size)}</span>
+                                    <span className="file-date">{formatDate(item.modified)}</span>
+                                  </div>
+                                )}
+                                {viewMode !== 'details' && (
+                                  <div className="file-meta">
+                                    {item.type === 'folder' ? 'Folder' : item.type === 'drive' ? `${Math.round(item.size / (1024 ** 3))} GB total` : formatFileSize(item.size)}
+                                  </div>
+                                )}
+                              </>
+                            )}
+                          </div>
+                          {isFileSelected(item) && <div className="selected-badge">✓</div>}
+                        </div>
+                      );
+                    })}
+                  </React.Fragment>
+                ))}
+              </div>
+            )}
           </div>
         </div>
 
@@ -882,17 +1025,17 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [] }) {
 
       {/* Context Menu */}
       {showContextMenu && (
-        <div 
+        <div
           ref={contextMenuRef}
-          className="context-menu" 
+          className="context-menu"
           style={{ top: contextMenuPos.y, left: contextMenuPos.x }}
         >
           <div className="context-menu-item" onClick={() => openFileWithDefaultApp(selectedItem.path)}>
             Open
           </div>
           <div className="context-menu-divider"></div>
-          <div 
-            className={`context-menu-item ${selectedItem?.protected ? 'disabled' : ''}`} 
+          <div
+            className={`context-menu-item ${selectedItem?.protected ? 'disabled' : ''}`}
             onClick={selectedItem?.protected ? null : handleCut}
           >
             ✂️ Cut (Ctrl+X)
@@ -904,8 +1047,8 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [] }) {
             📌 Paste (Ctrl+V)
           </div>
           <div className="context-menu-divider"></div>
-          <div 
-            className={`context-menu-item ${selectedItem?.protected ? 'disabled' : ''}`} 
+          <div
+            className={`context-menu-item ${selectedItem?.protected ? 'disabled' : ''}`}
             onClick={selectedItem?.protected ? null : () => {
               setRenamingItem(selectedItem);
               setRenameValue(selectedItem.name);
@@ -914,8 +1057,8 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [] }) {
           >
             ✏️ Rename (F2)
           </div>
-          <div 
-            className={`context-menu-item delete ${selectedItem?.protected ? 'disabled' : ''}`} 
+          <div
+            className={`context-menu-item delete ${selectedItem?.protected ? 'disabled' : ''}`}
             onClick={selectedItem?.protected ? null : handleDelete}
           >
             🗑️ Delete

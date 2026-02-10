@@ -1,0 +1,138 @@
+.search-page {
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 2rem 1rem;
+  color: #e0e0e0;
+}
+
+.search-page h2 {
+  margin-bottom: 1rem;
+}
+
+/* notice */
+.search-notice {
+  padding: 0.6rem 1rem;
+  background: #2a2a3e;
+  border-left: 4px solid #6c63ff;
+  border-radius: 6px;
+  margin-bottom: 1rem;
+}
+
+/* index section */
+.index-section {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.index-btn {
+  padding: 0.5rem 1rem;
+  border: none;
+  border-radius: 6px;
+  background: #6c63ff;
+  color: #fff;
+  cursor: pointer;
+  font-size: 0.9rem;
+  transition: background 0.2s;
+}
+
+.index-btn:hover:not(:disabled) {
+  background: #574fd6;
+}
+
+.index-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.indexed-label {
+  font-size: 0.85rem;
+  color: #a0e8a0;
+}
+
+/* search bar */
+.search-bar {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.search-bar input {
+  flex: 1;
+  padding: 0.6rem 0.8rem;
+  border-radius: 6px;
+  border: 1px solid #444;
+  background: #1e1e2e;
+  color: #e0e0e0;
+  font-size: 0.95rem;
+}
+
+.search-bar input:focus {
+  outline: none;
+  border-color: #6c63ff;
+}
+
+.search-bar button {
+  padding: 0.6rem 1.2rem;
+  border: none;
+  border-radius: 6px;
+  background: #6c63ff;
+  color: #fff;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.search-bar button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* error */
+.search-error {
+  color: #ff6b6b;
+  margin-bottom: 1rem;
+}
+
+/* results */
+.search-results {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.no-results {
+  color: #888;
+  padding: 1rem;
+}
+
+.result-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.75rem 1rem;
+  background: #1e1e2e;
+  border-radius: 6px;
+  border: 1px solid #333;
+  cursor: pointer;
+  transition: border-color 0.2s;
+}
+
+.result-card:hover {
+  border-color: #6c63ff;
+}
+
+.result-path {
+  font-size: 0.9rem;
+  color: #ccc;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 70%;
+}
+
+.result-score {
+  font-size: 0.8rem;
+  color: #6c63ff;
+  white-space: nowrap;
+}
