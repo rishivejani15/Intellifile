@@ -1,0 +1,22 @@
+.file-upload {
+  display: flex;
+  flex-direction: column;
+}
+
+.file-upload label {
+  font-weight: bold;
+  margin-bottom: 8px;
+  color: #333;
+}
+
+.file-upload input[type="file"] {
+  padding: 10px;
+  border: 2px dashed #667eea;
+  border-radius: 5px;
+  cursor: pointer;
+  background: #f9f9f9;
+}
+
+.file-upload input[type="file"]:hover {
+  background: #f0f0f0;
+}
