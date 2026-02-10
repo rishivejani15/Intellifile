@@ -3,3 +3,4 @@ sentence-transformers
 pypdf 
 python-docx 
 tqdm
+numpy
