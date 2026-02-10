@@ -34,8 +34,8 @@ function App() {
         <div className="main-content">
           <div className="explorer-view">
             <div className="explorer-main">
-              <FileExplorer 
-                onFileSelect={() => {}}
+              <FileExplorer
+                onFileSelect={() => { }}
                 selectedFiles={{}}
                 drives={drives}
               />

@@ -1,7 +1,7 @@
-const { app, BrowserWindow, Menu, ipcMain, shell } = require('electron');
+const { app, BrowserWindow, Menu, ipcMain, shell, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const { execSync,spawn } = require('child_process');
+const { execSync, spawn } = require('child_process');
 
 // Check if running in development mode (force true for now since React dev server is running)
 const isDev = true;
@@ -77,21 +77,110 @@ function isSystemFile(filename) {
 }
 
 let pyProcess;
+let pyReady = false;
+let pyBuffer = '';
+let pendingRequests = new Map();  // requestId -> { resolve, timeout }
+let requestCounter = 0;
 
-function startPython() {
-  pyProcess = spawn("python", [
-    path.join(__dirname, "../python/engine_server.py")
-  ]);
+function sendToPython(payload, timeoutMs = 30000) {
+  return new Promise((resolve) => {
+    if (!pyProcess || !pyReady) {
+      return resolve({ error: 'Search engine is not ready yet.' });
+    }
+    const id = ++requestCounter;
+    payload._id = id;
 
-  pyProcess.stdout.on("data", (data) => {
-    console.log("PY:", data.toString());
-  });
+    const timer = setTimeout(() => {
+      pendingRequests.delete(id);
+      resolve({ error: 'Request timed out' });
+    }, timeoutMs);
 
-  pyProcess.stderr.on("data", (data) => {
-    console.error("PY ERR:", data.toString());
+    pendingRequests.set(id, { resolve, timeout: timer });
+    pyProcess.stdin.write(JSON.stringify(payload) + '\n');
   });
 }
 
+function startPython() {
+  const scriptPath = path.join(__dirname, "../backend/engine_server.py");
+  console.log('[Python] Starting engine from:', scriptPath);
+
+  pyProcess = spawn("python", [scriptPath], {
+    cwd: path.join(__dirname, '..'),
+    stdio: ['pipe', 'pipe', 'pipe']
+  });
+
+  pyProcess.stdout.on("data", (data) => {
+    const text = data.toString();
+    console.log("[PY stdout]", text.trim());
+
+    // Check for readiness signal
+    if (!pyReady && text.includes('IntelliFile Python Engine Ready')) {
+      pyReady = true;
+      console.log('[Python] ✅ Engine is ready — pyReady = true');
+    }
+
+    // Buffer stdout and resolve pending requests when we get complete JSON lines
+    pyBuffer += text;
+    const lines = pyBuffer.split('\n');
+    // Keep last (possibly incomplete) line in buffer
+    pyBuffer = lines.pop();
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      try {
+        const parsed = JSON.parse(trimmed);
+        const id = parsed._id;
+        if (id && pendingRequests.has(id)) {
+          const { resolve, timeout } = pendingRequests.get(id);
+          clearTimeout(timeout);
+          pendingRequests.delete(id);
+          resolve(parsed);
+        }
+      } catch (e) {
+        // Not valid JSON, ignore
+        console.log("Not a valid json");
+      }
+    }
+  });
+
+  pyProcess.stderr.on("data", (data) => {
+    console.error("[PY stderr]", data.toString().trim());
+  });
+
+  pyProcess.on("close", (code) => {
+    console.log('[Python] ❌ Process exited with code:', code);
+    pyReady = false;
+    // Reject all pending requests
+    for (const [id, { resolve, timeout }] of pendingRequests) {
+      clearTimeout(timeout);
+      resolve({ error: 'Python engine crashed' });
+    }
+    pendingRequests.clear();
+  });
+}
+
+ipcMain.handle("search", async (_, query) => {
+  console.log('[IPC] search called, pyReady:', pyReady, 'query:', query);
+  return sendToPython({ action: "search", query });
+});
+
+ipcMain.handle("search-status", async () => {
+  console.log('[IPC] search-status called, pyReady:', pyReady);
+  return { ready: pyReady };
+});
+
+ipcMain.handle("index-folder", async (_, folder) => {
+  return sendToPython({ action: "index", folder }, 300000);  // 5-min timeout for large folders
+});
+
+ipcMain.handle("dialog-select-folder", async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    properties: ['openDirectory'],
+    title: 'Select a folder to index'
+  });
+  if (result.canceled || result.filePaths.length === 0) return null;
+  return { path: result.filePaths[0] };
+});
 
 function isProtectedPath(filePath) {
   return PROTECTED_PATHS.some(pattern => pattern.test(filePath));
@@ -557,16 +646,26 @@ function createWindow() {
 
 app.on('ready', () => {
   registerIpcHandlers();
+  startPython();
   createWindow();
 });
+
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit();
   }
 });
+
+app.on('before-quit', () => {
+  if (pyProcess) {
+    console.log('[Python] Killing engine process');
+    pyProcess.kill();
+    pyProcess = null;
+  }
+});
+
 app.on('activate', () => {
   if (mainWindow === null) {
-    startPython();
     createWindow();
   }
 });
