@@ -1,13 +1,17 @@
 import os
-from backend.core.scanner import scan_folder
-from backend.core.extractor import extract_text
-from backend.core.chunker import chunk_text
-from backend.core.db import init_db, get_connection
-from backend.core.crypto_utils import encrypt_text
-from backend.core.file_state import get_file_state
-from tqdm import tqdm
+from core.scanner import scan_folder
+from core.extractor import extract_text
+from core.chunker import chunk_text
+from core.db import init_db, get_connection
+from core.file_state import get_file_state
 
-def index_files_incremental(root_folder="test_files"):
+
+def index_files_incremental(root_folder):
+    """
+    Scan *root_folder*, extract text, chunk, and store in SQLite.
+    Returns a list of chunk IDs that were added or modified
+    (to be passed to update_faiss).
+    """
     init_db()
 
     files = scan_folder(root_folder)
@@ -29,7 +33,7 @@ def index_files_incremental(root_folder="test_files"):
         if state == "new":
             cur.execute(
                 "INSERT INTO files(path, filename, modified_time) VALUES (?, ?, ?)",
-                (path, filename, modified_time)
+                (path, filename, modified_time),
             )
             cur.execute("SELECT id FROM files WHERE path=?", (path,))
             file_id = cur.fetchone()[0]
@@ -42,7 +46,7 @@ def index_files_incremental(root_folder="test_files"):
             cur.execute("DELETE FROM chunks WHERE file_id=?", (file_id,))
             cur.execute(
                 "UPDATE files SET modified_time=? WHERE id=?",
-                (modified_time, file_id)
+                (modified_time, file_id),
             )
 
         text = extract_text(path)
@@ -54,7 +58,7 @@ def index_files_incremental(root_folder="test_files"):
         for idx, chunk in enumerate(chunks):
             cur.execute(
                 "INSERT INTO chunks (file_id, chunk_index, text) VALUES (?, ?, ?)",
-                (file_id, idx, encrypt_text(chunk))
+                (file_id, idx, chunk),
             )
             affected_chunk_ids.append(cur.lastrowid)
 
@@ -71,5 +75,5 @@ def index_files_incremental(root_folder="test_files"):
 
     conn.commit()
     conn.close()
-    print("Indexing completed")
+    print(f"Indexing completed — {len(affected_chunk_ids)} chunks affected.")
     return affected_chunk_ids

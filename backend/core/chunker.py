@@ -1,24 +1,32 @@
-def chunk_text(text,chunk_size = 400):
+def chunk_text(text, chunk_size=400, overlap=80):
     """
-    Splits text into chunks of chunk_size
-    Returns a list of chunks strings
+    Split *text* into overlapping word-level chunks.
+
+    Parameters
+    ----------
+    chunk_size : int
+        Maximum number of words per chunk.
+    overlap : int
+        Number of words shared between consecutive chunks.
+        Prevents loss of context at chunk boundaries.
+
+    Returns
+    -------
+    list[str]
     """
     words = text.split()
+    if not words:
+        return []
+
     chunks = []
-    
-    current_chunk = []
-    curret_len = 0
-    
-    for word in words:
-        current_chunk.append(word)
-        curret_len += 1
-        
-        if curret_len >= chunk_size:
-            chunks.append(" ".join(current_chunk))
-            current_chunk = []
-            curret_len = 0
-        
-    if current_chunk:
-        chunks.append(" ".join(current_chunk))
-    
+    start = 0
+    step = max(chunk_size - overlap, 1)
+
+    while start < len(words):
+        end = start + chunk_size
+        chunks.append(" ".join(words[start:end]))
+        if end >= len(words):
+            break
+        start += step
+
     return chunks

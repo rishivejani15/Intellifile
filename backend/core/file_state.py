@@ -1,5 +1,5 @@
 import os
-from backend.core.db import get_connection
+from core.db import get_connection
 
 def get_file_state(path):
     """
