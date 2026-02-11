@@ -1,142 +1,259 @@
 const path = require("path");
 const fs = require("fs");
 
+let llama = null;
+let chatModel = null;
+let embedModel = null;
+let chatContext = null;
+let embedContext = null;
 let session = null;
-let context = null;
-let model = null;
 
-// Simple text chunker
-function chunkText(text, chunkSize = 500, overlap = 50) {
-    const chunks = [];
-    for (let i = 0; i < text.length; i += chunkSize - overlap) {
-        chunks.push(text.slice(i, i + chunkSize));
-    }
-    return chunks;
+let chunks = [];
+let chunkEmbeddings = [];
+
+// Cosine similarity
+function cosineSimilarity(a, b) {
+  let dot = 0, normA = 0, normB = 0;
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i] * b[i];
+    normA += a[i] * a[i];
+    normB += b[i] * b[i];
+  }
+  if (normA === 0 || normB === 0) return 0;
+  return dot / (Math.sqrt(normA) * Math.sqrt(normB));
 }
 
-// Basic keyword similarity scorer
-function findRelevantChunks(query, text, topK = 3) {
-    const chunks = chunkText(text);
-    const queryWords = query.toLowerCase().split(/\s+/).filter(w => w.length > 3);
+// Better paragraph-aware chunking
+function chunkText(text, maxChars = 1500) {
+  if (!text) return [];
+  // normalize newlines
+  const normalizedText = text.replace(/\r\n/g, "\n");
+  const trimmed = normalizedText.trim();
 
-    if (queryWords.length === 0) return chunks.slice(0, topK);
+  if (trimmed.length === 0) return [];
 
-    const scoredChunks = chunks.map(chunk => {
-        let score = 0;
-        const lowerChunk = chunk.toLowerCase();
-        queryWords.forEach(word => {
-            if (lowerChunk.includes(word)) score++;
-        });
-        return { chunk, score };
+  if (normalizedText.length <= maxChars) {
+    return [trimmed];
+  }
+
+  // Try splitting by double newlines first (paragraphs)
+  let initialChunks = normalizedText.split(/\n\s*\n/);
+
+  // If we only have 1 chunk (or few) and the text is large, it might be a CSV or Code file
+  // so we split by single newlines.
+  if (initialChunks.length < 2 && normalizedText.length > maxChars) {
+    initialChunks = normalizedText.split("\n");
+  }
+
+  const finalChunks = [];
+  let currentChunk = "";
+
+  for (const piece of initialChunks) {
+    const trimmedPiece = piece.trim();
+    if (!trimmedPiece) continue;
+
+    const toAdd = (currentChunk ? "\n" : "") + trimmedPiece;
+
+    if (currentChunk.length + toAdd.length > maxChars) {
+      if (currentChunk) finalChunks.push(currentChunk);
+      // If the piece itself is larger than maxChars, we must split it hard
+      if (trimmedPiece.length > maxChars) {
+        let start = 0;
+        while (start < trimmedPiece.length) {
+          finalChunks.push(trimmedPiece.slice(start, start + maxChars));
+          start += maxChars;
+        }
+        currentChunk = "";
+      } else {
+        currentChunk = trimmedPiece;
+      }
+    } else {
+      currentChunk += (currentChunk ? "\n" : "") + trimmedPiece;
+    }
+  }
+
+  if (currentChunk) finalChunks.push(currentChunk);
+
+  return finalChunks;
+}
+
+async function initModels() {
+  if (chatModel && embedModel) return;
+
+  const { getLlama } = await import("node-llama-cpp");
+  llama = await getLlama();
+
+  const chatPath = path.join(__dirname, "models", "qwen2.5-3b-instruct-q4_k_m.gguf");
+  const embedPath = path.join(__dirname, "models", "nomic-embed.gguf");
+
+  if (!fs.existsSync(chatPath)) throw new Error("Chat model not found");
+  if (!fs.existsSync(embedPath)) throw new Error("Embedding model not found");
+
+  console.log("Loading models...");
+
+  // Load models initially - contexts will be created as needed to manage memory if necessary
+  // But for better performance, we keep them if possible. 
+  // Given the error "Failed to create context", we should be careful.
+
+  chatModel = await llama.loadModel({ modelPath: chatPath });
+  embedModel = await llama.loadModel({ modelPath: embedPath });
+
+  console.log("Models loaded successfully");
+}
+
+async function getEmbedding(text) {
+  if (!embedContext) {
+    embedContext = await embedModel.createEmbeddingContext();
+  }
+  const embedding = await embedContext.getEmbeddingFor(text);
+  return embedding.vector;
+}
+
+async function ingestDocument(text) {
+  await initModels();
+
+  console.log(`Ingesting document. Text length: ${text ? text.length : 0}`);
+
+  if (!text || text.trim().length === 0) {
+    console.warn("Document text is empty!");
+  }
+
+  console.log("Chunking document...");
+  chunks = chunkText(text);
+
+  if (chunks.length === 0 && text && text.trim().length > 0) {
+    console.log("Chunking resulted in 0 chunks, but text exists. Using full text as one chunk.");
+    chunks.push(text.slice(0, 2000)); // Cap it just in case, though chunkText should have handled it
+  }
+
+  console.log(`Created ${chunks.length} chunks.`);
+  chunkEmbeddings = [];
+
+  console.log(`Embedding ${chunks.length} chunks...`);
+
+  // Ensure embed context exists
+  if (!embedContext) {
+    embedContext = await embedModel.createEmbeddingContext();
+  }
+
+  for (const chunk of chunks) {
+    // Nomic specific prefix if needed, but usually raw text is fine or check documentation
+    // Nomic embed v1.5 usually wants "search_document: " prefix for docs
+    const vector = await getEmbedding(`search_document: ${chunk}`);
+    chunkEmbeddings.push(vector);
+  }
+
+  // We can dispose embed context here if we want to save VRAM for chat, 
+  // but we need it for query embedding later. 
+  // If VRAM is tight, we might need to swap contexts.
+  // For now, let's keep it.
+
+  console.log("Document ingested and ready");
+}
+
+async function getRelevantChunks(query, topK = 5) {
+  if (chunks.length === 0) return [];
+
+  // Nomic specific prefix for queries
+  const qVec = await getEmbedding(`search_query: ${query}`);
+
+  const scores = chunkEmbeddings.map((emb, i) => ({
+    index: i,
+    score: cosineSimilarity(qVec, emb)
+  }));
+
+  scores.sort((a, b) => b.score - a.score);
+  return scores.slice(0, topK).map(s => chunks[s.index]);
+}
+
+async function chat(query, onTokenCallback) {
+  await initModels();
+
+  if (chunks.length === 0) {
+    const msg = "I have no document context to answer from. Please upload a valid document with text content.";
+    if (onTokenCallback) onTokenCallback(msg);
+    return msg;
+  }
+
+  let relevantChunks = [];
+  try {
+    let topK = 5;
+    const lowerQuery = query.toLowerCase();
+
+    // Dynamic Top-K Strategy
+    if (lowerQuery.includes("summarize") ||
+      lowerQuery.includes("summary") ||
+      lowerQuery.includes("overview") ||
+      lowerQuery.includes("describe") ||
+      lowerQuery.includes("what is this") ||
+      lowerQuery.includes("content") ||
+      chunks.length <= 15) {  // Short docs: use everything
+      topK = chunks.length;
+    }
+
+    console.log(`Query: "${query}" | Chunks: ${chunks.length} | Using Top-K: ${topK}`);
+    relevantChunks = await getRelevantChunks(query, topK);
+  } catch (err) {
+    console.error("Embedding lookup failed:", err);
+    // Fallback: use first chunk if available
+    if (chunks.length > 0) relevantChunks = [chunks[0]];
+    // If it was a real error preventing retrieval, we might want to notify, 
+    // but fallback often works for simple cases.
+  }
+
+  const contextText = relevantChunks.length > 0
+    ? relevantChunks.join("\n---\n")
+    : "";
+
+  const userPrompt = contextText
+    ? `Document context:\n${contextText}\n\nQuestion: ${query}`
+    : `Question: ${query}`;
+
+  if (onTokenCallback) onTokenCallback("Thinking... ");
+
+  // Create chat context if not exists
+  if (!chatContext) {
+    chatContext = await chatModel.createContext({ contextSize: 8192 });
+  }
+
+  const { LlamaChatSession } = await import("node-llama-cpp");
+
+  if (!session) {
+    session = new LlamaChatSession({
+      contextSequence: chatContext.getSequence(),
+      systemPrompt: `You are a helpful and precise document assistant.
+Use the provided document context to answer the user's question.
+- For specific facts, verify they are in the context.
+- For summaries or overviews, synthesize the available information.
+- If the answer is not in the document, state that clearly.
+- Maintain a professional and helpful tone.`
+    });
+  }
+
+  let fullResponse = "";
+
+  try {
+    const response = await session.prompt(userPrompt, {
+      temperature: 0.1,
+      maxTokens: 1024,
+      onToken: (chunkIds) => {
+        const token = chatModel.detokenize(chunkIds);
+        fullResponse += token;
+        if (onTokenCallback) onTokenCallback(token);
+      }
     });
 
-    scoredChunks.sort((a, b) => b.score - a.score);
-    return scoredChunks.slice(0, topK).map(item => item.chunk);
-}
-
-async function initModel() {
-    if (model) return;
-
-    try {
-        const { getLlama } = await import("node-llama-cpp");
-
-        const llama = await getLlama();
-        const modelPath = path.join(__dirname, "models", "model.gguf");
-
-        if (!fs.existsSync(modelPath)) {
-            throw new Error(`Model not found at ${modelPath}. Please ensure 'model.gguf' exists.`);
-        }
-
-        console.log("Loading GGUF Model...");
-        model = await llama.loadModel({
-            modelPath: modelPath,
-        });
-
-        context = await model.createContext();
-        session = new (await import("node-llama-cpp")).LlamaChatSession({
-            contextSequence: context.getSequence(),
-        });
-
-        console.log("GGUF Model Loaded Successfully!");
-    } catch (error) {
-        console.error("Failed to load LLM:", error);
-        throw error;
+    // If 'response' is returned as string (api v3), we are good.
+    // If it relies on onToken purely, we are also good.
+    if (!fullResponse && typeof response === 'string') {
+      fullResponse = response;
     }
+  } catch (err) {
+    console.error("Chat generation failed:", err);
+    if (onTokenCallback) onTokenCallback("Error generating response: " + err.message);
+  }
+
+  return fullResponse;
 }
 
-async function chat(query, documentContent, onTokenCallback) {
-    if (!model) await initModel();
-
-    // RAG: Retrieve relevant context
-    const relevantChunks = findRelevantChunks(query, documentContent, 3);
-    const contextText = relevantChunks.join("\n...\n");
-
-    // STRICT PROMPT as requested
-    const finalPrompt = `You are a document question-answering assistant.
-
-Your task is to answer the user’s question using ONLY the information
-provided in the retrieved document context.
-
-Rules you MUST follow:
-1. Use ONLY the given context to answer.
-2. If the answer is NOT present in the context, say:
-   "I couldn't find that in the uploaded document."
-3. Do NOT use prior knowledge or make assumptions.
-4. Do NOT hallucinate or invent details.
-5. Keep answers concise, clear, and factual.
-6. When possible, include citations using page numbers like (p. 3).
-
-Answer style:
-- Short paragraphs or bullet points
-- No unnecessary explanations
-- No repetition
-- No emojis
-
-Context:
-${contextText}
-
-Question:
-${query}
-
-Answer:`;
-
-    if (onTokenCallback) onTokenCallback("Thinking... ");
-
-    let fullResponse = "";
-
-    // FIX: Don't create new sessions endlessly which consumes context sequences.
-    // Instead, reuse the session if possible, OR dispose the old one.
-    // For simplicity and stability with a single context, we initialize session ONCE in initModel.
-    // Then here we just use it.
-
-    if (!session) {
-        session = new (await import("node-llama-cpp")).LlamaChatSession({
-            contextSequence: context.getSequence(),
-        });
-    }
-
-    // To ensure "stateless" behavior in a stateful session, we can just reset conversation history manually
-    // using the correct internal method or by managing prompt construction manually without using session history features if needed.
-    // However, node-llama-cpp v3 session management is tricky. 
-    // EASIEST FIX: Just rely on the "System Prompt" to override previous context bias, 
-    // or explicitly properly dispose the previous sequence if we wanted new ones.
-    //
-    // BUT: reusing the single session is safest against "No sequences left".
-    // We will simply rely on the strong System Prompt to define strict context for THIS turn.
-
-
-    await session.prompt(finalPrompt, {
-        maxTokens: 512,
-        temperature: 0.1, // Very low temp for strict adherence
-        topP: 0.9,
-        onToken: (chunk) => {
-            const token = model.detokenize(chunk);
-            fullResponse += token;
-            if (onTokenCallback) onTokenCallback(token);
-        }
-    });
-
-    return fullResponse;
-}
-
-module.exports = { chat };
+module.exports = { chat, ingestDocument };

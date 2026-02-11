@@ -6,6 +6,7 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 models/
+backend/venv/
 
 # ===============================
 # Electron build output

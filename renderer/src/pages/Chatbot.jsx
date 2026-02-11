@@ -4,7 +4,7 @@ export default function Chatbot() {
     const [messages, setMessages] = useState([
         {
             role: "assistant",
-            content: "Hello! I'm your AI assistant. Please upload a document so I can help you analyze it.",
+            content: "Hello! I'm your AI assistant. You can upload PDF, Word, Excel, or PowerPoint files to get started.",
         },
     ]);
     const [input, setInput] = useState("");
@@ -22,15 +22,17 @@ export default function Chatbot() {
     const handleUpload = async () => {
         const res = await window.electronAPI.openFile();
         if (res) {
-            setFile(res);
-            addMessage("user", `Uploaded: ${res.filePath}`);
-            // Simulate AI response
-            setTimeout(() => {
-                addMessage(
-                    "assistant",
-                    `I've received "${res.filePath}". What would you like to know about this document?`
-                );
-            }, 1000);
+            const fileName = res.filePath.split(/[\\/]/).pop();
+            setFile({ filePath: res.filePath });
+            addMessage("user", `Uploaded: ${fileName}`);
+
+            // Ingest the content in backend
+            try {
+                await window.electronAPI.ingestDocument(res.filePath);
+                addMessage("assistant", `I've loaded the document "${fileName}". Ask me anything about it!`);
+            } catch (err) {
+                addMessage("assistant", "Error loading document for analysis.");
+            }
         }
     };
 
@@ -91,7 +93,7 @@ export default function Chatbot() {
         });
 
         // Start Streaming
-        window.electronAPI.startChat(userMessage, file.content);
+        window.electronAPI.startChat(userMessage);
     };
 
     const handleKeyPress = (e) => {
