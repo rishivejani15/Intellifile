@@ -21,15 +21,32 @@ ipcMain.on("message", (event, msg) => {
 });
 
 // 🔽 OPEN FILE + READ CONTENT
+// 🔽 OPEN FILE + READ CONTENT
+const pdf = require("pdf-parse");
+
 ipcMain.handle("open-file", async () => {
   const result = await dialog.showOpenDialog({
     properties: ["openFile"],
+    filters: [{ name: "Documents", extensions: ["txt", "md", "js", "json", "pdf"] }]
   });
 
   if (result.canceled) return null;
 
   const filePath = result.filePaths[0];
-  const content = fs.readFileSync(filePath, "utf-8");
+  let content = "";
+
+  try {
+    if (filePath.toLowerCase().endsWith(".pdf")) {
+      const dataBuffer = fs.readFileSync(filePath);
+      const pdfData = await pdf(dataBuffer);
+      content = pdfData.text;
+    } else {
+      content = fs.readFileSync(filePath, "utf-8");
+    }
+  } catch (err) {
+    console.error("Error reading file:", err);
+    content = "Error reading file content.";
+  }
 
   return { filePath, content };
 });
@@ -63,6 +80,33 @@ ipcMain.handle("get-root-folders", () => {
     { name: "Downloads", path: path.join(home, "Downloads") },
     { name: "Desktop", path: path.join(home, "Desktop") },
   ];
+});
+
+// 🤖 AI Chat Handler
+// 🤖 AI Chat Handler
+const { chat } = require("./llm");
+
+// Changed to 'on' instead of 'handle' to support multiple replies (streaming)
+// Changed to 'on' instead of 'handle' to support multiple replies (streaming)
+ipcMain.on("ai-chat-start", async (event, { query, context }) => {
+  try {
+    // Note: With T5, response is extremely fast. We still use the callback hook 
+    // to maintain compatibility with the frontend listener structure.
+    const fullResponse = await chat(query, context, (token) => {
+      // Stream tokens directly
+      // Skip the "Thinking..." prefix from the frontend/llm if it is redundant, 
+      // but if the LLM emits it, we send it.
+      if (token !== "Thinking... ") {
+        event.reply("ai-chat-token", token);
+      }
+    });
+
+    // Ensure we signal done
+    event.reply("ai-chat-done", fullResponse);
+  } catch (error) {
+    console.error(error);
+    event.reply("ai-chat-error", error.message || "Failed to generate response.");
+  }
 });
 
 

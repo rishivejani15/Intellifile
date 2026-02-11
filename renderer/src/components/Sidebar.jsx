@@ -2,6 +2,7 @@ import "../styles/sidebar.css";
 
 const NAV_ITEMS = [
   "Dashboard",
+  "Chatbot",
   "File Explorer",
   "AI Search",
   "Document AI",

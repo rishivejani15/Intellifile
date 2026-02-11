@@ -37,6 +37,7 @@ import AISearch from "./pages/AISearch";
 import DocumentAI from "./pages/DocumentAI";
 import Duplicates from "./pages/Duplicates";
 import Settings from "./pages/Settings";
+import Chatbot from "./pages/Chatbot";
 
 function App() {
   const [page, setPage] = useState("File Explorer");
@@ -45,6 +46,10 @@ function App() {
     switch (page) {
       case "Dashboard":
         return <Dashboard />;
+      case "File Explorer":
+        return <FileExplorer />;
+      case "Chatbot":
+        return <Chatbot />;
       case "AI Search":
         return <AISearch />;
       case "Document AI":
