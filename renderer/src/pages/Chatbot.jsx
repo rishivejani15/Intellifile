@@ -2,7 +2,6 @@ import { useState, useRef, useEffect } from "react";
 
 export default function Chatbot() {
     console.log("DEBUG: Chatbot component loaded");
-    console.log("DEBUG: electronAPI:", window.electronAPI);
 
     const [messages, setMessages] = useState([
         {
@@ -22,27 +21,25 @@ export default function Chatbot() {
         scrollToBottom();
     }, [messages]);
 
+    useEffect(() => {
+        return () => {
+            window.electronAPI.removeAllChatListeners();
+        };
+    }, []);
+
     const handleUpload = async () => {
-        console.log("DEBUG: handleUpload called");
         const res = await window.electronAPI.openFile();
-        console.log("DEBUG: openFile result:", res);
         if (res) {
             const fileName = res.filePath.split(/[\\/]/).pop();
             setFile({ filePath: res.filePath });
             addMessage("user", `Uploaded: ${fileName}`);
 
-            // Ingest the content in backend
             try {
-                console.log("DEBUG: Calling ingestDocument with:", res.filePath);
                 await window.electronAPI.ingestDocument(res.filePath);
-                console.log("DEBUG: Ingest successful");
                 addMessage("assistant", `I've loaded the document "${fileName}". Ask me anything about it!`);
             } catch (err) {
-                console.log("DEBUG: Ingest error:", err);
                 addMessage("assistant", "Error loading document for analysis.");
             }
-        } else {
-            console.log("DEBUG: No file selected");
         }
     };
 
@@ -50,15 +47,7 @@ export default function Chatbot() {
         setMessages((prev) => [...prev, { role, content }]);
     };
 
-    useEffect(() => {
-        // Cleanup listeners on unmount
-        return () => {
-            window.electronAPI.removeAllChatListeners();
-        };
-    }, []);
-
     const sendMessage = async () => {
-        console.log("DEBUG: sendMessage called");
         if (!input.trim()) return;
 
         const userMessage = input;
@@ -66,29 +55,21 @@ export default function Chatbot() {
         addMessage("user", userMessage);
 
         if (!file) {
-            console.log("DEBUG: No file uploaded");
             setTimeout(() => {
                 addMessage("assistant", "Please upload a document first.");
             }, 500);
             return;
         }
 
-        // Add placeholder for AI response
         setMessages((prev) => [...prev, { role: "assistant", content: "Thinking..." }]);
-
-        // Setup Listeners
-        window.electronAPI.removeAllChatListeners(); // Clear old ones
-        console.log("DEBUG: Setting up listeners");
+        window.electronAPI.removeAllChatListeners();
 
         let currentResponse = "";
 
         window.electronAPI.onChatToken((token) => {
-            console.log("DEBUG: Received token:", token);
             currentResponse += token;
             setMessages((prev) => {
                 const newMsgs = [...prev];
-                // Identify the last message as the one we are streaming into
-                // If it was "Thinking...", we replace it.
                 const lastMsg = newMsgs[newMsgs.length - 1];
                 if (lastMsg.role === "assistant") {
                     lastMsg.content = currentResponse;
@@ -99,16 +80,12 @@ export default function Chatbot() {
 
         window.electronAPI.onChatDone(() => {
             console.log("DEBUG: Chat done");
-            // Optional: Clean up or finalize UI
         });
 
         window.electronAPI.onChatError((err) => {
-            console.log("DEBUG: Chat error:", err);
             setMessages((prev) => [...prev, { role: "assistant", content: `Error: ${err}` }]);
         });
 
-        // Start Streaming
-        console.log("DEBUG: Starting chat with:", userMessage);
         window.electronAPI.startChat(userMessage);
     };
 
@@ -117,135 +94,279 @@ export default function Chatbot() {
     };
 
     return (
-        <div style={{ display: "flex", flexDirection: "column", height: "calc(100vh - 48px)" }}>
-            <h1>
-                AI Chatbot <span style={badge}>Beta</span>
-            </h1>
-            <p style={{ opacity: 0.7, marginBottom: 20 }}>
-                Chat with your documents and get instant answers
-            </p>
+        <div style={containerStyle}>
+            {/* Header Section */}
+            <div style={headerStyle}>
+                <div>
+                    <h1 style={titleStyle}>
+                        AI Chatbot <span style={badgeStyle}>Beta</span>
+                    </h1>
+                    <p style={subtitleStyle}>Chat with your documents and get instant answers</p>
+                </div>
+            </div>
 
             {/* Chat Area */}
-            <div style={chatContainer}>
-                <div style={messagesList}>
+            <div style={chatWindowStyle}>
+                <div style={messagesContainerStyle}>
                     {messages.map((msg, idx) => (
                         <div
                             key={idx}
                             style={{
-                                ...messageBubble,
-                                alignSelf: msg.role === "user" ? "flex-end" : "flex-start",
-                                background: msg.role === "user" ? "#6d4aff" : "#1e293b",
-                                borderBottomRightRadius: msg.role === "user" ? 4 : 16,
-                                borderBottomLeftRadius: msg.role === "assistant" ? 4 : 16,
+                                ...messageRowStyle,
+                                justifyContent: msg.role === "user" ? "flex-end" : "flex-start",
                             }}
                         >
-                            <strong>{msg.role === "assistant" ? "🤖 AI" : "👤 You"}</strong>
-                            <div style={{ marginTop: 4 }}>{msg.content}</div>
+                            {msg.role === "assistant" && (
+                                <div style={avatarStyle}>
+                                    <RobotIcon />
+                                </div>
+                            )}
+                            
+                            <div
+                                style={{
+                                    ...bubbleStyle,
+                                    background: msg.role === "user" 
+                                        ? "linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)" 
+                                        : "#1e293b",
+                                    color: "#fff",
+                                    borderBottomRightRadius: msg.role === "user" ? 4 : 20,
+                                    borderBottomLeftRadius: msg.role === "assistant" ? 4 : 20,
+                                    boxShadow: msg.role === "user" 
+                                        ? "0 4px 12px rgba(99, 102, 241, 0.3)" 
+                                        : "0 2px 4px rgba(0,0,0,0.1)",
+                                }}
+                            >
+                                <div style={messageContentStyle}>{msg.content}</div>
+                            </div>
+
+                            {msg.role === "user" && (
+                                <div style={{...avatarStyle, background: '#4f46e5'}}>
+                                    <UserIcon />
+                                </div>
+                            )}
                         </div>
                     ))}
                     <div ref={messagesEndRef} />
                 </div>
 
                 {/* Input Area */}
-                <div style={inputArea}>
-                    <button style={uploadBtn} onClick={handleUpload} title="Upload Document">
-                        📎
-                    </button>
-                    <input
-                        style={inputStyle}
-                        value={input}
-                        onChange={(e) => setInput(e.target.value)}
-                        onKeyPress={handleKeyPress}
-                        placeholder={file ? `Ask about ${file.filePath}...` : "Type a message..."}
-                    />
-                    <button style={sendBtn} onClick={sendMessage}>
-                        ➤
-                    </button>
+                <div style={inputContainerStyle}>
+                    <div style={inputWrapperStyle}>
+                        <button 
+                            style={iconButtonStyle} 
+                            onClick={handleUpload} 
+                            title="Upload Document"
+                            onMouseEnter={(e) => e.target.style.background = "rgba(255,255,255,0.1)"}
+                            onMouseLeave={(e) => e.target.style.background = "transparent"}
+                        >
+                            <PaperclipIcon />
+                        </button>
+                        <input
+                            style={inputFieldStyle}
+                            value={input}
+                            onChange={(e) => setInput(e.target.value)}
+                            onKeyPress={handleKeyPress}
+                            placeholder={file ? `Ask about ${file.filePath.split(/[\\/]/).pop()}...` : "Type a message..."}
+                        />
+                        <button 
+                            style={sendButtonStyle} 
+                            onClick={sendMessage}
+                            disabled={!input.trim()}
+                        >
+                            <SendIcon />
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>
     );
 }
 
-const badge = {
-    background: "linear-gradient(90deg, #6d4aff, #8b5cf6)",
-    padding: "4px 10px",
-    borderRadius: 20,
-    fontSize: 12,
-    marginLeft: 10,
-};
+// --- Icons ---
 
-const chatContainer = {
-    flex: 1,
+const RobotIcon = () => (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <rect x="3" y="11" width="18" height="10" rx="2" />
+        <circle cx="12" cy="5" r="2" />
+        <path d="M12 7v4" />
+        <line x1="8" y1="16" x2="8" y2="16" />
+        <line x1="16" y1="16" x2="16" y2="16" />
+    </svg>
+);
+
+const UserIcon = () => (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+        <circle cx="12" cy="7" r="4" />
+    </svg>
+);
+
+const PaperclipIcon = () => (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+    </svg>
+);
+
+const SendIcon = () => (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <line x1="22" y1="2" x2="11" y2="13" />
+        <polygon points="22 2 15 22 11 13 2 9 22 2" />
+    </svg>
+);
+
+
+// --- Styles ---
+
+const containerStyle = {
     display: "flex",
     flexDirection: "column",
-    background: "#0f172a",
-    borderRadius: 16,
-    overflow: "hidden",
-    border: "1px solid #1e293b",
+    height: "100%",
+    color: "#e2e8f0",
+    overflow: "hidden", // Prevent outer scroll
 };
 
-const messagesList = {
-    flex: 1,
-    padding: 20,
-    overflowY: "auto",
+const headerStyle = {
+    marginBottom: 20,
+    flexShrink: 0,
+};
+
+const titleStyle = {
+    fontSize: "2rem", // Smaller than 3.2em
+    fontWeight: 700,
+    margin: 0,
+    background: "linear-gradient(to right, #fff, #94a3b8)",
+    WebkitBackgroundClip: "text",
+    WebkitTextFillColor: "transparent",
     display: "flex",
-    flexDirection: "column",
-    gap: 16,
-};
-
-const messageBubble = {
-    maxWidth: "80%",
-    padding: "12px 16px",
-    borderRadius: 16,
-    lineHeight: 1.5,
-    color: "#fff",
-};
-
-const inputArea = {
-    padding: 16,
-    background: "#1e293b",
-    display: "flex",
-    gap: 10,
     alignItems: "center",
+    gap: 12,
 };
 
-const inputStyle = {
+const badgeStyle = {
+    background: "rgba(139, 92, 246, 0.2)",
+    color: "#a78bfa",
+    fontSize: "0.8rem",
+    padding: "4px 8px",
+    borderRadius: "12px",
+    fontWeight: 600,
+    border: "1px solid rgba(139, 92, 246, 0.3)",
+    WebkitTextFillColor: "#a78bfa", // Reset override
+};
+
+const subtitleStyle = {
+    color: "#64748b",
+    margin: "8px 0 0 0",
+    fontSize: "0.95rem",
+};
+
+const chatWindowStyle = {
     flex: 1,
-    background: "#0f172a",
-    border: "1px solid #334155",
-    padding: "12px 16px",
+    display: "flex",
+    flexDirection: "column",
+    background: "#0f172a", // Darker background for chat
     borderRadius: 24,
-    color: "#fff",
-    outline: "none",
-    fontSize: 16,
+    border: "1px solid #1e293b",
+    overflow: "hidden",
+    boxShadow: "0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)",
+    position: "relative",
 };
 
-const sendBtn = {
-    background: "#6d4aff",
-    border: "none",
-    width: 44,
-    height: 44,
+const messagesContainerStyle = {
+    flex: 1,
+    overflowY: "auto",
+    padding: "24px",
+    display: "flex",
+    flexDirection: "column",
+    gap: 20,
+    scrollBehavior: "smooth",
+};
+
+const messageRowStyle = {
+    display: "flex",
+    alignItems: "flex-end",
+    gap: 12,
+    width: "100%",
+};
+
+const avatarStyle = {
+    width: 32,
+    height: 32,
     borderRadius: "50%",
-    color: "#fff",
-    cursor: "pointer",
+    background: "#334155",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    fontSize: 18,
+    flexShrink: 0,
+    color: "#e2e8f0",
 };
 
-const uploadBtn = {
-    background: "transparent",
+const bubbleStyle = {
+    padding: "16px 20px",
+    borderRadius: 20,
+    maxWidth: "70%",
+    lineHeight: 1.6,
+    border: "1px solid rgba(255,255,255,0.05)",
+    fontSize: "0.95rem",
+    wordBreak: "break-word",
+};
+
+const messageContentStyle = {
+    display: "flex",
+    flexDirection: "column",
+    gap: 8,
+};
+
+const inputContainerStyle = {
+    padding: "16px 24px",
+    background: "rgba(15, 23, 42, 0.95)",
+    borderTop: "1px solid #1e293b",
+    backdropFilter: "blur(10px)",
+};
+
+const inputWrapperStyle = {
+    display: "flex",
+    alignItems: "center",
+    gap: 12,
+    background: "#1e293b",
+    padding: "8px 8px 8px 16px",
+    borderRadius: "16px", // Pill shape
     border: "1px solid #334155",
-    width: 44,
-    height: 44,
+    transition: "border-color 0.2s",
+};
+
+const inputFieldStyle = {
+    flex: 1,
+    background: "transparent",
+    border: "none",
+    color: "#fff",
+    fontSize: "1rem",
+    outline: "none",
+    minHeight: 24,
+};
+
+const iconButtonStyle = {
+    background: "transparent",
+    border: "none",
+    cursor: "pointer",
+    padding: 8,
     borderRadius: "50%",
-    color: "#94a3b8",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    transition: "background 0.2s",
+};
+
+const sendButtonStyle = {
+    background: "linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)",
+    border: "none",
+    width: 40,
+    height: 40,
+    borderRadius: "50%",
+    color: "#fff",
     cursor: "pointer",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    fontSize: 20,
-    transition: "all 0.2s",
+    boxShadow: "0 2px 8px rgba(99, 102, 241, 0.4)",
+    transition: "transform 0.1s",
 };
