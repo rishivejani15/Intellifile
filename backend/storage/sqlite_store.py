@@ -3,7 +3,7 @@ import sqlite3
 import os
 import logging
 from typing import List, Optional, Tuple
-from .models import ChunkMetadata
+from models import ChunkMetadata
 
 class SQLiteStore:
     def __init__(self, db_path: str = "data/chunks.db"):

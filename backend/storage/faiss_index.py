@@ -22,7 +22,11 @@ class FaissIndex:
             if os.path.exists(self.index_path):
                 try:
                     self.index = faiss.read_index(self.index_path)
-                    print(f"Loaded FAISS index from {self.index_path}, size={self.index.ntotal}")
+                    if self.index.d != self.dim:
+                        logging.warning(f"Index dimension mismatch: file={self.index.d}, expected={self.dim}. Creating new index.")
+                        self._create_new()
+                    else:
+                        print(f"Loaded FAISS index from {self.index_path}, size={self.index.ntotal}")
                 except Exception as e:
                     logging.error(f"Failed to load index: {e}, creating new one.")
                     self._create_new()

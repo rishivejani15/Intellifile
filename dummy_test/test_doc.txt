@@ -1,0 +1,25 @@
+
+IntelliFile: The Local RAG Assistant
+
+Introduction
+IntelliFile is a privacy-first document analysis tool. It runs entirely on your local machine, ensuring that no sensitive data leaves your device. By leveraging local Large Language Models (LLMs) and vector databases, IntelliFile provides fast and accurate answers to your questions based on your uploaded documents.
+
+Architecture
+The system consists of three main components:
+1.  Frontend: An Electron-based desktop application built with React.
+2.  Backend: A Python FastAPI server that handles document processing and retrieval.
+3.  LLM Server: A local instance of a quantized model (e.g., Qwen-3B) running via llama.cpp.
+
+Key Features
+-   Secure: No cloud API calls.
+-   Fast: Uses FAISS for efficient vector similarity search.
+-   Flexible: Supports PDF, DOCX, and TXT files.
+-   Smart: Provides citations for every answer to ensure accuracy.
+
+Usage Guide
+To use IntelliFile, simply upload a document using the paperclip icon. Once the system confirms the upload, type your question in the chat box.
+
+Example Questions
+-   "What is the main advantage of IntelliFile?"
+-   "How does the architecture work?"
+-   "Is my data sent to the cloud?"

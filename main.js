@@ -6,8 +6,50 @@ const os = require("os");
 const axios = require("axios");
 const { spawn } = require("child_process");
 
+let llmProcess = null;
 let backendProcess = null;
 const BACKEND_URL = "http://127.0.0.1:8001";
+
+function startLLMServer() {
+  const backendPath = path.join(__dirname, "backend");
+  const modelPath = path.join(__dirname, "models", "qwen2.5-3b-instruct-q4_k_m.gguf");
+  const isWindows = process.platform === "win32";
+
+  if (!fs.existsSync(modelPath)) {
+    console.error("LLM Model not found at:", modelPath);
+    console.error("Please download Qwen model to models/ folder.");
+    return;
+  }
+
+  let pythonExecutable = isWindows
+    ? path.join(backendPath, "venv", "Scripts", "python.exe")
+    : path.join(backendPath, "venv", "bin", "python");
+
+  if (!fs.existsSync(pythonExecutable)) {
+    pythonExecutable = isWindows ? "python" : "python3";
+  }
+
+  console.log(`Starting LLM Server with: ${pythonExecutable}`);
+  console.log(`Model: ${modelPath}`);
+
+  llmProcess = spawn(pythonExecutable, [
+    "-m", "llama_cpp.server",
+    "--model", modelPath,
+    "--host", "127.0.0.1",
+    "--port", "8080"
+  ], {
+    cwd: backendPath,
+    stdio: 'inherit'
+  });
+
+  llmProcess.on('error', (err) => {
+    console.error("Failed to start LLM process:", err);
+  });
+
+  llmProcess.on('exit', (code, signal) => {
+    console.log(`LLM process exited with code ${code}`);
+  });
+}
 
 function startBackend() {
   const backendPath = path.join(__dirname, "backend");
@@ -17,6 +59,7 @@ function startBackend() {
     ? path.join(backendPath, "venv", "Scripts", "python.exe")
     : path.join(backendPath, "venv", "bin", "python");
 
+  // ... (rest is same)
   if (!fs.existsSync(pythonExecutable)) {
     console.warn("Venv Python not found at:", pythonExecutable);
     console.log("Falling back to system python...");
@@ -30,6 +73,7 @@ function startBackend() {
     stdio: 'inherit'
   });
 
+  // ... (error handlers same)
   backendProcess.on('error', (err) => {
     console.error("Failed to start backend process:", err);
   });
@@ -43,10 +87,11 @@ function startBackend() {
   });
 
   // Verify backend is up
+  // ...
   const checkBackend = async () => {
-    for (let i = 0; i < 60; i++) { // Wait up to 60 seconds
+    for (let i = 0; i < 60; i++) {
       try {
-        await axios.get(`${BACKEND_URL}/docs`);
+        await axios.get(`${BACKEND_URL}/health`); // Changed to /health
         console.log("Backend is ready and responding!");
         return;
       } catch (e) {
@@ -80,7 +125,7 @@ ipcMain.on("message", (event, msg) => {
 ipcMain.handle("open-file", async () => {
   const result = await dialog.showOpenDialog({
     properties: ["openFile"],
-    filters: [{ name: "Documents", extensions: ["pdf"] }]
+    filters: [{ name: "Documents", extensions: ["pdf", "docx", "txt"] }]
   });
 
   if (result.canceled) return null;
@@ -117,6 +162,7 @@ ipcMain.handle("ingest-document", async (_, filePath) => {
     console.log("Sending ingest request to backend for:", filePath);
 
     const FormData = require('form-data');
+    const fs = require('fs'); // Ensure fs is available
 
     // Check if backend is ready first to fail fast?
     // No, duplicate logic. Just try.
@@ -124,7 +170,7 @@ ipcMain.handle("ingest-document", async (_, filePath) => {
     const form = new FormData();
     form.append('file', fs.createReadStream(filePath));
 
-    const response = await axios.post(`${BACKEND_URL}/ingest_pdf`, form, {
+    const response = await axios.post(`${BACKEND_URL}/upload`, form, {
       headers: {
         ...form.getHeaders()
       },
@@ -147,12 +193,22 @@ ipcMain.on("ai-chat-start", async (event, query) => {
   try {
     // Call RAG Answer Endpoint
     console.log("Asking backend:", query);
-    const response = await axios.post(`${BACKEND_URL}/answer`, { query, k: 5 });
+    const response = await axios.post(`${BACKEND_URL}/ask`, { query, top_k: 5 });
 
     const answer = response.data.answer;
 
-    // Send the full response
-    event.reply("ai-chat-token", answer);
+    // Simulate streaming for animation effect
+    const chunkSize = 4; // Characters per chunk
+    const delay = 15; // ms delay between chunks
+
+    for (let i = 0; i < answer.length; i += chunkSize) {
+      const chunk = answer.slice(i, i + chunkSize);
+      event.reply("ai-chat-token", chunk);
+
+      // Non-blocking delay
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+
     event.reply("ai-chat-done", answer);
 
   } catch (error) {
@@ -162,6 +218,7 @@ ipcMain.on("ai-chat-start", async (event, query) => {
 });
 
 app.whenReady().then(() => {
+  startLLMServer();
   startBackend();
   createMainWindow();
 });
@@ -174,5 +231,9 @@ app.on('will-quit', () => {
   if (backendProcess) {
     console.log("Killing backend process...");
     backendProcess.kill();
+  }
+  if (llmProcess) {
+    console.log("Killing LLM process...");
+    llmProcess.kill();
   }
 });
