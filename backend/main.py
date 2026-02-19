@@ -20,6 +20,7 @@ from storage.faiss_index import FaissIndex
 from models import (
     ChunkMetadata, IngestResponse, QueryResponse, SearchResult, ChatQueryRequest, ChatResponse
 )
+from llm import init_models, chat
 
 # Configuration
 # Users can override these via environment variables or hardcoded defaults
@@ -60,6 +61,9 @@ faiss_index = None
 async def startup_event():
     global embedding_model, faiss_index
     
+    # Initialize LLM models first
+    init_models()
+
     logger.info(f"Loading embedding model: {EMBEDDING_MODEL_NAME}...")
     try:
         embedding_model = SentenceTransformer(EMBEDDING_MODEL_NAME)
@@ -84,6 +88,30 @@ async def health_check():
         "faiss_index_size": faiss_index.index.ntotal if faiss_index else 0,
         "llm_endpoint": LLAMA_CPP_ENDPOINT
     }
+
+@app.post("/refresh_index")
+async def refresh_index():
+    global faiss_index
+    try:
+        if faiss_index:
+            faiss_index.load_or_create() # Force reload or check?
+            # load_or_create checks if exists. But if already loaded, it might not reload if logic says "if not self.index".
+            # FaissIndex.load_or_create() checks `if self.index`? No.
+            # Let's check backend/storage/faiss_index.py again.
+            pass 
+        
+        # We should iterate on FaissIndex class to support reload.
+        # Or just re-instantiate.
+        dummy_vec = embedding_model.encode(["test"], convert_to_numpy=True)
+        dim = dummy_vec.shape[1]
+        faiss_index = FaissIndex(dim=dim) 
+        # faiss_index init calls load_or_create which loads from disk.
+        
+        logger.info(f"Index refreshed. New size: {faiss_index.index.ntotal}")
+        return {"ok": True, "size": faiss_index.index.ntotal}
+    except Exception as e:
+        logger.error(f"Failed to refresh index: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/upload", response_model=IngestResponse)
 async def upload_document(file: UploadFile = File(...)):
@@ -285,6 +313,47 @@ async def ask_question(request: ChatQueryRequest):
         answer=answer,
         sources=citations
     )
+
+@app.post("/chat")
+async def chat_endpoint(request: ChatQueryRequest):
+    query = request.query
+    relevant_chunks = None
+
+    if embedding_model and faiss_index and faiss_index.index.ntotal > 0:
+        try:
+            # 1. Embed Query
+            q_vec = embedding_model.encode([query], convert_to_numpy=True, normalize_embeddings=True)[0]
+            
+            # Determine K based on query type
+            is_summary = "summar" in query.lower() or "overview" in query.lower()
+            search_k = 10 if is_summary else 5
+
+            # 2. Search Index via FaissIndex wrapper
+            dists, ids = faiss_index.search(q_vec, k=search_k)
+            
+            # 3. Filter invalid IDs
+            valid_indices = [i for i, id_val in enumerate(ids) if id_val != -1]
+            valid_ids = [ids[i] for i in valid_indices]
+            valid_dists = [dists[i] for i in valid_indices]
+            
+            if valid_ids:
+                # 4. Fetch Text from SQLite
+                chunks = sqlite_store.get_chunks([int(i) for i in valid_ids])
+                chunk_map = {c.id: c.text for c in chunks}
+                
+                relevant_chunks = []
+                # Preserve order from FAISS search (best match first)
+                for i, cid in enumerate(valid_ids):
+                    if cid in chunk_map:
+                        relevant_chunks.append((chunk_map[cid], float(valid_dists[i])))
+                
+                logger.info(f"Retrieved {len(relevant_chunks)} chunks from in-memory index for chat.")
+        except Exception as e:
+            logger.error(f"Retrieval error in chat: {e}")
+            # Fallback to no chunks -> LLM will say 'I couldn't find...' or use internal knowledge if allowed (not allowed per prompt)
+
+    response = chat(query, chunks=relevant_chunks)
+    return {"response": response}
 
 if __name__ == "__main__":
     import uvicorn

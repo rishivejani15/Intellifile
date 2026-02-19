@@ -1,106 +1,41 @@
-
 const { app, BrowserWindow, ipcMain, dialog } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const os = require("os");
+const { PythonShell } = require('python-shell');
 const axios = require("axios");
-const { spawn } = require("child_process");
+const { spawn } = require('child_process');
 
-let llmProcess = null;
+const BACKEND_URL = "http://127.0.0.1:8000";
+
+const isWindows = process.platform === "win32";
+const pythonPath = isWindows
+  ? path.join(__dirname, "backend", "venv", "Scripts", "python.exe")
+  : path.join(__dirname, "backend", "venv", "bin", "python");
+
+console.log("DEBUG: Python path set to:", pythonPath);
+
 let backendProcess = null;
-const BACKEND_URL = "http://127.0.0.1:8001";
-
-function startLLMServer() {
-  const backendPath = path.join(__dirname, "backend");
-  const modelPath = path.join(__dirname, "models", "qwen2.5-3b-instruct-q4_k_m.gguf");
-  const isWindows = process.platform === "win32";
-
-  if (!fs.existsSync(modelPath)) {
-    console.error("LLM Model not found at:", modelPath);
-    console.error("Please download Qwen model to models/ folder.");
-    return;
-  }
-
-  let pythonExecutable = isWindows
-    ? path.join(backendPath, "venv", "Scripts", "python.exe")
-    : path.join(backendPath, "venv", "bin", "python");
-
-  if (!fs.existsSync(pythonExecutable)) {
-    pythonExecutable = isWindows ? "python" : "python3";
-  }
-
-  console.log(`Starting LLM Server with: ${pythonExecutable}`);
-  console.log(`Model: ${modelPath}`);
-
-  llmProcess = spawn(pythonExecutable, [
-    "-m", "llama_cpp.server",
-    "--model", modelPath,
-    "--host", "127.0.0.1",
-    "--port", "8080"
-  ], {
-    cwd: backendPath,
-    stdio: 'inherit'
-  });
-
-  llmProcess.on('error', (err) => {
-    console.error("Failed to start LLM process:", err);
-  });
-
-  llmProcess.on('exit', (code, signal) => {
-    console.log(`LLM process exited with code ${code}`);
-  });
-}
 
 function startBackend() {
-  const backendPath = path.join(__dirname, "backend");
-  const isWindows = process.platform === "win32";
+  const scriptPath = path.join(__dirname, "backend", "main.py");
+  console.log("Starting backend server from:", scriptPath);
 
-  let pythonExecutable = isWindows
-    ? path.join(backendPath, "venv", "Scripts", "python.exe")
-    : path.join(backendPath, "venv", "bin", "python");
-
-  // ... (rest is same)
-  if (!fs.existsSync(pythonExecutable)) {
-    console.warn("Venv Python not found at:", pythonExecutable);
-    console.log("Falling back to system python...");
-    pythonExecutable = isWindows ? "python" : "python3";
-  }
-
-  console.log(`Starting backend with: ${pythonExecutable}`);
-
-  backendProcess = spawn(pythonExecutable, ["-m", "uvicorn", "main:app", "--host", "127.0.0.1", "--port", "8001"], {
-    cwd: backendPath,
-    stdio: 'inherit'
+  backendProcess = spawn(pythonPath, [scriptPath], {
+    env: { ...process.env, OMP_NUM_THREADS: "1", USE_SIMPLE_THREADED_LEVEL3: "1" }
   });
 
-  // ... (error handlers same)
-  backendProcess.on('error', (err) => {
-    console.error("Failed to start backend process:", err);
+  backendProcess.stdout.on("data", (data) => {
+    console.log(`Backend: ${data}`);
   });
 
-  backendProcess.on('exit', (code, signal) => {
-    if (code !== 0 && code !== null) {
-      console.error(`Backend process exited with code ${code} and signal ${signal}`);
-    } else {
-      console.log("Backend process exited gracefully");
-    }
+  backendProcess.stderr.on("data", (data) => {
+    console.error(`Backend Error: ${data}`);
   });
 
-  // Verify backend is up
-  // ...
-  const checkBackend = async () => {
-    for (let i = 0; i < 60; i++) {
-      try {
-        await axios.get(`${BACKEND_URL}/health`); // Changed to /health
-        console.log("Backend is ready and responding!");
-        return;
-      } catch (e) {
-        await new Promise(r => setTimeout(r, 1000));
-      }
-    }
-    console.error("Backend failed to respond after 60 seconds.");
-  };
-  checkBackend();
+  backendProcess.on("close", (code) => {
+    console.log(`Backend process exited with code ${code}`);
+  });
 }
 
 function createMainWindow() {
@@ -115,87 +50,115 @@ function createMainWindow() {
   });
 
   mainWindow.loadURL("http://localhost:5173");
+  mainWindow.webContents.openDevTools(); // Open dev tools for debugging
 }
 
-ipcMain.on("message", (event, msg) => {
-  console.log("From React:", msg);
-  event.reply("reply", "Hello from Electron 👋");
+app.on("will-quit", () => {
+  if (backendProcess) {
+    backendProcess.kill();
+  }
 });
 
-ipcMain.handle("open-file", async () => {
-  const result = await dialog.showOpenDialog({
-    properties: ["openFile"],
-    filters: [{ name: "Documents", extensions: ["pdf", "docx", "txt"] }]
-  });
-
-  if (result.canceled) return null;
-  return { filePath: result.filePaths[0], content: "" };
-});
-
-ipcMain.handle("read-folder", async (_, folderPath) => {
-  const items = fs.readdirSync(folderPath, { withFileTypes: true });
-  return items.map((item) => {
-    const fullPath = path.join(folderPath, item.name);
-    const stats = fs.statSync(fullPath);
-    return {
-      name: item.name,
-      path: fullPath,
-      isDirectory: item.isDirectory(),
-      size: stats.size,
-      modified: stats.mtime,
-    };
-  });
-});
-
-ipcMain.handle("get-root-folders", () => {
-  const home = os.homedir();
-  return [
-    { name: "Documents", path: path.join(home, "Documents") },
-    { name: "Downloads", path: path.join(home, "Downloads") },
-    { name: "Desktop", path: path.join(home, "Desktop") },
-  ];
-});
-
-// 🚀 Ingest Document calling Backend
-ipcMain.handle("ingest-document", async (_, filePath) => {
+ipcMain.handle("chat", async (event, query) => {
   try {
-    console.log("Sending ingest request to backend for:", filePath);
-
-    const FormData = require('form-data');
-    const fs = require('fs'); // Ensure fs is available
-
-    // Check if backend is ready first to fail fast?
-    // No, duplicate logic. Just try.
-
-    const form = new FormData();
-    form.append('file', fs.createReadStream(filePath));
-
-    const response = await axios.post(`${BACKEND_URL}/upload`, form, {
-      headers: {
-        ...form.getHeaders()
-      },
-      maxBodyLength: Infinity,
-      maxContentLength: Infinity
-    });
-
-    return response.data;
+    const results = await PythonShell.run('backend/llm.py', { args: ['chat', query], pythonPath });
+    const answer = results[0] || "";
+    return answer;
   } catch (err) {
-    console.error("Backend Ingest Error:", err.message);
-    if (err.response) {
-      console.error("Data:", err.response.data);
-    }
+    console.error("Chat error:", err);
     throw err;
   }
 });
 
-// 🤖 AI Chat Handler calling Backend
-ipcMain.on("ai-chat-start", async (event, query) => {
-  try {
-    // Call RAG Answer Endpoint
-    console.log("Asking backend:", query);
-    const response = await axios.post(`${BACKEND_URL}/ask`, { query, top_k: 5 });
+ipcMain.handle("search-status", async () => {
+  // For simplicity, return ready
+  return { status: "ready" };
+});
 
-    const answer = response.data.answer;
+ipcMain.handle("index-file", async (_, filePath) => {
+  try {
+    await PythonShell.run('backend/llm.py', { args: ['ingest_file', filePath], pythonPath });
+    return { success: true };
+  } catch (err) {
+    console.error("Index error:", err);
+    throw err;
+  }
+});
+
+// Keep the original for compatibility
+// Duplicate handler removed to prevent double execution and enforce use of backend server
+// See Axios handler below for active implementation
+
+
+ipcMain.handle("get-root-folders", async () => {
+  const homeDir = os.homedir();
+  return [
+    { name: "Home", path: homeDir },
+    { name: "Documents", path: path.join(homeDir, "Documents") },
+    { name: "Downloads", path: path.join(homeDir, "Downloads") },
+    { name: "Desktop", path: path.join(homeDir, "Desktop") },
+  ];
+});
+
+ipcMain.handle("read-folder", async (event, folderPath) => {
+  try {
+    const items = await fs.promises.readdir(folderPath, { withFileTypes: true });
+    return items.map((item) => ({
+      name: item.name,
+      path: path.join(folderPath, item.name),
+      isDirectory: item.isDirectory(),
+    }));
+  } catch (err) {
+    console.error("Error reading folder:", err);
+    return [];
+  }
+});
+
+ipcMain.handle("open-file", async () => {
+  const { canceled, filePaths } = await dialog.showOpenDialog({
+    properties: ["openFile"],
+    filters: [{ name: "Documents", extensions: ["pdf", "docx", "txt", "md"] }],
+  });
+  if (canceled || filePaths.length === 0) {
+    return null;
+  }
+  return { filePath: filePaths[0] };
+});
+
+// Keep the original for compatibility
+ipcMain.handle("ingest-document", async (_, filePath) => {
+  console.log("DEBUG: Ingesting document:", filePath);
+  try {
+    console.log("Ingesting document with Python:", filePath);
+
+    await PythonShell.run('backend/llm.py', { args: ['ingest_file', filePath], pythonPath });
+
+    console.log("DEBUG: Ingest successful");
+
+    // Refresh backend index
+    try {
+      await axios.post(`${BACKEND_URL}/refresh_index`);
+      console.log("DEBUG: Index refreshed on backend");
+    } catch (e) {
+      console.error("Failed to refresh index:", e.message);
+    }
+
+    return { success: true };
+  } catch (err) {
+    console.error("Python Ingest Error:", err.message);
+    throw err;
+  }
+});
+
+// Keep the original for compatibility
+ipcMain.on("ai-chat-start", async (event, query) => {
+  console.log("DEBUG: Chat started with query:", query);
+  try {
+    console.log("Chatting with backend:", query);
+
+    const response = await axios.post(`${BACKEND_URL}/chat`, { query });
+    const answer = response.data.response;
+    console.log("DEBUG: Chat response:", answer);
 
     // Simulate streaming for animation effect
     const chunkSize = 4; // Characters per chunk
@@ -218,22 +181,10 @@ ipcMain.on("ai-chat-start", async (event, query) => {
 });
 
 app.whenReady().then(() => {
-  startLLMServer();
   startBackend();
   createMainWindow();
 });
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
-});
-
-app.on('will-quit', () => {
-  if (backendProcess) {
-    console.log("Killing backend process...");
-    backendProcess.kill();
-  }
-  if (llmProcess) {
-    console.log("Killing LLM process...");
-    llmProcess.kill();
-  }
 });

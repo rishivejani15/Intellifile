@@ -1,6 +1,9 @@
 import { useState, useRef, useEffect } from "react";
 
 export default function Chatbot() {
+    console.log("DEBUG: Chatbot component loaded");
+    console.log("DEBUG: electronAPI:", window.electronAPI);
+
     const [messages, setMessages] = useState([
         {
             role: "assistant",
@@ -20,7 +23,9 @@ export default function Chatbot() {
     }, [messages]);
 
     const handleUpload = async () => {
+        console.log("DEBUG: handleUpload called");
         const res = await window.electronAPI.openFile();
+        console.log("DEBUG: openFile result:", res);
         if (res) {
             const fileName = res.filePath.split(/[\\/]/).pop();
             setFile({ filePath: res.filePath });
@@ -28,11 +33,16 @@ export default function Chatbot() {
 
             // Ingest the content in backend
             try {
+                console.log("DEBUG: Calling ingestDocument with:", res.filePath);
                 await window.electronAPI.ingestDocument(res.filePath);
+                console.log("DEBUG: Ingest successful");
                 addMessage("assistant", `I've loaded the document "${fileName}". Ask me anything about it!`);
             } catch (err) {
+                console.log("DEBUG: Ingest error:", err);
                 addMessage("assistant", "Error loading document for analysis.");
             }
+        } else {
+            console.log("DEBUG: No file selected");
         }
     };
 
@@ -48,6 +58,7 @@ export default function Chatbot() {
     }, []);
 
     const sendMessage = async () => {
+        console.log("DEBUG: sendMessage called");
         if (!input.trim()) return;
 
         const userMessage = input;
@@ -55,6 +66,7 @@ export default function Chatbot() {
         addMessage("user", userMessage);
 
         if (!file) {
+            console.log("DEBUG: No file uploaded");
             setTimeout(() => {
                 addMessage("assistant", "Please upload a document first.");
             }, 500);
@@ -66,10 +78,12 @@ export default function Chatbot() {
 
         // Setup Listeners
         window.electronAPI.removeAllChatListeners(); // Clear old ones
+        console.log("DEBUG: Setting up listeners");
 
         let currentResponse = "";
 
         window.electronAPI.onChatToken((token) => {
+            console.log("DEBUG: Received token:", token);
             currentResponse += token;
             setMessages((prev) => {
                 const newMsgs = [...prev];
@@ -84,15 +98,17 @@ export default function Chatbot() {
         });
 
         window.electronAPI.onChatDone(() => {
-            console.log("Chat done");
+            console.log("DEBUG: Chat done");
             // Optional: Clean up or finalize UI
         });
 
         window.electronAPI.onChatError((err) => {
+            console.log("DEBUG: Chat error:", err);
             setMessages((prev) => [...prev, { role: "assistant", content: `Error: ${err}` }]);
         });
 
         // Start Streaming
+        console.log("DEBUG: Starting chat with:", userMessage);
         window.electronAPI.startChat(userMessage);
     };
 
