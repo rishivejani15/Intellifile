@@ -1,0 +1,12 @@
+{
+    "summary": "Significant content removal detected.",
+    "intent": "Deletion Heavy",
+    "risk_level": "Medium",
+    "stability_score": 0.095,
+    "semantic": {
+        "line_delta": -32,
+        "size_change_percent": -0.9053497942386831
+    },
+    "file_hash": "7116e5d80b765b2b359f97aa22772257f54c961eaa4a6cb2f61eacb61f62ed71",
+    "timestamp": "20260220204847029971"
+}

@@ -2,85 +2,45 @@ const { app, BrowserWindow, Menu, ipcMain, shell, dialog } = require('electron')
 const path = require('path');
 const fs = require('fs');
 const { execSync, spawn } = require('child_process');
+const chokidar = require('chokidar');
 
-// Check if running in development mode (force true for now since React dev server is running)
+// Check if running in development mode
 const isDev = true;
 
 // Supported file extensions
-const EDITABLE_EXTENSIONS = ['.py', '.js', '.java', '.cpp', '.c', '.go', '.txt', '.md', '.json', '.xml', '.html', '.css', '.ts', '.jsx', '.tsx'];
+const EDITABLE_EXTENSIONS = ['.py', '.js', '.java', '.cpp', '.c', '.go', '.txt', '.md', '.json', '.xml', '.html', '.css', '.ts', '.jsx', '.tsx', '.docx', '.xlsx'];
 
 // Windows system files and folders to hide from users
 const SYSTEM_FILES_TO_HIDE = [
-  'config.msi',
-  'dumpstack.log',
-  'dumpstack.log.tmp',
-  'hiberfil.sys',
-  'pagefile.sys',
-  'swapfile.sys',
-  'bootmgr',
-  'bootsect.bak',
-  'boot.ini',
-  'ntldr',
-  'ntdetect.com',
-  'io.sys',
-  'msdos.sys',
-  'autoexec.bat',
-  'config.sys'
+  'config.msi', 'dumpstack.log', 'dumpstack.log.tmp', 'hiberfil.sys', 'pagefile.sys', 'swapfile.sys',
+  'bootmgr', 'bootsect.bak', 'boot.ini', 'ntldr', 'ntdetect.com', 'io.sys', 'msdos.sys',
+  'autoexec.bat', 'config.sys'
 ];
 
-const SYSTEM_FOLDERS_TO_HIDE = [
-  'recovery',
-  'system volume information',
-  '$recycle.bin',
-  'perflogs',
-  '$windows.~bt',
-  '$windows.~ws'
-];
+const SYSTEM_FOLDERS_TO_HIDE = ['recovery', 'system volume information', '$recycle.bin', 'perflogs', '$windows.~bt', '$windows.~ws'];
 
-// System file extensions to hide from users
-const SYSTEM_FILE_EXTENSIONS = [
-  '.dll',    // Dynamic Link Libraries
-  '.sys',    // System files
-  '.ini',    // Configuration files
-  '.tmp',    // Temporary files
-  '.log',    // Log files
-  '.bak',    // Backup files
-  '.old',    // Old backup files
-  '.cache',  // Cache files
-  '.dat',    // Data files (often system)
-  '.db',     // Database files (like Thumbs.db)
-  '.ldf',    // SQL Log files
-  '.mdf'     // SQL Database files
-];
+const SYSTEM_FILE_EXTENSIONS = ['.dll', '.sys', '.ini', '.tmp', '.log', '.bak', '.old', '.cache', '.dat', '.db', '.ldf', '.mdf'];
 
-// Protected system paths that cannot be deleted, moved, or renamed
 const PROTECTED_PATHS = [
-  /^[A-Z]:\\Windows/i,
-  /^[A-Z]:\\Program Files/i,
-  /^[A-Z]:\\Program Files \(x86\)/i,
-  /^[A-Z]:\\ProgramData/i,
-  /^[A-Z]:\\System Volume Information/i,
-  /^[A-Z]:\\Recovery/i,
-  /^[A-Z]:\\Config\.Msi/i
+  /^[A-Z]:\\Windows/i, /^[A-Z]:\\Program Files/i, /^[A-Z]:\\Program Files \(x86\)/i,
+  /^[A-Z]:\\ProgramData/i, /^[A-Z]:\\System Volume Information/i, /^[A-Z]:\\Recovery/i, /^[A-Z]:\\Config\.Msi/i
 ];
 
 function isSystemFile(filename) {
   const lower = filename.toLowerCase();
   const ext = path.extname(lower);
-
-  return SYSTEM_FILES_TO_HIDE.includes(lower) ||
-    SYSTEM_FOLDERS_TO_HIDE.includes(lower) ||
-    SYSTEM_FILE_EXTENSIONS.includes(ext) ||
-    lower === 'desktop.ini' ||
-    lower === 'thumbs.db' ||
-    filename.startsWith('.');
+  return SYSTEM_FILES_TO_HIDE.includes(lower) || SYSTEM_FOLDERS_TO_HIDE.includes(lower) ||
+    SYSTEM_FILE_EXTENSIONS.includes(ext) || lower === 'desktop.ini' || lower === 'thumbs.db' || filename.startsWith('.');
 }
 
 let pyProcess;
 let pyReady = false;
 let pyBuffer = '';
-let pendingRequests = new Map();  // requestId -> { resolve, timeout }
+let pendingRequests = new Map();
 let requestCounter = 0;
+let fileWatchers = new Map();
+let fileContents = new Map();
+let win = null;
 
 function sendToPython(payload, timeoutMs = 30000) {
   return new Promise((resolve) => {
@@ -89,12 +49,10 @@ function sendToPython(payload, timeoutMs = 30000) {
     }
     const id = ++requestCounter;
     payload._id = id;
-
     const timer = setTimeout(() => {
       pendingRequests.delete(id);
       resolve({ error: 'Request timed out' });
     }, timeoutMs);
-
     pendingRequests.set(id, { resolve, timeout: timer });
     pyProcess.stdin.write(JSON.stringify(payload) + '\n');
   });
@@ -102,9 +60,8 @@ function sendToPython(payload, timeoutMs = 30000) {
 
 function startPython() {
   const scriptPath = path.join(__dirname, "../backend/engine_server.py");
-  console.log('[Python] Starting engine from:', scriptPath);
-
-  pyProcess = spawn("python", [scriptPath], {
+  const pythonPath = path.join(__dirname, "../venv/Scripts/python.exe");
+  pyProcess = spawn(pythonPath, [scriptPath], {
     cwd: path.join(__dirname, '..'),
     stdio: ['pipe', 'pipe', 'pipe']
   });
@@ -112,17 +69,12 @@ function startPython() {
   pyProcess.stdout.on("data", (data) => {
     const text = data.toString();
     console.log("[PY stdout]", text.trim());
-
-    // Check for readiness signal
     if (!pyReady && text.includes('IntelliFile Python Engine Ready')) {
       pyReady = true;
-      console.log('[Python] ✅ Engine is ready — pyReady = true');
+      console.log('[Python] ✅ Engine is ready');
     }
-
-    // Buffer stdout and resolve pending requests when we get complete JSON lines
     pyBuffer += text;
     const lines = pyBuffer.split('\n');
-    // Keep last (possibly incomplete) line in buffer
     pyBuffer = lines.pop();
     for (const line of lines) {
       const trimmed = line.trim();
@@ -136,21 +88,15 @@ function startPython() {
           pendingRequests.delete(id);
           resolve(parsed);
         }
-      } catch (e) {
-        // Not valid JSON, ignore
-        console.log("Not a valid json");
-      }
+      } catch (e) { }
     }
   });
 
-  pyProcess.stderr.on("data", (data) => {
-    console.error("[PY stderr]", data.toString().trim());
-  });
+  pyProcess.stderr.on("data", (data) => console.error("[PY stderr]", data.toString().trim()));
 
   pyProcess.on("close", (code) => {
     console.log('[Python] ❌ Process exited with code:', code);
     pyReady = false;
-    // Reject all pending requests
     for (const [id, { resolve, timeout }] of pendingRequests) {
       clearTimeout(timeout);
       resolve({ error: 'Python engine crashed' });
@@ -159,189 +105,187 @@ function startPython() {
   });
 }
 
-ipcMain.handle("search", async (_, query) => {
-  console.log('[IPC] search called, pyReady:', pyReady, 'query:', query);
-  return sendToPython({ action: "search", query });
-});
+function startWatchingFile(filePath) {
+  const normPath = filePath.toLowerCase().replace(/\//g, '\\');
+  const ext = path.extname(filePath).toLowerCase();
+  if (!EDITABLE_EXTENSIONS.includes(ext) || fileWatchers.has(normPath)) return;
 
-ipcMain.handle("search-status", async () => {
-  console.log('[IPC] search-status called, pyReady:', pyReady);
-  return { ready: pyReady };
-});
+  console.log(`[Watcher] Starting watch on: ${filePath}`);
 
-ipcMain.handle("index-folder", async (_, folder) => {
-  return sendToPython({ action: "index", folder }, 300000);  // 5-min timeout for large folders
-});
+  try {
+    const isBinary = ['.docx', '.xlsx'].includes(ext);
+    if (!isBinary) {
+      fileContents.set(normPath, fs.readFileSync(filePath, 'utf-8'));
+    } else {
+      fileContents.set(normPath, fs.statSync(filePath).mtimeMs.toString());
+    }
+  } catch (e) {
+    fileContents.set(normPath, '');
+  }
 
-ipcMain.handle("dialog-select-folder", async () => {
-  const result = await dialog.showOpenDialog(mainWindow, {
-    properties: ['openDirectory'],
-    title: 'Select a folder to index'
+  const watcher = chokidar.watch(filePath, {
+    persistent: true,
+    ignoreInitial: true,
+    awaitWriteFinish: { stabilityThreshold: 1500, pollInterval: 100 }
   });
-  if (result.canceled || result.filePaths.length === 0) return null;
-  return { path: result.filePaths[0] };
-});
+
+  watcher.on('change', async (p) => {
+    console.log(`[Watcher] Change: ${p}`);
+    const normP = p.toLowerCase().replace(/\//g, '\\');
+    const extP = path.extname(p).toLowerCase();
+    const isBinaryP = ['.docx', '.xlsx'].includes(extP);
+
+    try {
+      let currentVal = isBinaryP ? fs.statSync(p).mtimeMs.toString() : fs.readFileSync(p, 'utf-8');
+      let lastVal = fileContents.get(normP) || '';
+
+      if (!isBinaryP && currentVal.trim() === lastVal.trim()) return;
+      if (isBinaryP && currentVal === lastVal) return;
+
+      console.log(`[Watcher] Change verified. Triggering version save...`);
+      // For binary files, pass path as "content" to let engine parse it
+      const result = await sendToPython({
+        action: "save_version",
+        file_path: p,
+        old_content: isBinaryP ? p : lastVal,
+        new_content: isBinaryP ? p : currentVal
+      });
+
+      if (result && result.success) {
+        fileContents.set(normP, currentVal);
+        if (win) {
+          // Sync with VersionTimeline.js which expects 'version-updated' and { filePath }
+          win.webContents.send('version-updated', {
+            filePath: p,
+            versionId: result.data.version_id,
+            summary: result.data.summary,
+            riskLevel: result.data.risk_level
+          });
+        }
+      }
+    } catch (err) {
+      console.error(`[Watcher] Update error: ${err.message}`);
+    }
+  });
+
+  watcher.on('unlink', (p) => stopWatchingFile(p));
+  fileWatchers.set(normPath, watcher);
+}
+
+function stopWatchingFile(filePath) {
+  const normPath = filePath.toLowerCase().replace(/\//g, '\\');
+  if (fileWatchers.has(normPath)) {
+    fileWatchers.get(normPath).close();
+    fileWatchers.delete(normPath);
+    console.log(`[Watcher] Stopped: ${normPath}`);
+  }
+}
 
 function isProtectedPath(filePath) {
   return PROTECTED_PATHS.some(pattern => pattern.test(filePath));
 }
 
-// Calculate folder size recursively
-function calculateFolderSize(folderPath) {
-  let totalSize = 0;
-
-  try {
-    const items = fs.readdirSync(folderPath);
-
-    for (const item of items) {
-      try {
-        const itemPath = path.join(folderPath, item);
-        const stats = fs.statSync(itemPath);
-
-        if (stats.isDirectory()) {
-          totalSize += calculateFolderSize(itemPath);
-        } else {
-          totalSize += stats.size;
-        }
-      } catch (err) {
-        // Skip items that can't be accessed
-        continue;
-      }
-    }
-  } catch (err) {
-    // If we can't read the folder, return 0
-    return 0;
-  }
-
-  return totalSize;
-}
-
-let mainWindow;
-let ipcHandlersRegistered = false;
-
-// Always-available handler for opening files with the OS default app
-ipcMain.handle('open-file', async (event, filePath) => {
-  try {
-    const result = await shell.openPath(filePath);
-    if (result) {
-      return { success: false, error: result };
-    }
-    return { success: true };
-  } catch (err) {
-    return { success: false, error: err.message };
-  }
-});
-
-ipcMain.on('open-file', (event, filePath) => {
-  shell.openPath(filePath).catch(err => {
-    console.error('Error opening file:', err);
-  });
-});
-
 function registerIpcHandlers() {
-  if (ipcHandlersRegistered) return;
-  ipcHandlersRegistered = true;
-
-  // IPC Handlers for file operations
-  ipcMain.handle('list-directory', async (event, dirPath) => {
+  ipcMain.handle('list-directory', async (_, dirPath) => {
     try {
-      console.log('[list-directory] called with:', dirPath);
       let resolvedPath = dirPath;
-
-      // Handle special folder names
       if (dirPath === 'This PC') {
-        // Return list of drives for This PC view
-        const drivesResult = await getDrivesInfo();
-        if (drivesResult.success) {
-          const driveItems = drivesResult.drives.map(drive => ({
-            name: drive.description,
-            path: drive.device,
-            type: 'drive',
-            ext: '',
-            editable: false,
-            size: drive.size,
-            available: drive.available,
-            modified: Date.now()
-          }));
-          return { items: driveItems, error: null };
-        }
-        return { items: [], error: 'Could not load drives' };
-      } else if (!dirPath || dirPath === 'Documents') {
-        resolvedPath = path.join(process.env.USERPROFILE, 'Documents');
-      } else if (dirPath === 'Desktop') {
-        resolvedPath = path.join(process.env.USERPROFILE, 'Desktop');
-      } else if (dirPath === 'Downloads') {
-        resolvedPath = path.join(process.env.USERPROFILE, 'Downloads');
-      } else if (dirPath === 'Pictures') {
-        resolvedPath = path.join(process.env.USERPROFILE, 'Pictures');
-      } else if (dirPath === 'Music') {
-        resolvedPath = path.join(process.env.USERPROFILE, 'Music');
-      } else if (dirPath === 'Videos') {
-        resolvedPath = path.join(process.env.USERPROFILE, 'Videos');
-      } else if (dirPath && dirPath.match(/^[A-Z]:$/i)) {
-        // Handle drive letters like "C:" by converting to "C:\\"
+        const dInfo = await getDrivesInfo();
+        const items = dInfo.drives.map(d => ({
+          name: d.description, path: d.device, type: 'drive', size: d.size, modified: Date.now()
+        }));
+        return { items, error: null };
+      }
+
+      if (!dirPath || ['Documents', 'Desktop', 'Downloads', 'Pictures', 'Music', 'Videos'].includes(dirPath)) {
+        resolvedPath = path.join(process.env.USERPROFILE, dirPath || 'Documents');
+      } else if (dirPath.match(/^[A-Z]:$/i)) {
         resolvedPath = dirPath + '\\';
       }
 
-      console.log('[list-directory] resolved path:', resolvedPath);
-
-      // Use async exists check
-      try {
-        await fs.promises.access(resolvedPath);
-      } catch {
-        console.warn('[list-directory] Path not found:', resolvedPath);
-        return { items: [], error: 'Path not found' };
-      }
-
-      console.log('[list-directory] reading directory...');
       const fileList = await fs.promises.readdir(resolvedPath);
-      console.log('[list-directory] found', fileList.length, 'items');
+      const items = (await Promise.all(fileList.filter(f => !isSystemFile(f)).map(async f => {
+        try {
+          const fp = path.join(resolvedPath, f);
+          const s = await fs.promises.stat(fp);
+          const e = path.extname(f).toLowerCase();
+          const p = isProtectedPath(fp);
+          return {
+            name: f, path: fp, type: s.isDirectory() ? 'folder' : 'file',
+            ext: e, editable: !s.isDirectory() && EDITABLE_EXTENSIONS.includes(e) && !p,
+            protected: p, size: s.isDirectory() ? 0 : s.size, modified: s.mtimeMs
+          };
+        } catch { return null; }
+      }))).filter(i => i !== null).sort((a, b) => (a.type !== b.type ? (a.type === 'folder' ? -1 : 1) : a.name.localeCompare(b.name)));
 
-      // Process items in parallel using Promise.all for better performance
-      const itemPromises = fileList
-        .filter(item => !isSystemFile(item))
-        .map(async item => {
-          try {
-            const fullPath = path.join(resolvedPath, item);
-            const stats = await fs.promises.stat(fullPath);
-            const ext = path.extname(item).toLowerCase();
-            const isEditable = EDITABLE_EXTENSIONS.includes(ext);
-            const isProtected = isProtectedPath(fullPath);
-
-            // Don't calculate folder size - it's too slow and blocks the UI
-            // Just use 0 for directories, actual size for files
-            const size = stats.isDirectory() ? 0 : stats.size;
-
-            return {
-              name: item,
-              path: fullPath,
-              type: stats.isDirectory() ? 'folder' : 'file',
-              ext: ext,
-              editable: !stats.isDirectory() && isEditable && !isProtected,
-              protected: isProtected,
-              size: size,
-              modified: stats.mtimeMs
-            };
-          } catch (err) {
-            // Skip files/folders that can't be accessed due to permissions
-            console.warn('[list-directory] Skipping inaccessible item:', item, err.message);
-            return null;
-          }
-        });
-
-      const items = (await Promise.all(itemPromises))
-        .filter(item => item !== null)
-        .sort((a, b) => {
-          if (a.type !== b.type) return a.type === 'folder' ? -1 : 1;
-          return a.name.localeCompare(b.name);
-        });
-
-      console.log('[list-directory] returning', items.length, 'items');
       return { items, error: null };
-    } catch (err) {
-      console.error('[list-directory] error:', err);
-      return { items: [], error: err && err.message ? err.message : String(err) };
+    } catch (e) { return { items: [], error: e.message }; }
+  });
+
+  ipcMain.handle('open-file', async (_, p) => {
+    try {
+      startWatchingFile(p);
+      const res = await shell.openPath(p);
+      return res ? { success: false, error: res } : { success: true };
+    } catch (e) { return { success: false, error: e.message }; }
+  });
+
+  ipcMain.handle('read-file', async (_, p) => {
+    try { return { content: fs.readFileSync(p, 'utf-8'), success: true }; }
+    catch (e) { return { content: null, success: false, error: e.message }; }
+  });
+
+  ipcMain.handle('save-file', async (_, p, c) => {
+    try {
+      const old = fs.existsSync(p) ? fs.readFileSync(p, 'utf-8') : "";
+      fs.writeFileSync(p, c, 'utf-8');
+      await sendToPython({ action: "save_version", file_path: p, old_content: old, new_content: c });
+      return { success: true };
+    } catch (e) { return { success: false, error: e.message }; }
+  });
+
+  ipcMain.handle('delete-file', async (_, p) => {
+    try {
+      if (isProtectedPath(p)) return { success: false, error: 'Protected path' };
+      const { exec } = require('child_process');
+      const esc = p.replace(/'/g, "''");
+      const cmd = fs.statSync(p).isDirectory() ? 'DeleteDirectory' : 'DeleteFile';
+      exec(`powershell -NoProfile -Command "Add-Type -AssemblyName Microsoft.VisualBasic; [Microsoft.VisualBasic.FileIO.FileSystem]::${cmd}('${esc}','OnlyErrorDialogs','SendToRecycleBin')"`);
+      return { success: true };
+    } catch (e) { return { success: false, error: e.message }; }
+  });
+
+  ipcMain.handle("get-versions", async (_, p) => sendToPython({ action: "get_versions", file_path: p }));
+  ipcMain.handle("compare-versions", async (_, { filePath, versionA, versionB }) => sendToPython({ action: "compare_versions", file_path: filePath, version_a: versionA, version_b: versionB }));
+
+  ipcMain.handle("restore-version", async (_, { filePath, versionId }) => {
+    const res = await sendToPython({ action: "restore_version", file_path: filePath, version_id: versionId });
+    if (res.success) {
+      setTimeout(() => {
+        try {
+          const norm = filePath.toLowerCase().replace(/\//g, '\\');
+          const ext = path.extname(filePath).toLowerCase();
+          if (!['.docx', '.xlsx'].includes(ext)) {
+            fileContents.set(norm, fs.readFileSync(filePath, 'utf-8'));
+          } else {
+            fileContents.set(norm, fs.statSync(filePath).mtimeMs.toString());
+          }
+        } catch { }
+      }, 300);
     }
+    return res;
+  });
+
+  ipcMain.handle("search-status", async () => {
+    return { ready: pyReady };
+  });
+
+  ipcMain.handle("search", async (_, query) => {
+    return sendToPython({ action: "search", query });
+  });
+
+  ipcMain.handle("index-folder", async (_, folder) => {
+    return sendToPython({ action: "index", folder }, 300000);
   });
 
   ipcMain.handle('get-files-to-merge', async () => {
@@ -352,320 +296,133 @@ function registerIpcHandlers() {
       items.forEach(item => {
         const ext = path.extname(item).toLowerCase();
         if (EDITABLE_EXTENSIONS.includes(ext)) {
-          files.push({
-            name: item,
-            path: path.join(docsPath, item),
-            ext: ext,
-            editable: true
-          });
+          files.push({ name: item, path: path.join(docsPath, item), ext: ext, editable: true });
         }
       });
-    } catch (err) {
-      console.error('Error reading documents:', err);
-    }
+    } catch (err) { console.error('Error reading documents:', err); }
     return files;
   });
 
-  ipcMain.handle('read-file', async (event, filePath) => {
-    try {
-      const content = fs.readFileSync(filePath, 'utf-8');
-      return { content, success: true };
-    } catch (err) {
-      return { content: null, success: false, error: err.message };
-    }
+  ipcMain.handle('read-file-base64', async (_, p) => {
+    try { return { data: fs.readFileSync(p).toString('base64'), success: true }; }
+    catch (e) { return { data: null, success: false, error: e.message }; }
   });
 
-  ipcMain.handle('read-file-base64', async (event, filePath) => {
+  ipcMain.handle('copy-file', async (_, src, dst) => {
     try {
-      const buffer = fs.readFileSync(filePath);
-      return { data: buffer.toString('base64'), success: true };
-    } catch (err) {
-      return { data: null, success: false, error: err.message };
-    }
-  });
-
-  ipcMain.handle('save-file', async (event, filePath, content) => {
-    try {
-      fs.writeFileSync(filePath, content, 'utf-8');
-      return { success: true };
-    } catch (err) {
-      return { success: false, error: err.message };
-    }
-  });
-
-  ipcMain.handle('copy-file', async (event, sourcePath, destPath) => {
-    try {
-      // Check if destination exists
-      if (fs.existsSync(destPath)) {
-        // Modify destination name if file exists
-        const dir = path.dirname(destPath);
-        const ext = path.extname(destPath);
-        const name = path.basename(destPath, ext);
+      if (fs.existsSync(dst)) {
+        const dir = path.dirname(dst);
+        const ext = path.extname(dst);
+        const name = path.basename(dst, ext);
         let counter = 1;
-        let newDest = destPath;
-        while (fs.existsSync(newDest)) {
-          newDest = path.join(dir, `${name} (${counter})${ext}`);
-          counter++;
-        }
-        destPath = newDest;
+        let ndst = dst;
+        while (fs.existsSync(ndst)) { ndst = path.join(dir, `${name} (${counter})${ext}`); counter++; }
+        dst = ndst;
       }
-
-      const stat = fs.statSync(sourcePath);
-      if (stat.isDirectory()) {
-        // Copy directory recursively
-        const copyDir = (src, dst) => {
-          if (!fs.existsSync(dst)) fs.mkdirSync(dst, { recursive: true });
-          fs.readdirSync(src).forEach(file => {
-            const srcFile = path.join(src, file);
-            const dstFile = path.join(dst, file);
-            if (fs.statSync(srcFile).isDirectory()) {
-              copyDir(srcFile, dstFile);
-            } else {
-              fs.copyFileSync(srcFile, dstFile);
-            }
+      const s = fs.statSync(src);
+      if (s.isDirectory()) {
+        const cpDir = (s, d) => {
+          if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
+          fs.readdirSync(s).forEach(f => {
+            const sf = path.join(s, f); const df = path.join(d, f);
+            if (fs.statSync(sf).isDirectory()) cpDir(sf, df); else fs.copyFileSync(sf, df);
           });
         };
-        copyDir(sourcePath, destPath);
-      } else {
-        fs.copyFileSync(sourcePath, destPath);
-      }
+        cpDir(src, dst);
+      } else fs.copyFileSync(src, dst);
       return { success: true };
-    } catch (err) {
-      return { success: false, error: err.message };
-    }
+    } catch (e) { return { success: false, error: e.message }; }
   });
 
-  ipcMain.handle('move-file', async (event, sourcePath, destPath) => {
+  ipcMain.handle('move-file', async (_, src, dst) => {
     try {
-      // Check if source is protected
-      if (isProtectedPath(sourcePath)) {
-        return { success: false, error: 'Cannot move system files or folders' };
-      }
-      if (fs.existsSync(destPath)) {
-        const dir = path.dirname(destPath);
-        const ext = path.extname(destPath);
-        const name = path.basename(destPath, ext);
+      if (isProtectedPath(src)) return { success: false, error: 'Protected' };
+      if (fs.existsSync(dst)) {
+        const dir = path.dirname(dst);
+        const ext = path.extname(dst);
+        const name = path.basename(dst, ext);
         let counter = 1;
-        let newDest = destPath;
-        while (fs.existsSync(newDest)) {
-          newDest = path.join(dir, `${name} (${counter})${ext}`);
-          counter++;
-        }
-        destPath = newDest;
+        let ndst = dst;
+        while (fs.existsSync(ndst)) { ndst = path.join(dir, `${name} (${counter})${ext}`); counter++; }
+        dst = ndst;
       }
-      fs.renameSync(sourcePath, destPath);
+      fs.renameSync(src, dst);
       return { success: true };
-    } catch (err) {
-      return { success: false, error: err.message };
-    }
+    } catch (e) { return { success: false, error: e.message }; }
   });
 
-  ipcMain.handle('rename-file', async (event, oldPath, newPath) => {
+  ipcMain.handle('rename-file', async (_, oldp, newp) => {
     try {
-      // Check if source is protected
-      if (isProtectedPath(oldPath)) {
-        return { success: false, error: 'Cannot rename system files or folders' };
-      }
-      if (oldPath === newPath) {
-        return { success: true };
-      }
-      if (fs.existsSync(newPath)) {
-        return { success: false, error: 'File already exists' };
-      }
-      fs.renameSync(oldPath, newPath);
+      if (isProtectedPath(oldp)) return { success: false, error: 'Protected' };
+      if (oldp === newp) return { success: true };
+      if (fs.existsSync(newp)) return { success: false, error: 'Exists' };
+      fs.renameSync(oldp, newp);
       return { success: true };
-    } catch (err) {
-      return { success: false, error: err.message };
-    }
+    } catch (e) { return { success: false, error: e.message }; }
   });
 
-  ipcMain.handle('delete-file', async (event, filePath) => {
+  ipcMain.handle('create-folder', async (_, p) => {
     try {
-      // Check if path is protected
-      if (isProtectedPath(filePath)) {
-        return { success: false, error: 'Cannot delete system files or folders' };
+      if (fs.existsSync(p)) {
+        const dir = path.dirname(p); const name = path.basename(p);
+        let counter = 1; let np = p;
+        while (fs.existsSync(np)) { np = path.join(dir, `${name} (${counter})`); counter++; }
+        p = np;
       }
-      // Move to Recycle Bin using Windows API
-      const { exec } = require('child_process');
-      const stats = fs.statSync(filePath);
-      const escapedPath = filePath.replace(/'/g, "''");
-      if (stats.isDirectory()) {
-        exec(
-          `powershell -NoProfile -Command "Add-Type -AssemblyName Microsoft.VisualBasic; [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory('${escapedPath}','OnlyErrorDialogs','SendToRecycleBin')"`,
-          (err) => { if (err) console.error('Error deleting folder:', err); }
-        );
-      } else {
-        exec(
-          `powershell -NoProfile -Command "Add-Type -AssemblyName Microsoft.VisualBasic; [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile('${escapedPath}','OnlyErrorDialogs','SendToRecycleBin')"`,
-          (err) => { if (err) console.error('Error deleting file:', err); }
-        );
-      }
+      fs.mkdirSync(p, { recursive: true });
       return { success: true };
-    } catch (err) {
-      return { success: false, error: err.message };
-    }
+    } catch (e) { return { success: false, error: e.message }; }
   });
 
-  ipcMain.handle('create-folder', async (event, folderPath) => {
-    try {
-      if (fs.existsSync(folderPath)) {
-        const dir = path.dirname(folderPath);
-        const name = path.basename(folderPath);
-        let counter = 1;
-        let newPath = folderPath;
-        while (fs.existsSync(newPath)) {
-          newPath = path.join(dir, `${name} (${counter})`);
-          counter++;
-        }
-        folderPath = newPath;
-      }
-      fs.mkdirSync(folderPath, { recursive: true });
-      return { success: true };
-    } catch (err) {
-      return { success: false, error: err.message };
-    }
+  ipcMain.handle('dialog-select-folder', async () => {
+    const res = await dialog.showOpenDialog(win, { properties: ['openDirectory'], title: 'Select Folder' });
+    if (res.canceled || res.filePaths.length === 0) return null;
+    return { path: res.filePaths[0] };
   });
 
   ipcMain.handle('get-drives-info', getDrivesInfo);
-
 }
 
-// Separate function to get drives info (can be called internally)
 async function getDrivesInfo() {
   return new Promise((resolve) => {
-    try {
-      // Use PowerShell to get volume labels dynamically
-      const { exec } = require('child_process');
-      exec('powershell -NoProfile -Command "Get-Volume | Where-Object {$_.DriveLetter} | Select-Object DriveLetter, FileSystemLabel, Size, SizeRemaining | ConvertTo-Json"',
-        { timeout: 5000 },
-        (error, stdout, stderr) => {
-          const drives = [];
-          const letters = 'CDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
-
-          // Parse PowerShell output
-          let volumeInfo = {};
-          try {
-            if (stdout && stdout.trim()) {
-              const volumes = JSON.parse(stdout);
-              const volumeArray = Array.isArray(volumes) ? volumes : [volumes];
-              volumeArray.forEach(vol => {
-                if (vol.DriveLetter) {
-                  volumeInfo[vol.DriveLetter] = {
-                    label: vol.FileSystemLabel || null,
-                    size: parseInt(vol.Size) || 0,
-                    available: parseInt(vol.SizeRemaining) || 0
-                  };
-                }
-              });
-              console.log('[get-drives-info] PowerShell data:', volumeInfo);
-            }
-          } catch (parseErr) {
-            console.warn('[get-drives-info] Could not parse PowerShell output:', parseErr.message);
-          }
-
-          // Check each drive letter
-          for (const letter of letters) {
-            const drive = letter + ':';
-            const drivePath = drive + '\\';
-
-            // Check if drive exists
-            if (!fs.existsSync(drivePath)) continue;
-
-            try {
-              const volInfo = volumeInfo[letter];
-              let description, size, available;
-
-              if (volInfo && volInfo.size > 0) {
-                // Use PowerShell data
-                const label = volInfo.label || 'Local Disk';
-                description = volInfo.label ? `${volInfo.label} (${drive})` : `Local Disk (${drive})`;
-                size = volInfo.size;
-                available = volInfo.available;
-              } else {
-                // Fallback to fs.statfsSync
-                const stats = fs.statfsSync ? fs.statfsSync(drivePath) : null;
-                description = `Local Disk (${drive})`;
-                size = stats ? stats.blocks * stats.bsize : 0;
-                available = stats ? stats.bavail * stats.bsize : 0;
-              }
-
-              console.log(`[get-drives-info] Drive ${drive}: size=${size}, available=${available}`);
-
-              drives.push({
-                device: drive,
-                description: description,
-                mountpoints: [{ path: drivePath }],
-                size: size,
-                available: available,
-                isSystem: letter === 'C',
-                isRemovable: false,
-                isUSB: false,
-                isCard: false,
-                isReadOnly: false
-              });
-            } catch (err) {
-              console.warn(`[get-drives-info] Could not get stats for ${drive}:`, err.message);
-            }
-          }
-
-          console.log(`[get-drives-info] Returning ${drives.length} drives`);
-          resolve({ success: true, drives });
+    const { exec } = require('child_process');
+    exec('powershell -NoProfile -Command "Get-Volume | Where-Object {$_.DriveLetter} | Select-Object DriveLetter, FileSystemLabel, Size, SizeRemaining | ConvertTo-Json"', (err, stdout) => {
+      const drives = [];
+      const letters = 'CDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
+      let volInfo = {};
+      try {
+        if (stdout) {
+          const vols = JSON.parse(stdout);
+          (Array.isArray(vols) ? vols : [vols]).forEach(v => {
+            if (v.DriveLetter) volInfo[v.DriveLetter] = { label: v.FileSystemLabel, size: v.Size, avail: v.SizeRemaining };
+          });
         }
-      );
-    } catch (err) {
-      console.error('[get-drives-info] error:', err);
-      resolve({ success: false, drives: [], error: err.message });
-    }
+      } catch { }
+      for (const l of letters) {
+        const dp = l + ':\\';
+        if (fs.existsSync(dp)) {
+          const vi = volInfo[l];
+          const label = vi && vi.label ? `${vi.label} (${l}:)` : `Local Disk (${l}:)`;
+          drives.push({
+            device: l + ':', description: label, size: vi ? parseInt(vi.size) : 0, available: vi ? parseInt(vi.avail) : 0
+          });
+        }
+      }
+      resolve({ success: true, drives });
+    });
   });
 }
 
 function createWindow() {
-  mainWindow = new BrowserWindow({
-    width: 1400,
-    height: 900,
-    webPreferences: {
-      nodeIntegration: false,
-      contextIsolation: true,
-      preload: path.join(__dirname, 'preload.js')
-    }
+  win = new BrowserWindow({
+    width: 1400, height: 900,
+    webPreferences: { nodeIntegration: false, contextIsolation: true, preload: path.join(__dirname, 'preload.js') }
   });
-
-  const startUrl = isDev
-    ? 'http://localhost:3000'
-    : `file://${path.join(__dirname, '../build/index.html')}`;
-
-  mainWindow.loadURL(startUrl);
-
-  if (isDev) {
-    mainWindow.webContents.openDevTools();
-  }
-
-  mainWindow.on('closed', () => (mainWindow = null));
-
+  win.loadURL(isDev ? 'http://localhost:3000' : `file://${path.join(__dirname, '../build/index.html')}`);
+  if (isDev) win.webContents.openDevTools();
+  win.on('closed', () => (win = null));
 }
 
-app.on('ready', () => {
-  registerIpcHandlers();
-  startPython();
-  createWindow();
-});
-
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    app.quit();
-  }
-});
-
-app.on('before-quit', () => {
-  if (pyProcess) {
-    console.log('[Python] Killing engine process');
-    pyProcess.kill();
-    pyProcess = null;
-  }
-});
-
-app.on('activate', () => {
-  if (mainWindow === null) {
-    createWindow();
-  }
-});
+app.on('ready', () => { registerIpcHandlers(); startPython(); createWindow(); });
+app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
+app.on('before-quit', () => { if (pyProcess) { pyProcess.kill(); pyProcess = null; } });

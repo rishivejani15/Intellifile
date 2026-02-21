@@ -1,0 +1,13 @@
+{
+    "summary": "Word doc updated: 1 added, 0 removed paragraphs.",
+    "intent": "Document Edit",
+    "risk_level": "Low",
+    "stability_score": 0.9,
+    "semantic": {
+        "paragraphs": 1,
+        "headings": 0
+    },
+    "file_hash": "96e0e85d03e7b26a766926396dc7df3835efe620ed9bb4fb15564c6c6f89d2e2",
+    "timestamp": "20260221145103850021_o8r0",
+    "ext": ".docx"
+}

@@ -1,0 +1,12 @@
+{
+    "summary": "Major feature additions detected.",
+    "intent": "Refactor",
+    "risk_level": "Low",
+    "stability_score": 0.306,
+    "semantic": {
+        "line_delta": 28,
+        "size_change_percent": 0.6935483870967742
+    },
+    "file_hash": "90c463ef5a3694ae6f33484e005ccbb452b4c9cb774c7833aa82bb19718cf5bb",
+    "timestamp": "20260220200754503455"
+}

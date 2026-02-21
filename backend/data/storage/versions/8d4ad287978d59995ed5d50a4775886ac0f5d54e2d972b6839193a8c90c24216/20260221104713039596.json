@@ -1,0 +1,13 @@
+{
+    "summary": "Significant content removal detected.",
+    "intent": "Refactor",
+    "risk_level": "Low",
+    "stability_score": 0.0,
+    "semantic": {
+        "line_delta": -10,
+        "size_change_percent": -1.0
+    },
+    "file_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "timestamp": "20260221104713039596",
+    "ext": ".txt"
+}

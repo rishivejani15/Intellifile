@@ -216,7 +216,8 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [] }) {
     setSelectedItem(item);
     setLastSelectedIndex(idx);
 
-    if (item.editable) {
+    // Call onFileSelect regardless of editability so the App knows what's selected
+    if (onFileSelect) {
       onFileSelect(item);
     }
   };

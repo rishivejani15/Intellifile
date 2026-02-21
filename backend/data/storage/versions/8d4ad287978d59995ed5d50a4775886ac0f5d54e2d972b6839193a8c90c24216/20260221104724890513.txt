@@ -1,0 +1,17 @@
+App mounted, ipcRenderer available: true
+App.js:12 App mounted, ipcRenderer available: true
+FileExplorer.js:567 [FileExplorer] Engine status: {ready: true}
+FileExplorer.js:570 [FileExplorer] âœ… Engine ready
+FileExplorer.js:567 [FileExplorer] Engine status: {ready: true}
+FileExplorer.js:570 [FileExplorer] âœ… Engine ready
+App.js:19 Drives fetched: {success: true, drives: Array(2)}
+App.js:21 Setting drives: (2)Â [{â€¦}, {â€¦}]
+App.js:19 Drives fetched: {success: true, drives: Array(2)}
+App.js:21 Setting drives: (2)Â [{â€¦}, {â€¦}]
+App.js:30 File selected: {name: '20Qs.txt', path: 'C:\\Users\\meet1\\Downloads\\20Qs.txt', type: 'file', ext: '.txt', editable: true,Â â€¦}
+VersionTimeline.js:22 [Timeline] Versions received: {_id: 1, success: true, data: Array(0)}
+VersionTimeline.js:22 [Timeline] Versions received: {_id: 2, success: true, data: Array(0)}
+App.js:30 File selected: {name: '20Qs.txt', path: 'C:\\Users\\meet1\\Downloads\\20Qs.txt', type: 'file', ext: '.txt', editable: true,Â â€¦}
+App.js:30 File selected: {name: '20Qs.txt', path: 'C:\\Users\\meet1\\Downloads\\20Qs.txt', type: 'file', ext: '.txt', editable: true,Â â€¦}
+VersionTimeline.js:22 [Timeline] Versions received: {_id: 3, success: true, data: Array(0)}
+VersionTimeline.js:22 [Timeline] Versions received: {_id: 4, success: true, data: Array(0)}
