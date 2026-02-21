@@ -106,6 +106,62 @@ function sendToPython(payload, timeoutMs = 30000) {
 // }
 
 function startPython() {
+  const scriptPath = path.join(__dirname, "../backend/engine_server.py");
+  console.log('[Python] Starting engine from:', scriptPath);
+
+  pyProcess = spawn("python", [scriptPath], {
+    cwd: path.join(__dirname, '..'),
+    stdio: ['pipe', 'pipe', 'pipe']
+  });
+
+  pyProcess.stdout.on("data", (data) => {
+    const text = data.toString();
+    console.log("[PY stdout]", text.trim());
+
+    // Check for readiness signal
+    if (!pyReady && text.includes('IntelliFile Python Engine Ready')) {
+      pyReady = true;
+      console.log('[Python] ✅ Engine is ready — pyReady = true');
+    }
+
+    // Buffer stdout and resolve pending requests when we get complete JSON lines
+    pyBuffer += text;
+    const lines = pyBuffer.split('\n');
+    // Keep last (possibly incomplete) line in buffer
+    pyBuffer = lines.pop();
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      try {
+        const parsed = JSON.parse(trimmed);
+        const id = parsed._id;
+        if (id && pendingRequests.has(id)) {
+          const { resolve, timeout } = pendingRequests.get(id);
+          clearTimeout(timeout);
+          pendingRequests.delete(id);
+          resolve(parsed);
+        }
+      } catch (e) {
+        // Not valid JSON, ignore
+        console.log("Not a valid json");
+      }
+    }
+  });
+
+  pyProcess.stderr.on("data", (data) => {
+    console.error("[PY stderr]", data.toString().trim());
+  });
+
+  pyProcess.on("close", (code) => {
+    console.log('[Python] ❌ Process exited with code:', code);
+    pyReady = false;
+    // Reject all pending requests
+    for (const [id, { resolve, timeout }] of pendingRequests) {
+      clearTimeout(timeout);
+      resolve({ error: 'Python engine crashed' });
+    }
+    pendingRequests.clear();
+  });
 }
 
 function startWatchingFile(filePath) {
