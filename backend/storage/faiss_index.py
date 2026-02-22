@@ -82,3 +82,12 @@ class FaissIndex:
             faiss.write_index(self.index, self.index_path)
         except Exception as e:
             logging.error(f"Failed to save index: {e}")
+
+    def clear(self):
+        """
+        Resets the index to an empty state.
+        """
+        with self.lock:
+            self._create_new()
+            self._save()
+            logging.info("FAISS index cleared.")

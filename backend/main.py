@@ -9,6 +9,7 @@ import numpy as np
 import uuid
 from datetime import datetime
 from fastapi import FastAPI, UploadFile, File, HTTPException, Form
+from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from sentence_transformers import SentenceTransformer
 
@@ -20,13 +21,13 @@ from storage.faiss_index import FaissIndex
 from models import (
     ChunkMetadata, IngestResponse, QueryResponse, SearchResult, ChatQueryRequest, ChatResponse
 )
-from llm import init_models, chat
+from llm import init_models, chat, is_chat_model_loaded
 
 # Configuration
 # Users can override these via environment variables or hardcoded defaults
 EMBEDDING_MODEL_NAME = os.getenv("EMBEDDING_MODEL_NAME", "all-MiniLM-L6-v2")
 LLAMA_CPP_ENDPOINT = os.getenv("LLAMA_CPP_ENDPOINT", "http://127.0.0.1:8080/v1/chat/completions")
-CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", 1000))
+CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", 500))
 CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", 150))
 TOP_K = int(os.getenv("TOP_K", 5))
 
@@ -61,51 +62,77 @@ faiss_index = None
 async def startup_event():
     global embedding_model, faiss_index
     
-    # Initialize LLM models first
-    init_models()
+    # Initialize LLM models in background to avoid blocking startup
+    import asyncio
+    loop = asyncio.get_running_loop()
+    # Run heavy initialization in executor 
+    loop.run_in_executor(None, init_models)
+    logger.info("LLM initialization started in background.")
 
     logger.info(f"Loading embedding model: {EMBEDDING_MODEL_NAME}...")
     try:
-        embedding_model = SentenceTransformer(EMBEDDING_MODEL_NAME)
+        # Try loading locally first
+        embedding_model = SentenceTransformer(EMBEDDING_MODEL_NAME, local_files_only=True)
         # Determine dimension
         dummy_vec = embedding_model.encode(["test"], convert_to_numpy=True)
         dim = dummy_vec.shape[1]
-        logger.info(f"Embedding Model loaded. Dimension: {dim}")
+        logger.info(f"Embedding Model loaded locally. Dimension: {dim}")
         
         # Initialize FAISS
         faiss_index = FaissIndex(dim=dim)
         logger.info(f"FAISS Index initialized with {faiss_index.index.ntotal} vectors.")
         
     except Exception as e:
-        logger.error(f"Critical startup error: {e}")
-        # We don't raise here to allow app to start, but endpoints will fail if model is None
+        logger.warning(f"Model not found locally or error loading: {e}. Waiting for manual download.")
+        embedding_model = None
+        faiss_index = None
 
 @app.get("/health")
 async def health_check():
     return {
         "status": "ok",
-        "embedding_model": "loaded" if embedding_model else "not loaded",
+        "embedding_model": "loaded" if embedding_model else "not_loaded",
+        "chat_model": "loaded" if is_chat_model_loaded() else "not_loaded",
         "faiss_index_size": faiss_index.index.ntotal if faiss_index else 0,
         "llm_endpoint": LLAMA_CPP_ENDPOINT
     }
 
+@app.post("/download_model")
+async def download_model():
+    global embedding_model, faiss_index
+    try:
+        logger.info(f"Downloading/Loading embedding model: {EMBEDDING_MODEL_NAME}...")
+        embedding_model = SentenceTransformer(EMBEDDING_MODEL_NAME) # This will download if not in cache
+        
+        dummy_vec = embedding_model.encode(["test"], convert_to_numpy=True)
+        dim = dummy_vec.shape[1]
+        logger.info(f"Embedding Model downloaded and loaded. Dimension: {dim}")
+        
+        faiss_index = FaissIndex(dim=dim)
+        logger.info(f"FAISS Index initialized with {faiss_index.index.ntotal} vectors.")
+        
+        return {"status": "success", "message": "Model downloaded and loaded"}
+    except Exception as e:
+        logger.error(f"Failed to download model: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/refresh_index")
 async def refresh_index():
     global faiss_index
+    if not embedding_model:
+        raise HTTPException(status_code=503, detail="Model not loaded")
+        
     try:
         if faiss_index:
-            faiss_index.load_or_create() # Force reload or check?
-            # load_or_create checks if exists. But if already loaded, it might not reload if logic says "if not self.index".
-            # FaissIndex.load_or_create() checks `if self.index`? No.
-            # Let's check backend/storage/faiss_index.py again.
-            pass 
-        
-        # We should iterate on FaissIndex class to support reload.
-        # Or just re-instantiate.
-        dummy_vec = embedding_model.encode(["test"], convert_to_numpy=True)
-        dim = dummy_vec.shape[1]
-        faiss_index = FaissIndex(dim=dim) 
-        # faiss_index init calls load_or_create which loads from disk.
+            # We re-initialize to reload from disk
+            dummy_vec = embedding_model.encode(["test"], convert_to_numpy=True)
+            dim = dummy_vec.shape[1]
+            faiss_index = FaissIndex(dim=dim)
+        else:
+            # First time init if somehow missed
+            dummy_vec = embedding_model.encode(["test"], convert_to_numpy=True)
+            dim = dummy_vec.shape[1]
+            faiss_index = FaissIndex(dim=dim) 
         
         logger.info(f"Index refreshed. New size: {faiss_index.index.ntotal}")
         return {"ok": True, "size": faiss_index.index.ntotal}
@@ -113,8 +140,25 @@ async def refresh_index():
         logger.error(f"Failed to refresh index: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/reset")
+async def reset_index():
+    global faiss_index
+    if not sqlite_store or not faiss_index:
+        raise HTTPException(status_code=503, detail="System not initialized")
+        
+    try:
+        sqlite_store.clear()
+        faiss_index.clear()
+        logger.info("Index and database cleared.")
+        return {"status": "success", "message": "Knowledge base cleared."}
+    except Exception as e:
+        logger.error(f"Failed to reset index: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/upload", response_model=IngestResponse)
-async def upload_document(file: UploadFile = File(...)):
+async def upload_document(file: UploadFile = File(...), clear_previous: bool = Form(False)):
     if not embedding_model or not faiss_index:
         raise HTTPException(status_code=503, detail="System not initialized")
 
@@ -124,6 +168,15 @@ async def upload_document(file: UploadFile = File(...)):
     file_path = os.path.join(UPLOAD_DIR, f"{doc_id}_{safe_filename}")
     
     logger.info(f"Receiving file: {filename}")
+
+    if clear_previous:
+        try:
+            sqlite_store.clear()
+            faiss_index.clear()
+            logger.info("Cleared previous data before upload.")
+        except Exception as e:
+            logger.error(f"Failed to clear previous data: {e}")
+            raise HTTPException(status_code=500, detail="Failed to clear previous data")
 
     # 1. Save File
     try:
@@ -350,10 +403,8 @@ async def chat_endpoint(request: ChatQueryRequest):
                 logger.info(f"Retrieved {len(relevant_chunks)} chunks from in-memory index for chat.")
         except Exception as e:
             logger.error(f"Retrieval error in chat: {e}")
-            # Fallback to no chunks -> LLM will say 'I couldn't find...' or use internal knowledge if allowed (not allowed per prompt)
 
-    response = chat(query, chunks=relevant_chunks)
-    return {"response": response}
+    return StreamingResponse(chat(query, chunks=relevant_chunks, stream=True), media_type="text/plain")
 
 if __name__ == "__main__":
     import uvicorn

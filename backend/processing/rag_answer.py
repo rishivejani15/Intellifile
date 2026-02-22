@@ -8,7 +8,7 @@ class RAGClient:
     def __init__(self):
         # OpenAI compatible endpoint for local server
         self.base_url = os.getenv("LLM_BASE_URL", "http://127.0.0.1:8001/v1")
-        self.model = os.getenv("LLM_MODEL", "qwen2.5-3b-instruct-q4_k_m.gguf") # customizable
+        self.model = os.getenv("LLM_MODEL", "qwen2.5-1.5b-instruct-q4_k_m.gguf") # customizable
 
     def generate_answer(self, query: str, context_chunks: List[str]) -> str:
         if not context_chunks:

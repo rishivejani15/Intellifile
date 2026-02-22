@@ -38,5 +38,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.removeAllListeners('ai-chat-token');
     ipcRenderer.removeAllListeners('ai-chat-done');
     ipcRenderer.removeAllListeners('ai-chat-error');
-  }
+  },
+  checkModelStatus: () => ipcRenderer.invoke('check-model-status'),
+  checkModelStatus: () => ipcRenderer.invoke('check-model-status'),
+  downloadModel: () => ipcRenderer.invoke('download-model'),
+  resetApp: () => ipcRenderer.invoke('reset-app')
 });

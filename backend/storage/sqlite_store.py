@@ -92,3 +92,22 @@ class SQLiteStore:
             
         # Return in same order as requested ids, filtering missing
         return [chunk_map[i] for i in ids if i in chunk_map]
+
+    def clear(self):
+        """
+        Clears all data from the chunks table.
+        """
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("DELETE FROM chunks")
+            # Reset auto-increment
+            cursor.execute("DELETE FROM sqlite_sequence WHERE name='chunks'")
+            conn.commit()
+            logging.info("SQLiteStore cleared.")
+        except Exception as e:
+            conn.rollback()
+            logging.error(f"Failed to clear chunks: {e}")
+            raise
+        finally:
+            conn.close()

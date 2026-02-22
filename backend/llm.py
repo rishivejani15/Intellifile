@@ -3,28 +3,74 @@ import numpy as np
 from llama_cpp import Llama
 import subprocess
 import sys
+import requests
+import json
+import time
+import logging
+
+logger = logging.getLogger("IntelliFile.LLM")
 
 chat_model = None
+LLAMA_CPP_ENDPOINT = "http://127.0.0.1:8080/v1/chat/completions"
 
 def init_models():
     global chat_model
     if chat_model is not None:
         return
 
-    models_dir = os.path.join(os.path.dirname(__file__), "..", "models")
-    chat_path = os.path.join(models_dir, "qwen2.5-3b-instruct-q4_k_m.gguf")
+    # Check if server is running
+    try:
+        response = requests.get("http://127.0.0.1:8080/v1/models", timeout=5)
+        if response.status_code == 200:
+            print("Chat model loaded successfully")
+            chat_model = "server"  # Indicate server is used
+            return
+    except:
+        pass
 
-    if not os.path.exists(chat_path):
-        print("Chat model not found at", chat_path)
+    # Fallback to local loading
+    models_dir = os.path.join(os.path.dirname(__file__), "..", "models")
+    
+    # Priority 1: 1.5B Model (Target for Lightning Speed)
+    # Priority 2: 3B Model (Current fallback)
+    chat_path_1_5b = os.path.join(models_dir, "qwen2.5-1.5b-instruct-q4_k_m.gguf")
+    chat_path_3b = os.path.join(models_dir, "qwen2.5-3b-instruct-q4_k_m.gguf")
+
+    if os.path.exists(chat_path_1_5b):
+        chat_path = chat_path_1_5b
+        model_name = "Qwen 1.5B"
+    elif os.path.exists(chat_path_3b):
+        chat_path = chat_path_3b
+        model_name = "Qwen 3B"
+    else:
+        print("Chat model not found! Please place 'qwen2.5-1.5b-instruct-q4_k_m.gguf' in the models folder.")
         chat_model = None
         return
 
-    print("Loading chat model...")
-    chat_model = Llama(model_path=chat_path, chat_format="chatml", n_ctx=4096, verbose=False)
-    print("Chat model loaded successfully")
+    print(f"Loading {model_name}...")
+    # OPTIMIZED FOR CPU SPEED:
+    # 1. n_batch: 512 - Processes the prompt much faster
+    # 2. n_threads: 8 - Uses more CPU cores (adjust to your CPU)
+    # 3. n_gpu_layers: 0 - (Set to -1 if you have an NVIDIA/Apple GPU)
+    chat_model = Llama(
+        model_path=chat_path, 
+        chat_format="chatml", 
+        n_ctx=2048, 
+        n_batch=512,
+        n_threads=4, 
+        n_gpu_layers=0,
+        verbose=False
+    )
+    print(f"{model_name} loaded successfully (Optimized for speed)")
+
+
+def is_chat_model_loaded():
+    return chat_model is not None
+
 
 # Initialize on module load
-init_models()
+# init_models()  <-- Removed to prevent blocking
+
 
 def ingest_file(file_path):
     python_exe = sys.executable
@@ -55,65 +101,117 @@ def get_relevant_chunks(query, top_k=5):
     print(f"DEBUG: Found {len(chunks)} chunks.")
     return chunks
 
-def chat(query, chunks=None, on_token_callback=None):
-    # ... (init handled globally)
+def chat(query, chunks=None, stream=False):
+    start_time = time.time()
+    print(f"\n[DEBUG] Starting Chat Process at {time.strftime('%H:%M:%S')}")
 
     if chat_model is None:
         msg = "LLM model not available."
-        if on_token_callback:
-            on_token_callback(msg)
+        if stream:
+            yield msg
+            return
         return msg
 
+    # 1. Retrieval Timing
+    retr_start = time.time()
     relevant_chunks = chunks if chunks is not None else get_relevant_chunks(query, top_k=5)
-    try:
-        print(f"DEBUG: Relevant chunks content: {str(relevant_chunks).encode('ascii', errors='replace').decode('ascii')}")
-    except Exception:
-        print("DEBUG: Relevant chunks content: <hidden due to encoding error>")
-
-    # Deduplicate chunks by text, keeping the one with highest score
+    retr_end = time.time()
+    print(f"[DEBUG] 1. Retrieval took {retr_end - retr_start:.2f}s (Found {len(relevant_chunks)} raw chunks)")
+    
+    # 2. Filtering/Context Prep Timing
+    prep_start = time.time()
     unique_chunks = {}
     for text, score in relevant_chunks:
         if text not in unique_chunks or score > unique_chunks[text][1]:
             unique_chunks[text] = (text, score)
     relevant_chunks = list(unique_chunks.values())
     
-    # Sort by score descending and take top 3
     relevant_chunks.sort(key=lambda x: x[1], reverse=True)
-    relevant_chunks = relevant_chunks[:3]
+    relevant_chunks = relevant_chunks[:2]
 
     context_text = "\n---\n".join([text for text, _ in relevant_chunks]) if relevant_chunks else ""
-
     user_prompt = f"Document context:\n{context_text}\n\nQuestion: {query}" if context_text else f"Question: {query}"
-
-    if on_token_callback:
-        on_token_callback("Thinking... ")
-
-    system_prompt = """You are a helpful and precise document assistant.
-Use the provided document context to answer the user's question.
-- For specific facts, verify they are in the context.
-- For summaries or overviews, synthesize the available information.
-- If the answer is not in the document, state that clearly.
-- Maintain a professional and helpful tone."""
+    prep_end = time.time()
+    print(f"[DEBUG] 2. Context preparation took {prep_end - prep_start:.4f}s")
 
     messages = [
-        {"role": "system", "content": system_prompt},
+        {"role": "system", "content": "You are a helpful assistant."},
         {"role": "user", "content": user_prompt}
     ]
 
-    full_response = ""
+    print(f"[DEBUG] 3. Entering Generation Phase (Mode: {'Server' if chat_model == 'server' else 'Local'}, Stream: {stream})")
+    gen_start = time.time()
+    first_token_received = False
 
-    if on_token_callback:
-        output = chat_model.create_chat_completion(messages=messages, max_tokens=1024, temperature=0.1, stream=True)
-        for chunk in output:
-            token = chunk['choices'][0]['delta'].get('content', '')
-            full_response += token
-            if on_token_callback:
-                on_token_callback(token)
+    if chat_model == "server":
+        # Use server
+        data = {
+            "model": "qwen2.5-1.5b-instruct-q4_k_m",
+            "messages": messages,
+            "max_tokens": 512,
+            "temperature": 0.1,
+            "stream": stream
+        }
+        try:
+            if stream:
+                # Use requests with stream=True for the server call
+                response = requests.post(LLAMA_CPP_ENDPOINT, json=data, timeout=120, stream=True)
+                response.raise_for_status()
+                for line in response.iter_lines():
+                    if line:
+                        line_decoded = line.decode('utf-8')
+                        if line_decoded.startswith("data: "):
+                            content = line_decoded[6:]
+                            if content.strip() == "[DONE]":
+                                break
+                            try:
+                                json_data = json.loads(content)
+                                token = json_data['choices'][0]['delta'].get('content', '')
+                                if token:
+                                    if not first_token_received:
+                                        print(f"[DEBUG] First token received from server after {time.time() - gen_start:.2f}s")
+                                        first_token_received = True
+                                    yield token
+                            except:
+                                continue
+            else:
+                response = requests.post(LLAMA_CPP_ENDPOINT, json=data, timeout=60)
+                response.raise_for_status()
+                result = response.json()
+                print(f"[DEBUG] Generation completed in {time.time() - gen_start:.2f}s")
+                return result['choices'][0]['message']['content']
+        except Exception as e:
+            err_msg = f"Error calling LLM server: {e}"
+            print(f"[DEBUG] SERVER ERROR: {e}")
+            if stream: yield err_msg
+            else: return err_msg
     else:
-        output = chat_model.create_chat_completion(messages=messages, max_tokens=1024, temperature=0.1)
-        full_response = output['choices'][0]['message']['content']
-
-    return full_response
+        # Local model
+        try:
+            if stream:
+                output = chat_model.create_chat_completion(messages=messages, max_tokens=512, temperature=0.1, stream=True)
+                for chunk in output:
+                    token = chunk['choices'][0]['delta'].get('content', '')
+                    if token:
+                        if not first_token_received:
+                            print(f"[DEBUG] First token received from local LLM after {time.time() - gen_start:.2f}s")
+                            first_token_received = True
+                        yield token
+                print(f"[DEBUG] Total stream duration: {time.time() - gen_start:.2f}s")
+            else:
+                output = chat_model.create_chat_completion(messages=messages, max_tokens=512, temperature=0.1)
+                print(f"[DEBUG] Local generation took {time.time() - gen_start:.2f}s")
+                return output['choices'][0]['message']['content']
+        except MemoryError:
+            err_msg = "Error: System ran out of memory while generating response."
+            print(f"[DEBUG] MEMORY ERROR: {err_msg}")
+            if stream: yield err_msg
+            else: return err_msg
+        except Exception as e:
+            err_msg = f"Error generating response: {e}"
+            print(f"[DEBUG] GENERATION ERROR: {e}")
+            if stream: yield err_msg
+            else: return err_msg
 
 if __name__ == "__main__":
     import sys

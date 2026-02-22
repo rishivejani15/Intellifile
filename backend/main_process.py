@@ -8,7 +8,7 @@ BACKEND_URL = "http://127.0.0.1:8001"
 
 def start_llm_server():
     backend_path = os.path.join(os.path.dirname(__file__), "..")
-    model_path = os.path.join(backend_path, "models", "qwen2.5-3b-instruct-q4_k_m.gguf")
+    model_path = os.path.join(backend_path, "models", "qwen2.5-1.5b-instruct-q4_k_m.gguf")
     if not os.path.exists(model_path):
         print("LLM Model not found at:", model_path)
         print("Please download Qwen model to models/ folder.")

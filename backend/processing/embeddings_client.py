@@ -8,7 +8,7 @@ from typing import List, Optional
 class EmbeddingsClient:
     def __init__(self):
         self.url = os.getenv("EMBEDDINGS_URL", "http://127.0.0.1:8001/embeddings")
-        self.model_name = os.getenv("EMBEDDINGS_MODEL", "qwen2.5-3b-instruct-q4_k_m.gguf")
+        self.model_name = os.getenv("EMBEDDINGS_MODEL", "qwen2.5-1.5b-instruct-q4_k_m.gguf")
         self.timeout = int(os.getenv("EMBEDDINGS_TIMEOUT", "30"))
         
         # We need to know vector dimension. We can fetch once or cache it.

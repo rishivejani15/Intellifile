@@ -21,8 +21,8 @@ function startBackend() {
   const scriptPath = path.join(__dirname, "backend", "main.py");
   console.log("Starting backend server from:", scriptPath);
 
-  backendProcess = spawn(pythonPath, [scriptPath], {
-    env: { ...process.env, OMP_NUM_THREADS: "1", USE_SIMPLE_THREADED_LEVEL3: "1" }
+  backendProcess = spawn(pythonPath, ['-u', scriptPath], {
+    env: { ...process.env }
   });
 
   backendProcess.stdout.on("data", (data) => {
@@ -154,29 +154,66 @@ ipcMain.handle("ingest-document", async (_, filePath) => {
 ipcMain.on("ai-chat-start", async (event, query) => {
   console.log("DEBUG: Chat started with query:", query);
   try {
-    console.log("Chatting with backend:", query);
+    console.log("Chatting with backend (streaming):", query);
 
-    const response = await axios.post(`${BACKEND_URL}/chat`, { query });
-    const answer = response.data.response;
-    console.log("DEBUG: Chat response:", answer);
+    const response = await axios({
+      method: 'post',
+      url: `${BACKEND_URL}/chat`,
+      data: { query },
+      responseType: 'stream'
+    });
 
-    // Simulate streaming for animation effect
-    const chunkSize = 4; // Characters per chunk
-    const delay = 15; // ms delay between chunks
+    let fullAnswer = "";
 
-    for (let i = 0; i < answer.length; i += chunkSize) {
-      const chunk = answer.slice(i, i + chunkSize);
-      event.reply("ai-chat-token", chunk);
+    response.data.on('data', (chunk) => {
+      const token = chunk.toString();
+      fullAnswer += token;
+      event.reply("ai-chat-token", token);
+    });
 
-      // Non-blocking delay
-      await new Promise(resolve => setTimeout(resolve, delay));
-    }
+    response.data.on('end', () => {
+      console.log("DEBUG: Chat streaming finished.");
+      event.reply("ai-chat-done", fullAnswer);
+    });
 
-    event.reply("ai-chat-done", answer);
+    response.data.on('error', (err) => {
+      console.error("Stream error:", err);
+      event.reply("ai-chat-error", "Stream interrupted.");
+    });
 
   } catch (error) {
     console.error("Backend Chat Error:", error.message);
     event.reply("ai-chat-error", error.message || "Failed to generate response.");
+  }
+});
+
+ipcMain.handle("check-model-status", async () => {
+  try {
+    const response = await axios.get(`${BACKEND_URL}/health`);
+    return response.data;
+  } catch (err) {
+    console.error("Health check failed:", err.message);
+    return { status: "error", embedding_model: "offline" };
+  }
+});
+
+ipcMain.handle("download-model", async () => {
+  try {
+    const response = await axios.post(`${BACKEND_URL}/download_model`);
+    return response.data;
+  } catch (err) {
+    console.error("Download model error:", err.message);
+    throw err;
+  }
+});
+
+ipcMain.handle("reset-app", async () => {
+  try {
+    const response = await axios.post(`${BACKEND_URL}/reset`);
+    return response.data;
+  } catch (err) {
+    console.error("Reset app error:", err.message);
+    throw err;
   }
 });
 

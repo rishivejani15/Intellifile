@@ -23,7 +23,7 @@ pip install -r requirements.txt
 
 ## 2. Download Models
 
-1.  **LLM Model**: Download `qwen2.5-3b-instruct-q4_k_m.gguf` (or similar Qwen model) and place it in `d:\Projects\IntelliFile\models`.
+1.  **LLM Model**: Download `qwen2.5-1.5b-instruct-q4_k_m.gguf` (or similar Qwen model) and place it in `d:\Projects\IntelliFile\models`.
     -   You can find it on HuggingFace (e.g., `Qwen/Qwen2.5-3B-Instruct-GGUF`).
     -   Rename it to `qwen2.5-3b-instruct-q4_k_m.gguf` or update the command below.
 
