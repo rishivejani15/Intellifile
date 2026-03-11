@@ -1,0 +1,154 @@
+# Common Ignoring Patterns for Intellifile
+
+# Environment and Dependencies
+venv/
+.env
+.venv
+env/
+node_modules/
+jspm_packages/
+
+
+# Build and Output
+dist/
+build/
+out/
+*.exe
+*.dll
+*.so
+*.dylib
+*.dmg
+*.pkg
+*.app
+*.ipa
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Logs and Debug
+*.log
+error.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Databases and Data
+*.sqlite
+*.db
+*.sqlite3
+
+# Large Files & ML Models
+*.bin
+*.pt
+*.pth
+*.weights
+*.h5
+*.onnx
+*.pb
+*.tflite
+*.joblib
+*.pkl
+*.gguf
+*.ckpt
+*.safetensors
+*.onnx_data
+*.mar
+*.model
+
+# Large Data Formats
+*.parquet
+*.jsonl
+*.csv
+*.xlsx
+*.xls
+*.faiss
+*.index
+
+# Archive & Compressed
+*.zip
+*.tar
+*.gz
+*.7z
+*.rar
+*.iso
+
+# Media Files
+*.mp4
+*.mov
+*.avi
+*.mkv
+*.mp3
+*.wav
+*.flac
+
+# OS specific
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# AI Models
+*.gguf
+*.bin
+*.pt
+*.onnx
+
+# Model folders
+backend/chat/models/
+backend/models/
+
+# Data / embeddings
+data/
+*.faiss
+*.index
+*.db
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+venv/
+.env
+
+# Node
+node_modules/
+
+# Logs
+*.log
+
+backend/chat/models/
+*.gguf
+*.faiss
+*.db
+data/
+node_modules/
+venv/
+__pycache__/
+.env
