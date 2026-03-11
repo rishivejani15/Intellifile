@@ -7,7 +7,6 @@ import threading
 import time
 
 # Import backend functions
-sys.path.append('backend')
 from llm import ingest_file, chat
 
 class IntelliFileApp:

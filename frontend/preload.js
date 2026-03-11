@@ -25,6 +25,9 @@ contextBridge.exposeInMainWorld('intellifile', {
   searchStatus: () => {
     return ipcRenderer.invoke('search-status');
   },
+  indexFile: (filePath) => {
+    return ipcRenderer.invoke('index-file', filePath);
+  },
   indexFolder: (folder) => {
     return ipcRenderer.invoke('index-folder', folder);
   },
@@ -49,4 +52,24 @@ contextBridge.exposeInMainWorld('intellifile', {
   clearFaiss: () => {
     return ipcRenderer.invoke('clear-faiss');
   }
+});
+
+// electronAPI (merged from root preload.js)
+contextBridge.exposeInMainWorld('electronAPI', {
+  getRootFolders: () => ipcRenderer.invoke('get-root-folders'),
+  readFolder: (folderPath) => ipcRenderer.invoke('read-folder', folderPath),
+  openFile: () => ipcRenderer.invoke('open-file'),
+  ingestDocument: (filePath) => ipcRenderer.invoke('ingest-document', filePath),
+  startChat: (query) => ipcRenderer.send('ai-chat-start', query),
+  onChatToken: (callback) => ipcRenderer.on('ai-chat-token', (_, token) => callback(token)),
+  onChatDone: (callback) => ipcRenderer.on('ai-chat-done', (_, answer) => callback(answer)),
+  onChatError: (callback) => ipcRenderer.on('ai-chat-error', (_, error) => callback(error)),
+  removeAllChatListeners: () => {
+    ipcRenderer.removeAllListeners('ai-chat-token');
+    ipcRenderer.removeAllListeners('ai-chat-done');
+    ipcRenderer.removeAllListeners('ai-chat-error');
+  },
+  checkModelStatus: () => ipcRenderer.invoke('check-model-status'),
+  downloadModel: () => ipcRenderer.invoke('download-model'),
+  resetApp: () => ipcRenderer.invoke('reset-app')
 });
