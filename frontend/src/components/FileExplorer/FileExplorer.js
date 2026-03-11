@@ -4,7 +4,7 @@ import './FileExplorer.css';
 
 const ipcRenderer = window.electron?.ipcRenderer;
 
-function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [] }) {
+function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWithAI }) {
   const [currentPath, setCurrentPath] = useState(null);
   const [items, setItems] = useState([]);
   const [breadcrumb, setBreadcrumb] = useState([]);
@@ -216,7 +216,8 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [] }) {
     setSelectedItem(item);
     setLastSelectedIndex(idx);
 
-    if (item.editable) {
+    // Call onFileSelect regardless of editability so the App knows what's selected
+    if (onFileSelect) {
       onFileSelect(item);
     }
   };
@@ -1067,6 +1068,14 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [] }) {
           <div className="context-menu-item" onClick={() => setShowProperties(true)}>
             ℹ️ Properties
           </div>
+          {selectedItem && selectedItem.type !== 'folder' && selectedItem.type !== 'drive' && (
+            <div className="context-menu-item" onClick={() => {
+              setShowContextMenu(false);
+              onChatWithAI(selectedItem);
+            }}>
+              🤖 Chat with AI
+            </div>
+          )}
         </div>
       )}
 

@@ -4,8 +4,13 @@ contextBridge.exposeInMainWorld('electron', {
   ipcRenderer: {
     invoke: (channel, ...args) => ipcRenderer.invoke(channel, ...args),
     send: (channel, ...args) => ipcRenderer.send(channel, ...args),
-    on: (channel, func) => ipcRenderer.on(channel, (event, ...args) => func(...args)),
-    once: (channel, func) => ipcRenderer.once(channel, (event, ...args) => func(...args)),
+    on: (channel, func) => {
+      const subscription = (event, ...args) => func(event, ...args);
+      ipcRenderer.on(channel, subscription);
+      return () => ipcRenderer.removeListener(channel, subscription);
+    },
+    removeListener: (channel, func) => ipcRenderer.removeListener(channel, func),
+    removeAllListeners: (channel) => ipcRenderer.removeAllListeners(channel)
   },
   shell: {
     openPath: (path) => shell.openPath(path)
@@ -23,4 +28,25 @@ contextBridge.exposeInMainWorld('intellifile', {
   indexFolder: (folder) => {
     return ipcRenderer.invoke('index-folder', folder);
   },
+  saveVersion: (data) => {
+    return ipcRenderer.invoke('save-version', data);
+  },
+  getVersions: (filePath) => {
+    return ipcRenderer.invoke('get-versions', filePath);
+  },
+  restoreVersion: (data) => {
+    return ipcRenderer.invoke('restore-version', data);
+  },
+  compareVersions: (data) => {
+    return ipcRenderer.invoke('compare-versions', data);
+  },
+  chat: (query) => {
+    return ipcRenderer.invoke('chat', query);
+  },
+  ingestFile: (filePath) => {
+    return ipcRenderer.invoke('ingest-file', filePath);
+  },
+  clearFaiss: () => {
+    return ipcRenderer.invoke('clear-faiss');
+  }
 });

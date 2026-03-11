@@ -1,4 +1,4 @@
-def chunk_text(text, chunk_size=400, overlap=80):
+def chunk_text(text, chunk_size=200, overlap=25):
     """
     Split *text* into overlapping word-level chunks.
 

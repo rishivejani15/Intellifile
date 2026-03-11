@@ -5,7 +5,7 @@ from core.faiss_manager import load_index
 from core.db import get_connection
 
 
-def semantic_search(query, top_k=20, min_similarity=0.3):
+def semantic_search(query, top_k=10, min_similarity=0.3):
     """Pure semantic search using cached FAISS index + batch SQL."""
     index = load_index()  # returns the in-memory singleton (or None)
 
@@ -20,7 +20,7 @@ def semantic_search(query, top_k=20, min_similarity=0.3):
         normalize_embeddings=True
     ).astype("float32").reshape(1, -1)
 
-    scores, chunk_ids = index.search(q_emb, top_k * 3)
+    scores, chunk_ids = index.search(q_emb, top_k * 2)
 
     # Gather valid hits
     valid = [
