@@ -10,3 +10,9 @@ Pillow
 pytesseract
 onnxruntime
 optimum
+fastapi
+python-multipart
+requests
+uvicorn
+pydantic-settings
+pydantic
