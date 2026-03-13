@@ -1,6 +1,7 @@
 # Project-wide
 models/
 data/
+test_files/
 
 # Python
 __pycache__/
