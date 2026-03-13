@@ -1,5 +1,5 @@
-import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { searchFiles, indexDevice, getSearchStatus, onIndexProgress } from '../services/searchService';
+import React, { useState, useCallback, useEffect } from 'react';
+import { searchFiles, indexDevice, getSearchStatus } from '../services/searchService';
 import './Search.css';
 
 const ipcRenderer = window.electron?.ipcRenderer;
@@ -9,11 +9,9 @@ export default function Search() {
   const [results, setResults] = useState([]);
   const [searching, setSearching] = useState(false);
   const [indexing, setIndexing] = useState(false);
-  const [lastIndexedTime, setLastIndexedTime] = useState(null);
+  const [indexedFolder, setIndexedFolder] = useState('');
   const [ready, setReady] = useState(false);
   const [error, setError] = useState('');
-  const [progress, setProgress] = useState(null);   // { phase, detail, pct }
-  const indexingRef = useRef(false);
 
   // Poll engine readiness
   useEffect(() => {
@@ -32,44 +30,22 @@ export default function Search() {
     return () => clearInterval(interval);
   }, []);
 
-  // Listen for indexing progress from the Python engine
-  useEffect(() => {
-    const unsub = onIndexProgress((data) => {
-      setProgress({ phase: data.phase, detail: data.detail, pct: data.pct ?? null });
-    });
-    return unsub;
-  }, []);
-
-  // Auto-start indexing once the engine is ready (first launch only)
-  useEffect(() => {
-    if (ready && !indexingRef.current && !lastIndexedTime) {
-      handleIndexDevice();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready]);
-
-  // ── Index device ────────────────────────
-  const handleIndexDevice = useCallback(async () => {
-    if (indexingRef.current) return;  // prevent double-start
+  // ── Index the device ────────────────────────
+  const handleIndex = useCallback(async () => {
     try {
-      indexingRef.current = true;
       setIndexing(true);
       setError('');
-      setProgress({ phase: 'starting', detail: 'Starting indexing…', pct: 0 });
-
       const res = await indexDevice();
-      
-      if (res && res.error) {
+
+      if (res.error) {
         setError(res.error);
       } else {
-        setLastIndexedTime(new Date().toLocaleTimeString());
+        setIndexedFolder('Device Root');
       }
     } catch (err) {
       setError(err.message);
     } finally {
-      indexingRef.current = false;
       setIndexing(false);
-      setProgress(null);
     }
   }, []);
 
@@ -107,41 +83,22 @@ export default function Search() {
         </div>
       )}
 
+      {/* Device selector */}
       <div className="index-section">
         <button
           className="index-btn"
-          onClick={handleIndexDevice}
+          onClick={handleIndex}
           disabled={indexing || !ready}
         >
-          {indexing ? 'Indexing Device…' : '🧠 Index Entire Device'}
+          {indexing ? 'Indexing…' : '💻 Index Device'}
         </button>
 
-        {lastIndexedTime && (
+        {indexedFolder && (
           <span className="indexed-label">
-            ✅ Last indexed: <strong>{lastIndexedTime}</strong>
+            ✅ Indexed: <strong>{indexedFolder}</strong>
           </span>
         )}
-
-        {progress && (
-          <div className="index-progress">
-            <div className="progress-detail">{progress.detail}</div>
-            {progress.pct != null && (
-              <div className="progress-bar-track">
-                <div
-                  className="progress-bar-fill"
-                  style={{ width: `${Math.min(progress.pct, 100)}%` }}
-                />
-              </div>
-            )}
-          </div>
-        )}
       </div>
-
-      {indexing && (
-        <div className="search-notice indexing-hint">
-          You can search while indexing is in progress — results will improve as more files are indexed.
-        </div>
-      )}
 
       {/* Search bar */}
       <form className="search-bar" onSubmit={handleSearch}>

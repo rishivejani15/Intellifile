@@ -8,6 +8,13 @@ export async function indexDevice() {
     return response;
 }
 
+export async function indexFolder(folderPath) {
+    if (window.intellifile?.indexFolder) {
+        return window.intellifile.indexFolder(folderPath);
+    }
+    return indexDevice();
+}
+
 export async function getSearchStatus() {
     const response = await window.intellifile.searchStatus();
     return response;

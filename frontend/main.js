@@ -1,7 +1,24 @@
 const { app, BrowserWindow, Menu, ipcMain, shell, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const { execSync, spawn } = require('child_process');
+const { spawn } = require('child_process');
+const axios = require('axios');
+
+const PROJECT_ROOT = path.join(__dirname, '..');
+
+const venvCandidates = [
+  path.join(PROJECT_ROOT,'backend', '.venv', 'Scripts', 'python.exe'),
+  path.join(PROJECT_ROOT,'backend' ,'.venv', 'Scripts', 'python.exe'),
+];
+
+const PYTHON_EXECUTABLE = venvCandidates.find((p) => fs.existsSync(p))
+  || (process.platform === 'win32' ? 'python' : 'python3');
+
+if (!(venvCandidates.some((p) => fs.existsSync(p)))) {
+  console.warn('[Python] No project venv found; falling back to system Python.');
+}
+
+console.log('[Python] Using executable:', PYTHON_EXECUTABLE);
 
 // Check if running in development mode (force true for now since React dev server is running)
 const isDev = true;
@@ -77,10 +94,12 @@ function isSystemFile(filename) {
 }
 
 let pyProcess;
+let chatBackendProcess;
 let pyReady = false;
 let pyBuffer = '';
 let pendingRequests = new Map();  // requestId -> { resolve, timeout }
 let requestCounter = 0;
+const CHAT_BACKEND_URL = 'http://127.0.0.1:8000';
 
 function sendToPython(payload, timeoutMs = 120000) {
   return new Promise((resolve) => {
@@ -104,7 +123,7 @@ function startPython() {
   const scriptPath = path.join(__dirname, "../backend/engine_server.py");
   console.log('[Python] Starting engine from:', scriptPath);
 
-  pyProcess = spawn("python", [scriptPath], {
+  pyProcess = spawn(PYTHON_EXECUTABLE, [scriptPath], {
     cwd: path.join(__dirname, '..'),
     stdio: ['pipe', 'pipe', 'pipe']
   });
@@ -168,6 +187,29 @@ function startPython() {
   });
 }
 
+function startChatBackend() {
+  const scriptPath = path.join(__dirname, '../backend/chat/backend/main.py');
+  console.log('[ChatBackend] Starting API from:', scriptPath);
+
+  chatBackendProcess = spawn(PYTHON_EXECUTABLE, [scriptPath], {
+    cwd: path.join(__dirname, '..'),
+    stdio: ['ignore', 'pipe', 'pipe']
+  });
+
+  chatBackendProcess.stdout.on('data', (data) => {
+    console.log('[ChatBackend stdout]', data.toString().trim());
+  });
+
+  chatBackendProcess.stderr.on('data', (data) => {
+    console.error('[ChatBackend stderr]', data.toString().trim());
+  });
+
+  chatBackendProcess.on('close', (code) => {
+    console.log('[ChatBackend] Process exited with code:', code);
+    chatBackendProcess = null;
+  });
+}
+
 ipcMain.handle("search", async (_, query) => {
   console.log('[IPC] search called, pyReady:', pyReady, 'query:', query);
   return sendToPython({ action: "search", query });
@@ -180,6 +222,163 @@ ipcMain.handle("search-status", async () => {
 
 ipcMain.handle("index-device", async () => {
   return sendToPython({ action: "index" }, 1800000);  // 30-min timeout for full device
+});
+
+ipcMain.handle('chat-ask', async (_event, query) => {
+  try {
+    const response = await axios.post(`${CHAT_BACKEND_URL}/ask`, { query, top_k: 5 });
+    return response.data;
+  } catch (err) {
+    return { ok: false, answer: `Chat request failed: ${err.message || 'unknown error'}` };
+  }
+});
+
+ipcMain.on('chat-stream-start', async (event, query) => {
+  try {
+    const response = await axios({
+      method: 'post',
+      url: `${CHAT_BACKEND_URL}/chat`,
+      data: { query, top_k: 5 },
+      responseType: 'stream'
+    });
+
+    let fullAnswer = '';
+    response.data.on('data', (chunk) => {
+      const token = chunk.toString();
+      fullAnswer += token;
+      event.reply('chat-stream-token', token);
+    });
+
+    response.data.on('end', () => {
+      event.reply('chat-stream-done', fullAnswer);
+    });
+
+    response.data.on('error', () => {
+      event.reply('chat-stream-error', 'Stream interrupted.');
+    });
+  } catch (err) {
+    event.reply('chat-stream-error', err.message || 'Failed to stream chat response.');
+  }
+});
+
+ipcMain.handle('chat-ingest-file', async (_event, filePath) => {
+  try {
+    const response = await axios.post(`${CHAT_BACKEND_URL}/chat/ingest`, { file_path: filePath });
+    return response.data;
+  } catch (err) {
+    return { ok: false, error: `File ingest failed: ${err.message || 'unknown error'}` };
+  }
+});
+
+// Backward-compatible channel for ChatSidebar.jsx
+ipcMain.handle('ingest-file', async (_event, filePath) => {
+  try {
+    const response = await axios.post(`${CHAT_BACKEND_URL}/chat/ingest`, { file_path: filePath });
+    return response.data;
+  } catch (err) {
+    return { ok: false, error: `File ingest failed: ${err.message || 'unknown error'}` };
+  }
+});
+
+ipcMain.handle('versions-list', async (_event, filePath) => {
+  try {
+    const response = await axios.get(`${CHAT_BACKEND_URL}/versions`, {
+      params: { file_path: filePath }
+    });
+    return response.data;
+  } catch (err) {
+    return { ok: false, versions: [], error: err.message || 'Failed to load versions.' };
+  }
+});
+
+// Backward-compatible channel for versionService.js
+ipcMain.handle('get-versions', async (_event, filePath) => {
+  try {
+    const response = await axios.get(`${CHAT_BACKEND_URL}/versions`, {
+      params: { file_path: filePath }
+    });
+    return { success: true, data: response.data?.versions || [] };
+  } catch (err) {
+    return { success: false, error: err.message || 'Failed to load versions.', data: [] };
+  }
+});
+
+ipcMain.handle('versions-compare', async (_event, payload) => {
+  try {
+    const response = await axios.post(`${CHAT_BACKEND_URL}/versions/compare`, payload);
+    return response.data;
+  } catch (err) {
+    return { ok: false, error: err.message || 'Failed to compare versions.' };
+  }
+});
+
+// Backward-compatible channel for versionService.js and VersionTimeline.js
+ipcMain.handle('compare-versions', async (_event, payload) => {
+  try {
+    const body = {
+      file_path: payload.filePath || payload.file_path,
+      version_a: payload.versionA || payload.version_a,
+      version_b: payload.versionB || payload.version_b,
+    };
+    const response = await axios.post(`${CHAT_BACKEND_URL}/versions/compare`, body);
+    return { success: true, data: response.data };
+  } catch (err) {
+    return { success: false, error: err.message || 'Failed to compare versions.' };
+  }
+});
+
+ipcMain.handle('versions-restore', async (_event, payload) => {
+  try {
+    const response = await axios.post(`${CHAT_BACKEND_URL}/versions/restore`, payload);
+    return response.data;
+  } catch (err) {
+    return { success: false, error: err.message || 'Failed to restore version.' };
+  }
+});
+
+// Backward-compatible channel for versionService.js
+ipcMain.handle('restore-version', async (_event, payload) => {
+  try {
+    const body = {
+      file_path: payload.filePath || payload.file_path,
+      version_id: payload.versionId || payload.version_id,
+    };
+    const response = await axios.post(`${CHAT_BACKEND_URL}/versions/restore`, body);
+    return response.data;
+  } catch (err) {
+    return { success: false, error: err.message || 'Failed to restore version.' };
+  }
+});
+
+// Save snapshot without rollback by ingesting path-based file.
+ipcMain.handle('save-version', async (_event, payload) => {
+  try {
+    const filePath = payload.filePath || payload.file_path;
+    const response = await axios.post(`${CHAT_BACKEND_URL}/upload_path`, { file_path: filePath });
+    return { success: true, data: response.data };
+  } catch (err) {
+    return { success: false, error: err.message || 'Failed to save version.' };
+  }
+});
+
+// Legacy chat call expected by ChatSidebar.jsx
+ipcMain.handle('chat', async (_event, query) => {
+  try {
+    const response = await axios.post(`${CHAT_BACKEND_URL}/ask`, { query, top_k: 5 });
+    return response.data?.answer || '';
+  } catch (err) {
+    return `Chat request failed: ${err.message || 'unknown error'}`;
+  }
+});
+
+// Legacy clear request from ChatSidebar.jsx; keep as no-op for compatibility.
+ipcMain.handle('clear-faiss', async () => {
+  try {
+    const response = await axios.post(`${CHAT_BACKEND_URL}/chat/reset`);
+    return { success: true, ...(response.data || {}) };
+  } catch (err) {
+    return { success: false, error: err.message || 'Failed to clear chat store.' };
+  }
 });
 
 
@@ -649,6 +848,7 @@ function createWindow() {
 app.on('ready', () => {
   registerIpcHandlers();
   startPython();
+  startChatBackend();
   createWindow();
 });
 
@@ -663,6 +863,12 @@ app.on('before-quit', () => {
     console.log('[Python] Killing engine process');
     pyProcess.kill();
     pyProcess = null;
+  }
+
+  if (chatBackendProcess) {
+    console.log('[ChatBackend] Killing API process');
+    chatBackendProcess.kill();
+    chatBackendProcess = null;
   }
 });
 

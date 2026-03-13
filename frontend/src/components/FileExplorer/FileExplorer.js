@@ -4,7 +4,7 @@ import './FileExplorer.css';
 
 const ipcRenderer = window.electron?.ipcRenderer;
 
-function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [] }) {
+function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWithAI }) {
   const [currentPath, setCurrentPath] = useState(null);
   const [items, setItems] = useState([]);
   const [breadcrumb, setBreadcrumb] = useState([]);
@@ -31,7 +31,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [] }) {
   const [semanticLoading, setSemanticLoading] = useState(false);
   const [engineReady, setEngineReady] = useState(false);
   const [indexing, setIndexing] = useState(false);
-  const [lastIndexedTime, setLastIndexedTime] = useState(null);
+  const [indexedFolder, setIndexedFolder] = useState('');
   const contextMenuRef = useRef(null);
   const inputRef = useRef(null);
 
@@ -216,7 +216,8 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [] }) {
     setSelectedItem(item);
     setLastSelectedIndex(idx);
 
-    if (item.editable) {
+    // Call onFileSelect regardless of editability so the App knows what's selected
+    if (onFileSelect) {
       onFileSelect(item);
     }
   };
@@ -603,10 +604,11 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [] }) {
     console.log('[FileExplorer] Index device clicked, engineReady:', engineReady);
     try {
       setIndexing(true);
+      setIndexedFolder('');
       const res = await indexDevice();
       console.log('[FileExplorer] Index result:', res);
       if (res && !res.error) {
-        setLastIndexedTime(new Date().toLocaleTimeString());
+        setIndexedFolder('Device Root');
       } else {
         console.error('[FileExplorer] Indexing error:', res?.error);
       }
@@ -881,12 +883,12 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [] }) {
                 className="action-btn index-btn"
                 onClick={handleIndexDevice}
                 disabled={indexing}
-                title={indexing ? 'Indexing in progress...' : engineReady ? 'Index device for AI search' : 'Engine loading... click to try anyway'}
+                title={indexing ? 'Indexing in progress...' : engineReady ? 'Index your device for AI search' : 'Engine loading... click to try anyway'}
               >
                 {indexing ? '⏳ Indexing…' : '🧠 Index Device'}
               </button>
-              {lastIndexedTime && (
-                <span className="indexed-label" title={`Last indexed at ${lastIndexedTime}`}>✅ Indexed</span>
+              {indexedFolder && (
+                <span className="indexed-label" title={indexedFolder}>✅ Indexed</span>
               )}
             </div>
           </div>
@@ -1063,6 +1065,14 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [] }) {
           <div className="context-menu-item" onClick={() => setShowProperties(true)}>
             ℹ️ Properties
           </div>
+          {selectedItem && selectedItem.type !== 'folder' && selectedItem.type !== 'drive' && (
+            <div className="context-menu-item" onClick={() => {
+              setShowContextMenu(false);
+              onChatWithAI(selectedItem);
+            }}>
+              🤖 Chat with AI
+            </div>
+          )}
         </div>
       )}
 

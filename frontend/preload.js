@@ -28,4 +28,47 @@ contextBridge.exposeInMainWorld('intellifile', {
     ipcRenderer.on('index-progress', handler);
     return () => ipcRenderer.removeListener('index-progress', handler);
   },
+  chatAsk: (query) => {
+    return ipcRenderer.invoke('chat-ask', query);
+  },
+  startChatStream: (query) => {
+    return ipcRenderer.send('chat-stream-start', query);
+  },
+  onChatStreamToken: (callback) => {
+    const handler = (_event, token) => callback(token);
+    ipcRenderer.on('chat-stream-token', handler);
+    return () => ipcRenderer.removeListener('chat-stream-token', handler);
+  },
+  onChatStreamDone: (callback) => {
+    const handler = (_event, answer) => callback(answer);
+    ipcRenderer.on('chat-stream-done', handler);
+    return () => ipcRenderer.removeListener('chat-stream-done', handler);
+  },
+  onChatStreamError: (callback) => {
+    const handler = (_event, err) => callback(err);
+    ipcRenderer.on('chat-stream-error', handler);
+    return () => ipcRenderer.removeListener('chat-stream-error', handler);
+  },
+  ingestFileForChat: (filePath) => {
+    return ipcRenderer.invoke('chat-ingest-file', filePath);
+  },
+  listVersions: (filePath) => {
+    return ipcRenderer.invoke('versions-list', filePath);
+  },
+  compareVersions: (payload) => {
+    return ipcRenderer.invoke('versions-compare', payload);
+  },
+  restoreVersion: (payload) => {
+    return ipcRenderer.invoke('versions-restore', payload);
+  },
+  // Compatibility aliases for existing UI components.
+  ingestFile: (filePath) => {
+    return ipcRenderer.invoke('ingest-file', filePath);
+  },
+  chat: (query) => {
+    return ipcRenderer.invoke('chat', query);
+  },
+  clearFaiss: () => {
+    return ipcRenderer.invoke('clear-faiss');
+  },
 });

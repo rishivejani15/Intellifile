@@ -1,0 +1,546 @@
+/* Versioning Component Styles */
+
+.version-timeline {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    background: #1e1e1e;
+    color: #e0e0e0;
+    border-left: 1px solid #333;
+    width: 350px;
+    overflow: hidden;
+}
+
+.timeline-header {
+    padding: 16px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid #333;
+}
+
+.timeline-header h3 {
+    margin: 0;
+    font-size: 1.1rem;
+    color: #4da6ff;
+}
+
+.timeline-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+/* Version Card */
+.version-card {
+    background: #252526;
+    border-radius: 8px;
+    padding: 12px;
+    border: 1px solid #3d3d3d;
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.version-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    border-color: #4da6ff;
+}
+
+.version-header {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.8rem;
+    color: #888;
+    margin-bottom: 8px;
+}
+
+.version-id {
+    font-family: monospace;
+    background: #333;
+    padding: 2px 6px;
+    border-radius: 4px;
+}
+
+.version-intent-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+}
+
+.intent-label {
+    font-weight: bold;
+    font-size: 0.9rem;
+    color: #bbb;
+}
+
+.version-summary {
+    font-size: 0.9rem;
+    margin: 8px 0;
+    line-height: 1.4;
+    color: #eee;
+}
+
+/* Risk Badges */
+.risk-badge {
+    font-size: 0.75rem;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-weight: bold;
+    text-transform: uppercase;
+}
+
+.badge-high {
+    background: #5a1d1d;
+    color: #ff6b6b;
+    border: 1px solid #ff6b6b;
+}
+
+.badge-medium {
+    background: #5a4a1d;
+    color: #ffcc00;
+    border: 1px solid #ffcc00;
+}
+
+.badge-low {
+    background: #1d5a2d;
+    color: #51cf66;
+    border: 1px solid #51cf66;
+}
+
+.badge-unknown {
+    background: #333;
+    color: #888;
+}
+
+/* Metrics */
+.version-metrics {
+    margin: 12px 0;
+}
+
+.metric {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.8rem;
+}
+
+.metric-label {
+    color: #888;
+    width: 60px;
+}
+
+.stability-bar {
+    flex: 1;
+    height: 6px;
+    background: #333;
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.stability-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #ff4d4d, #4da6ff);
+    border-radius: 3px;
+}
+
+.metric-value {
+    color: #4da6ff;
+    font-weight: bold;
+    min-width: 35px;
+}
+
+/* Actions */
+.version-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 12px;
+}
+
+.version-actions button {
+    flex: 1;
+    padding: 6px;
+    border-radius: 4px;
+    border: none;
+    cursor: pointer;
+    font-size: 0.85rem;
+    font-weight: bold;
+    transition: opacity 0.2s;
+}
+
+.btn-restore {
+    background: #007acc;
+    color: white;
+}
+
+.btn-compare {
+    background: #3d3d3d;
+    color: white;
+}
+
+.btn-restore:hover,
+.btn-compare:hover {
+    opacity: 0.8;
+}
+
+.btn-refresh {
+    background: transparent;
+    border: 1px solid #4da6ff;
+    color: #4da6ff;
+    padding: 4px 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.8rem;
+}
+
+.btn-refresh:hover {
+    background: rgba(77, 166, 255, 0.1);
+}
+
+.timeline-error {
+    color: #ff6b6b;
+    padding: 12px;
+    font-size: 0.9rem;
+}
+
+.timeline-loading,
+.no-versions,
+.version-timeline-empty {
+    text-align: center;
+    color: #888;
+    padding: 40px 20px;
+}
+
+/* Diff Viewer Overlay */
+.diff-viewer-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.85);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 2000;
+}
+
+.diff-viewer-container {
+    background: #1e1e1e;
+    width: 90%;
+    height: 90%;
+    border-radius: 8px;
+    display: flex;
+    flex-direction: column;
+    border: 1px solid #333;
+    overflow: hidden;
+}
+
+.diff-header {
+    padding: 16px 24px;
+    background: #252526;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid #333;
+}
+
+.diff-info h3 {
+    margin: 0;
+    color: #fff;
+    font-size: 1.2rem;
+}
+
+.diff-info p {
+    margin: 4px 0 0;
+    color: #888;
+    font-size: 0.9rem;
+}
+
+.btn-close {
+    background: transparent;
+    border: none;
+    color: #888;
+    font-size: 1.5rem;
+    cursor: pointer;
+}
+
+.diff-content {
+    flex: 1;
+    overflow: auto;
+    padding: 20px;
+    background: #1e1e1e;
+}
+
+/* react-diff-view overrides for dark mode */
+.diff {
+    background: #1e1e1e !important;
+    color: #ccc !important;
+    font-family: 'Consolas', 'Monaco', 'Courier New', monospace !important;
+    border: 1px solid #333 !important;
+}
+
+.diff-gutter {
+    background: #252526 !important;
+    color: #666 !important;
+    border-right: 1px solid #333 !important;
+    min-width: 40px !important;
+    text-align: right !important;
+    padding: 0 8px !important;
+}
+
+.diff-code {
+    color: #d4d4d4 !important;
+    padding-left: 12px !important;
+}
+
+/* Additions (Green) */
+.diff-code-insert {
+    background-color: rgba(40, 167, 69, 0.2) !important;
+}
+
+.diff-gutter-insert {
+    background-color: rgba(40, 167, 69, 0.3) !important;
+    color: #8cffab !important;
+}
+
+/* Deletions (Red) */
+.diff-code-delete {
+    background-color: rgba(220, 53, 69, 0.2) !important;
+}
+
+.diff-gutter-delete {
+    background-color: rgba(220, 53, 69, 0.3) !important;
+    color: #ff8c8c !important;
+}
+
+/* Hunk Header */
+.diff-hunk-header {
+    background: #2d2d2d !important;
+    color: #4da6ff !important;
+}
+
+.diff-hunk-header-content {
+    padding: 4px 12px !important;
+    font-size: 0.85rem !important;
+    font-weight: bold !important;
+    color: #4da6ff !important;
+}
+
+.diff-footer {
+    padding: 16px 24px;
+    background: #252526;
+    display: flex;
+    justify-content: flex-end;
+    border-top: 1px solid #333;
+}
+
+.btn-close-modal {
+    background: #3a3d41;
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: 600;
+}
+
+.btn-close-modal:hover {
+    background: #45494e;
+}
+
+/* Selection for compare */
+.version-card.selecting {
+    border-color: #0e639c;
+    background: rgba(14, 99, 156, 0.1);
+}
+
+.compare-banner {
+    background: #0e639c;
+    color: white;
+    padding: 12px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+.btn-compare-now {
+    background: white;
+    color: #0e639c;
+    border: none;
+    padding: 6px 12px;
+    border-radius: 4px;
+    font-weight: bold;
+    font-size: 0.85rem;
+    background: #333;
+    border: 1px solid #444;
+}
+
+.stat-item.added {
+    color: #51cf66;
+    border-color: #51cf6633;
+    background: #1d5a2d33;
+}
+
+.stat-item.removed {
+    color: #ff6b6b;
+    border-color: #ff6b6b33;
+    background: #5a1d1d33;
+}
+
+.stat-item.headings {
+    color: #4da6ff;
+    border-color: #4da6ff33;
+    background: #00408533;
+}
+
+.stat-item.tables {
+    color: #ffcc00;
+    border-color: #ffcc0033;
+    background: #5a4a1d33;
+}
+
+.stat-item.changed {
+    color: #f8f9fa;
+    border-color: #444;
+}
+
+.stat-item.formulas {
+    color: #20c997;
+    border-color: #20c99733;
+    background: #0c546033;
+}
+
+.detail-section {
+    margin-top: 24px;
+}
+
+.detail-section h5 {
+    color: #888;
+    margin-bottom: 12px;
+    font-size: 0.95rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.detail-section ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.detail-section li {
+    padding: 10px 14px;
+    border-bottom: 1px solid #333;
+    font-size: 0.95rem;
+    line-height: 1.5;
+}
+
+.line-added {
+    background-color: rgba(40, 167, 69, 0.1);
+    border-left: 4px solid #51cf66;
+}
+
+.line-removed {
+    background-color: rgba(220, 53, 69, 0.1);
+    border-left: 4px solid #ff6b6b;
+    text-decoration: line-through;
+    opacity: 0.7;
+}
+
+.detail-section.warning {
+    background: #5a4a1d33;
+    padding: 16px;
+    border-radius: 8px;
+    border-left: 4px solid #ffcc00;
+}
+
+.detail-section.warning h5 {
+    color: #ffcc00;
+}
+
+.detail-section.scrollable {
+    max-height: 400px;
+    overflow-y: auto;
+    background: #1a1a1a;
+    border-radius: 4px;
+    border: 1px solid #333;
+    padding: 0;
+}
+
+.para-list {
+    display: flex;
+    flex-direction: column;
+}
+
+.para-item {
+    padding: 8px 12px;
+    border-bottom: 1px solid #2d2d2d;
+    font-size: 0.9rem;
+    line-height: 1.5;
+    white-space: pre-wrap;
+}
+
+.para-item:last-child {
+    border-bottom: none;
+}
+
+.line-equal {
+    color: #999;
+}
+
+.empty-para {
+    color: #555;
+    font-style: italic;
+}
+
+/* Excel Table Styles */
+.excel-diff-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+}
+
+.excel-diff-table th {
+    text-align: left;
+    padding: 10px;
+    background: #252526;
+    color: #888;
+    position: sticky;
+    top: 0;
+    border-bottom: 2px solid #333;
+}
+
+.excel-diff-table td {
+    padding: 8px 10px;
+    border-bottom: 1px solid #2d2d2d;
+}
+
+.cell-coord {
+    font-family: monospace;
+    color: #4da6ff;
+    font-weight: bold;
+}
+
+.val-old {
+    color: #ff6b6b;
+    text-decoration: line-through;
+    opacity: 0.7;
+}
+
+.val-new {
+    color: #51cf66;
+    font-weight: 500;
+}
+
+.null-val {
+    color: #555;
+    font-style: italic;
+}
