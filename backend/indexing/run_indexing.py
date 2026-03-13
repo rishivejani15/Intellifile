@@ -10,10 +10,8 @@ from indexing.index_files import index_files_incremental
 from indexing.update_faiss import update_faiss
 
 
-def run(folder=None):
-    if folder is None:
-        folder = sys.argv[1] if len(sys.argv) > 1 else "test_files"
-    affected_chunk_ids = index_files_incremental(folder)
+def run():
+    affected_chunk_ids = index_files_incremental()
     update_faiss(affected_chunk_ids)
 
 

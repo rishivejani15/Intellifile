@@ -1,5 +1,5 @@
-import React, { useState, useCallback, useEffect } from 'react';
-import { searchFiles, indexFolder, getSearchStatus } from '../services/searchService';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
+import { searchFiles, indexDevice, getSearchStatus, onIndexProgress } from '../services/searchService';
 import './Search.css';
 
 const ipcRenderer = window.electron?.ipcRenderer;
@@ -9,9 +9,11 @@ export default function Search() {
   const [results, setResults] = useState([]);
   const [searching, setSearching] = useState(false);
   const [indexing, setIndexing] = useState(false);
-  const [indexedFolder, setIndexedFolder] = useState('');
+  const [lastIndexedTime, setLastIndexedTime] = useState(null);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState('');
+  const [progress, setProgress] = useState(null);   // { phase, detail, pct }
+  const indexingRef = useRef(false);
 
   // Poll engine readiness
   useEffect(() => {
@@ -30,27 +32,44 @@ export default function Search() {
     return () => clearInterval(interval);
   }, []);
 
-  // ── Index a folder ────────────────────────
-  const handleIndex = useCallback(async () => {
-    if (!ipcRenderer) return;
-    try {
-      // Use Electron dialog to pick a folder
-      const result = await ipcRenderer.invoke('dialog-select-folder');
-      if (!result || !result.path) return;
+  // Listen for indexing progress from the Python engine
+  useEffect(() => {
+    const unsub = onIndexProgress((data) => {
+      setProgress({ phase: data.phase, detail: data.detail, pct: data.pct ?? null });
+    });
+    return unsub;
+  }, []);
 
+  // Auto-start indexing once the engine is ready (first launch only)
+  useEffect(() => {
+    if (ready && !indexingRef.current && !lastIndexedTime) {
+      handleIndexDevice();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready]);
+
+  // ── Index device ────────────────────────
+  const handleIndexDevice = useCallback(async () => {
+    if (indexingRef.current) return;  // prevent double-start
+    try {
+      indexingRef.current = true;
       setIndexing(true);
       setError('');
-      const res = await indexFolder(result.path);
+      setProgress({ phase: 'starting', detail: 'Starting indexing…', pct: 0 });
 
-      if (res.error) {
+      const res = await indexDevice();
+      
+      if (res && res.error) {
         setError(res.error);
       } else {
-        setIndexedFolder(result.path);
+        setLastIndexedTime(new Date().toLocaleTimeString());
       }
     } catch (err) {
       setError(err.message);
     } finally {
+      indexingRef.current = false;
       setIndexing(false);
+      setProgress(null);
     }
   }, []);
 
@@ -88,22 +107,41 @@ export default function Search() {
         </div>
       )}
 
-      {/* Folder selector */}
       <div className="index-section">
         <button
           className="index-btn"
-          onClick={handleIndex}
+          onClick={handleIndexDevice}
           disabled={indexing || !ready}
         >
-          {indexing ? 'Indexing…' : '📁 Select Folder to Index'}
+          {indexing ? 'Indexing Device…' : '🧠 Index Entire Device'}
         </button>
 
-        {indexedFolder && (
+        {lastIndexedTime && (
           <span className="indexed-label">
-            ✅ Indexed: <strong>{indexedFolder}</strong>
+            ✅ Last indexed: <strong>{lastIndexedTime}</strong>
           </span>
         )}
+
+        {progress && (
+          <div className="index-progress">
+            <div className="progress-detail">{progress.detail}</div>
+            {progress.pct != null && (
+              <div className="progress-bar-track">
+                <div
+                  className="progress-bar-fill"
+                  style={{ width: `${Math.min(progress.pct, 100)}%` }}
+                />
+              </div>
+            )}
+          </div>
+        )}
       </div>
+
+      {indexing && (
+        <div className="search-notice indexing-hint">
+          You can search while indexing is in progress — results will improve as more files are indexed.
+        </div>
+      )}
 
       {/* Search bar */}
       <form className="search-bar" onSubmit={handleSearch}>

@@ -20,7 +20,12 @@ contextBridge.exposeInMainWorld('intellifile', {
   searchStatus: () => {
     return ipcRenderer.invoke('search-status');
   },
-  indexFolder: (folder) => {
-    return ipcRenderer.invoke('index-folder', folder);
+  indexDevice: () => {
+    return ipcRenderer.invoke('index-device');
+  },
+  onIndexProgress: (callback) => {
+    const handler = (_event, data) => callback(data);
+    ipcRenderer.on('index-progress', handler);
+    return () => ipcRenderer.removeListener('index-progress', handler);
   },
 });

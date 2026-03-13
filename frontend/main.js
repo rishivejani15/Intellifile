@@ -82,7 +82,7 @@ let pyBuffer = '';
 let pendingRequests = new Map();  // requestId -> { resolve, timeout }
 let requestCounter = 0;
 
-function sendToPython(payload, timeoutMs = 30000) {
+function sendToPython(payload, timeoutMs = 120000) {
   return new Promise((resolve) => {
     if (!pyProcess || !pyReady) {
       return resolve({ error: 'Search engine is not ready yet.' });
@@ -130,11 +130,20 @@ function startPython() {
       try {
         const parsed = JSON.parse(trimmed);
         const id = parsed._id;
+
+        // Forward progress messages to the renderer
+        if (parsed.type === 'progress' && mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('index-progress', parsed);
+        }
+
         if (id && pendingRequests.has(id)) {
-          const { resolve, timeout } = pendingRequests.get(id);
-          clearTimeout(timeout);
-          pendingRequests.delete(id);
-          resolve(parsed);
+          // Only resolve on final (non-progress) messages
+          if (!parsed.type || parsed.type !== 'progress') {
+            const { resolve, timeout } = pendingRequests.get(id);
+            clearTimeout(timeout);
+            pendingRequests.delete(id);
+            resolve(parsed);
+          }
         }
       } catch (e) {
         // Not valid JSON, ignore
@@ -169,18 +178,11 @@ ipcMain.handle("search-status", async () => {
   return { ready: pyReady };
 });
 
-ipcMain.handle("index-folder", async (_, folder) => {
-  return sendToPython({ action: "index", folder }, 300000);  // 5-min timeout for large folders
+ipcMain.handle("index-device", async () => {
+  return sendToPython({ action: "index" }, 1800000);  // 30-min timeout for full device
 });
 
-ipcMain.handle("dialog-select-folder", async () => {
-  const result = await dialog.showOpenDialog(mainWindow, {
-    properties: ['openDirectory'],
-    title: 'Select a folder to index'
-  });
-  if (result.canceled || result.filePaths.length === 0) return null;
-  return { path: result.filePaths[0] };
-});
+
 
 function isProtectedPath(filePath) {
   return PROTECTED_PATHS.some(pattern => pattern.test(filePath));

@@ -23,19 +23,56 @@ except Exception as e:
     sys.exit(1)
 
 
-def _run_indexing(folder):
+def _run_indexing(req_id=None):
     """
-    Run the full index-then-embed pipeline for *folder*.
-    Imported lazily so the startup path stays fast.
+    Run the full index-then-embed pipeline for the whole device.
+    Streams progress lines to stdout so the frontend can show live updates.
     """
+    import time
+    import json as _json
     from indexing.index_files import index_files_incremental
     from indexing.update_faiss import update_faiss
 
-    affected = index_files_incremental(folder)
-    update_faiss(affected)
+    pipeline_start = time.perf_counter()
+
+    def send_progress(phase, detail="", pct=None):
+        elapsed = time.perf_counter() - pipeline_start
+        msg = {
+            "_id": req_id,
+            "type": "progress",
+            "phase": phase,
+            "detail": detail,
+            "elapsed": round(elapsed, 1),
+        }
+        if pct is not None:
+            msg["pct"] = pct
+        print(_json.dumps(msg), flush=True)
+
+    send_progress("scan", "Scanning drives for files…")
+    affected = index_files_incremental(progress_cb=send_progress)
+
+    send_progress("embed", f"Embedding {len(affected)} chunks…")
+    update_faiss(affected, progress_cb=send_progress)
+
     # After building new vectors, make search pick them up
     invalidate_cache()
     load_index(force_reload=True)
+
+    total_secs = time.perf_counter() - pipeline_start
+    mins, secs = divmod(int(total_secs), 60)
+    time_str = f"{mins}m {secs}s" if mins else f"{secs}s"
+    send_progress("done", f"Indexing complete in {time_str}", pct=100)
+
+    # ── Auto-run a second pass to catch any files missed during extraction ──
+    send_progress("scan", "Running verification pass…")
+    affected2 = index_files_incremental(progress_cb=send_progress)
+    if affected2:
+        send_progress("embed", f"Embedding {len(affected2)} new chunks…")
+        update_faiss(affected2, progress_cb=send_progress)
+        invalidate_cache()
+        load_index(force_reload=True)
+        extra_secs = time.perf_counter() - pipeline_start - total_secs
+        send_progress("done", f"Verification pass done (+{int(extra_secs)}s)", pct=100)
 
 
 print("IntelliFile Python Engine Ready", flush=True)
@@ -63,12 +100,8 @@ while True:
             print(json.dumps(response), flush=True)
 
         elif action == "index":
-            folder = request.get("folder", "").strip()
-            if not folder or not os.path.isdir(folder):
-                print(json.dumps({"_id": req_id, "error": f"Invalid folder: {folder}"}), flush=True)
-                continue
-            _run_indexing(folder)
-            print(json.dumps({"_id": req_id, "status": "indexed", "folder": folder}), flush=True)
+            _run_indexing(req_id=req_id)
+            print(json.dumps({"_id": req_id, "status": "indexed", "scope": "device"}), flush=True)
 
         else:
             print(json.dumps({"_id": req_id, "error": "Unknown action"}), flush=True)

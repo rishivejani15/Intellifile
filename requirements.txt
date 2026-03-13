@@ -4,3 +4,9 @@ pypdf
 python-docx 
 tqdm
 numpy
+openpyxl
+python-pptx
+Pillow
+pytesseract
+onnxruntime
+optimum

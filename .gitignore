@@ -1,0 +1,18 @@
+# Project-wide
+models/
+data/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+
+# Frontend
+frontend/node_modules/
+frontend/build/
+frontend/dist/
+frontend/coverage/
+

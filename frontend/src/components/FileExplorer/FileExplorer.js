@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { searchFiles, indexFolder } from '../../services/searchService';
+import { searchFiles, indexDevice } from '../../services/searchService';
 import './FileExplorer.css';
 
 const ipcRenderer = window.electron?.ipcRenderer;
@@ -31,7 +31,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [] }) {
   const [semanticLoading, setSemanticLoading] = useState(false);
   const [engineReady, setEngineReady] = useState(false);
   const [indexing, setIndexing] = useState(false);
-  const [indexedFolder, setIndexedFolder] = useState('');
+  const [lastIndexedTime, setLastIndexedTime] = useState(null);
   const contextMenuRef = useRef(null);
   const inputRef = useRef(null);
 
@@ -599,23 +599,19 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [] }) {
     }
   }
 
-  async function handleIndexFolder() {
-    console.log('[FileExplorer] Index folder clicked, engineReady:', engineReady);
+  async function handleIndexDevice() {
+    console.log('[FileExplorer] Index device clicked, engineReady:', engineReady);
     try {
-      const result = await ipcRenderer?.invoke('dialog-select-folder');
-      console.log('[FileExplorer] Folder selected:', result);
-      if (!result || !result.path) return;
       setIndexing(true);
-      setIndexedFolder('');
-      const res = await indexFolder(result.path);
+      const res = await indexDevice();
       console.log('[FileExplorer] Index result:', res);
       if (res && !res.error) {
-        setIndexedFolder(result.path);
+        setLastIndexedTime(new Date().toLocaleTimeString());
       } else {
         console.error('[FileExplorer] Indexing error:', res?.error);
       }
     } catch (err) {
-      console.error('[FileExplorer] Index folder error:', err);
+      console.error('[FileExplorer] Index device error:', err);
     } finally {
       setIndexing(false);
     }
@@ -883,14 +879,14 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [] }) {
               </button>
               <button
                 className="action-btn index-btn"
-                onClick={handleIndexFolder}
+                onClick={handleIndexDevice}
                 disabled={indexing}
-                title={indexing ? 'Indexing in progress...' : engineReady ? 'Index a folder for AI search' : 'Engine loading... click to try anyway'}
+                title={indexing ? 'Indexing in progress...' : engineReady ? 'Index device for AI search' : 'Engine loading... click to try anyway'}
               >
-                {indexing ? '⏳ Indexing…' : '🧠 Index Folder'}
+                {indexing ? '⏳ Indexing…' : '🧠 Index Device'}
               </button>
-              {indexedFolder && (
-                <span className="indexed-label" title={indexedFolder}>✅ Indexed</span>
+              {lastIndexedTime && (
+                <span className="indexed-label" title={`Last indexed at ${lastIndexedTime}`}>✅ Indexed</span>
               )}
             </div>
           </div>

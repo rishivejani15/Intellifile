@@ -24,11 +24,16 @@ def main():
 
     try:
         from sentence_transformers import SentenceTransformer
-        model = SentenceTransformer(model_name)
+        _BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
+        _MODELS_DIR = os.path.join(_BACKEND_DIR, 'models')
+        os.makedirs(_MODELS_DIR, exist_ok=True)
+        
+        # Download strictly into models folder
+        model = SentenceTransformer(model_name, cache_folder=_MODELS_DIR)
 
         # Verify with a test encoding
         test_embedding = model.encode("test", normalize_embeddings=True)
-        print(f"      ✓ Model loaded successfully (embedding dim: {len(test_embedding)})")
+        print(f"      ✓ Model loaded successfully (embedding dim: {len(test_embedding)}) into {_MODELS_DIR}")
     except Exception as e:
         print(f"      ✗ Failed to load model: {e}")
         sys.exit(1)
