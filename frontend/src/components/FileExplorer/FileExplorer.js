@@ -55,6 +55,14 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [] }) {
       if (!result || result.error) {
         console.error('Error loading directory:', result?.error || 'Unknown error');
         setItems([]);
+        
+        // Auto-navigate to parent folder if current folder is completely missing/deleted
+        if (dirPath && dirPath !== 'C:\\') {
+          const parentPath = dirPath.substring(0, dirPath.lastIndexOf('\\'));
+          if (parentPath && parentPath !== dirPath) {
+             setTimeout(() => { loadDirectory(parentPath) }, 100);
+          }
+        }
       } else {
         let items = result.items || [];
 
@@ -92,8 +100,10 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [] }) {
           setCurrentPath(actualPath);
           setAddressPath(actualPath);
           updateBreadcrumb(actualPath);
-          setSelectedItem(null);
-          setSelectedItems([]);
+          
+          // Gently preserve selections so they don't vanish on window focus refresh
+          setSelectedItem(prev => (prev && items.some(i => i.path === prev.path)) ? prev : null);
+          setSelectedItems(prev => prev.filter(pItem => items.some(i => i.path === pItem.path)));
           setLastSelectedIndex(null);
 
           // Update history
@@ -119,13 +129,24 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [] }) {
     } finally {
       setLoading(false);
     }
-  }, [updateBreadcrumb, searchQuery, sortBy, historyIndex]);
+  }, [updateBreadcrumb, searchQuery, sortBy, historyIndex, activeTabId]);
 
   // Initialize with Documents folder
   useEffect(() => {
     if (!currentPath) {
       loadDirectory(null);
     }
+  }, [currentPath, loadDirectory]);
+
+  // Refresh directory when window gains focus to sync external file deletions
+  useEffect(() => {
+    const handleFocus = () => {
+      if (currentPath) {
+        loadDirectory(currentPath);
+      }
+    };
+    window.addEventListener('focus', handleFocus);
+    return () => window.removeEventListener('focus', handleFocus);
   }, [currentPath, loadDirectory]);
 
   const handleAddressSubmit = (e) => {
@@ -161,14 +182,6 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [] }) {
     if (tab.path) {
       loadDirectory(tab.path);
     }
-  };
-
-  const getPreviewTypeForExt = (ext) => {
-    const imageExts = ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp'];
-    const textExts = ['.txt', '.md', '.json', '.xml', '.html', '.css', '.js', '.ts', '.jsx', '.tsx', '.py', '.java', '.c', '.cpp', '.go'];
-    if (imageExts.includes(ext)) return 'image';
-    if (textExts.includes(ext)) return 'text';
-    return 'none';
   };
 
   const openFileWithDefaultApp = async (filePath) => {
@@ -473,6 +486,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [] }) {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedItem, selectedItems, clipboard, renamingItem, currentPath, historyIndex, displayItems]);
 
   const getFileIcon = (item) => {

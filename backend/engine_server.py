@@ -70,18 +70,70 @@ while True:
             file_path = request.get("file_path")
             old_content = request.get("old_content", "")
             new_content = request.get("new_content", "")
+            
+            # Strict Deduplication: Prevent double-entries from Chokidar overlapping with internal saves
+            from core.versioning.snapshot_manager import get_last_version, compute_file_hash
+            import os
+            ext = os.path.splitext(file_path)[1].lower() if file_path else ""
+            is_binary = ext in [".docx", ".xlsx", ".pdf", ".zip"]
+            
+            try:
+                last_version = get_last_version(file_path)
+                current_hash = compute_file_hash(new_content if not is_binary else file_path, is_binary)
+                
+                if last_version and last_version.get("file_hash") == current_hash:
+                    # File is identical to the very last snapshot. Silently ignore duplicate.
+                    print(json.dumps({"_id": req_id, "success": True, "data": last_version}), flush=True)
+                    continue
+            except Exception:
+                pass
+                
             ve = get_version_engine()
             result = ve.process_and_save(file_path, old_content, new_content)
             print(json.dumps({"_id": req_id, "success": True, "data": result}), flush=True)
 
         elif action == "get_versions":
             try:
-                from core.versioning.snapshot_manager import list_versions
+                from core.versioning.snapshot_manager import list_versions, get_last_version, compute_file_hash, get_version_content
+                import os
                 file_path = request.get("file_path")
+                
+                # Auto-sync external changes
+                if file_path and os.path.exists(file_path):
+                    ext = os.path.splitext(file_path)[1].lower()
+                    is_binary = ext in [".docx", ".xlsx", ".pdf", ".zip"]
+                    current_hash = compute_file_hash(file_path, is_binary)
+                    last_version = get_last_version(file_path)
+                    
+                    if not last_version or last_version.get("file_hash") != current_hash:
+                        # Skip creating a meaningless version if it's a freshly created 0-byte file
+                        if not last_version and os.path.getsize(file_path) == 0:
+                            pass
+                        else:
+                            ve = get_version_engine()
+                            old_content = None
+                            if last_version:
+                                try:
+                                    old_content = get_version_content(file_path, last_version["version_id"])
+                                except Exception:
+                                    pass
+                                    
+                            # Prevent text diff engine crashes from NoneType by defaulting to empty string
+                            if not is_binary and old_content is None:
+                                old_content = ""
+                                    
+                            if is_binary:
+                                ve.process_and_save(file_path, old_content, file_path)
+                            else:
+                                with open(file_path, "r", encoding="utf-8") as f:
+                                    current_content = f.read()
+                                ve.process_and_save(file_path, old_content, current_content)
+
                 versions = list_versions(file_path)
                 print(json.dumps({"_id": req_id, "success": True, "data": versions}), flush=True)
             except Exception as e:
-                print(json.dumps({"_id": req_id, "error": str(e)}), flush=True)
+                import traceback
+                print(json.dumps({"_id": req_id, "error": str(e) + " " + traceback.format_exc()}), flush=True)
 
         elif action == "restore_version":
             try:

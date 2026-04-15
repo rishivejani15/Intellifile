@@ -35,56 +35,68 @@ class VersionEngine:
     def process_version(self, file_path, old_content, new_content):
         format_type = self.detect_format(file_path)
         
-        from core.versioning.risk_analyzer import calculate_risk
+        from core.versioning.risk_analyzer import analyze_semantics
         from core.versioning.stability_analyzer import calculate_stability
         
         if format_type == "text":
             from core.versioning.text_diff_engine import generate_diff
             diff = generate_diff(old_content, new_content)
-            semantic_data = self.ai.analyze_semantics(old_content, new_content)
-            summary = self.ai.summarize(diff)
-            intent = self.ai.classify_intent(diff)
+            
+            # Use IWSD
+            semantic_results = analyze_semantics(old_content, new_content, diff)
+            semantic_data = semantic_results
+            intent = semantic_results["intent"]
+            summary = self.ai.summarize(diff) # AI can still generate nice summaries or we fallback
         elif format_type == "word":
             from core.versioning.word_diff_engine import compare_word_structures
             from parsers.word_parser import extract_word_structure
             
-            # Paths are passed for binary files
-            old_struct = extract_word_structure(old_content) if isinstance(old_content, str) else old_content
-            new_struct = extract_word_structure(new_content) if isinstance(new_content, str) else new_content
+            old_struct = extract_word_structure(old_content) if isinstance(old_content, str) else (old_content or {})
+            new_struct = extract_word_structure(new_content) if isinstance(new_content, str) else (new_content or {})
             
             diff = compare_word_structures(old_struct, new_struct)
             diff["is_structured"] = True
             diff["format"] = "word"
             
-            p_len = len(new_struct.get("paragraphs", [])) if isinstance(new_struct, dict) else 0
-            h_len = len(new_struct.get("headings", [])) if isinstance(new_struct, dict) else 0
-            semantic_data = {"paragraphs": p_len, "headings": h_len}
+            # Stringify for IWSD
+            old_str = json.dumps(old_struct) if isinstance(old_struct, dict) else str(old_struct)
+            new_str = json.dumps(new_struct) if isinstance(new_struct, dict) else str(new_struct)
+            
+            semantic_results = analyze_semantics(old_str, new_str)
+            semantic_data = semantic_results
+            intent = semantic_results["intent"]
             
             added_count = len([p for p in diff.get('para_diff', []) if p.get('type') == 'added'])
             removed_count = len([p for p in diff.get('para_diff', []) if p.get('type') == 'removed'])
             summary = f"Word doc updated: {added_count} added, {removed_count} removed paragraphs."
-            intent = "Document Edit"
         elif format_type == "excel":
             from core.versioning.excel_diff_engine import compare_excel_structures
             from parsers.excel_parser import extract_excel_structure
             
-            old_struct = extract_excel_structure(old_content) if isinstance(old_content, str) else old_content
-            new_struct = extract_excel_structure(new_content) if isinstance(new_content, str) else new_content
+            old_struct = extract_excel_structure(old_content) if isinstance(old_content, str) else (old_content or {})
+            new_struct = extract_excel_structure(new_content) if isinstance(new_content, str) else (new_content or {})
             
             diff = compare_excel_structures(old_struct, new_struct)
             diff["is_structured"] = True
             diff["format"] = "excel"
             
-            semantic_data = {"sheets": list(new_struct.keys()) if isinstance(new_struct, dict) else [], "cell_count": diff.get("changed_cells_count", 0)}
+            # Stringify for IWSD
+            old_str = json.dumps(old_struct) if isinstance(old_struct, dict) else str(old_struct)
+            new_str = json.dumps(new_struct) if isinstance(new_struct, dict) else str(new_struct)
+            
+            semantic_results = analyze_semantics(old_str, new_str)
+            semantic_data = semantic_results
+            intent = semantic_results["intent"]
+            
             summary = f"Excel sheet updated: {diff.get('changed_cells_count', 0)} cells changed."
-            intent = "Data Update"
         else:
             diff = "Binary file change detected."
             semantic_data = {}
+            semantic_results = {"severity": "Minor"} # Default array for later
             summary = "Binary file updated."
             intent = "Binary Update"
 
-        risk = calculate_risk(diff, semantic_data, format_type)
+        risk = semantic_results.get("severity", "Low") if format_type != "binary" else "Low"
         stability = calculate_stability(old_content, new_content) if format_type == "text" else 0.9
 
         return {

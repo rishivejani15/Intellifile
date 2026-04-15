@@ -1,1 +1,56 @@
+# ----- IntelliFile Project .gitignore -----
+
+# Dependencies
+node_modules/
+/frontend/node_modules/
+.pnp
+.pnp.js
+
+# Testing
+/frontend/coverage/
+
+# Production Build
+/frontend/build/
+/frontend/dist/
+/frontend/out/
+
+# Python Virtual Environments
 venv/
+env/
+.venv/
+.env
+
+# Python Cache & Bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# IntelliFile Dynamic Data / Database Storage
+# (Do not commit user versions and index blocks to Git)
+backend/data/storage/
+test_new.xlsx
+test_old.xlsx
+*.log
+
+# OS Generated Files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+error.log
+
+# IDEs
+.idea/
+.vscode/
+*.swp
+*.swo

@@ -283,6 +283,9 @@ function registerIpcHandlers() {
 
   ipcMain.handle('open-file', async (_, p) => {
     try {
+      if (!fs.existsSync(p)) {
+        return { success: false, error: 'File does not exist' };
+      }
       startWatchingFile(p);
       const res = await shell.openPath(p);
       return res ? { success: false, error: res } : { success: true };
