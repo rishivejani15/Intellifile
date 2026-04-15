@@ -317,7 +317,10 @@ function registerIpcHandlers() {
     } catch (e) { return { success: false, error: e.message }; }
   });
 
-  ipcMain.handle("get-versions", async (_, p) => sendToPython({ action: "get_versions", file_path: p }));
+  ipcMain.handle("get-versions", async (_, p) => {
+    if (p) startWatchingFile(p);
+    return sendToPython({ action: "get_versions", file_path: p });
+  });
   ipcMain.handle("compare-versions", async (_, { filePath, versionA, versionB }) => sendToPython({ action: "compare_versions", file_path: filePath, version_a: versionA, version_b: versionB }));
 
   ipcMain.handle("restore-version", async (_, { filePath, versionId }) => {

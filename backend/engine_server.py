@@ -102,7 +102,14 @@ while True:
                 if file_path and os.path.exists(file_path):
                     ext = os.path.splitext(file_path)[1].lower()
                     is_binary = ext in [".docx", ".xlsx", ".pdf", ".zip"]
-                    current_hash = compute_file_hash(file_path, is_binary)
+                    current_content = None
+                    if is_binary:
+                        current_hash = compute_file_hash(file_path, True)
+                    else:
+                        with open(file_path, "r", encoding="utf-8") as f:
+                            current_content = f.read()
+                        current_hash = compute_file_hash(current_content, False)
+                        
                     last_version = get_last_version(file_path)
                     
                     if not last_version or last_version.get("file_hash") != current_hash:
@@ -125,8 +132,6 @@ while True:
                             if is_binary:
                                 ve.process_and_save(file_path, old_content, file_path)
                             else:
-                                with open(file_path, "r", encoding="utf-8") as f:
-                                    current_content = f.read()
                                 ve.process_and_save(file_path, old_content, current_content)
 
                 versions = list_versions(file_path)

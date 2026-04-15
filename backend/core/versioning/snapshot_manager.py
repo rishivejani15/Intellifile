@@ -74,7 +74,7 @@ def get_versions(file_path: str):
         if lv.get("version_id") not in existing_ids:
             lv["version"] = 0
             lv["storage_type"] = "full"
-            lv["file_hash"] = None
+            lv["file_hash"] = lv.get("file_hash")
             lv["parent"] = None
             lv["diff_path"] = None
             versions.append(lv)
@@ -235,7 +235,8 @@ def list_versions_legacy(file_path: str):
                     "intent": metadata.get("intent"),
                     "risk_level": metadata.get("risk_level"),
                     "stability_score": metadata.get("stability_score"),
-                    "semantic": metadata.get("semantic")
+                    "semantic": metadata.get("semantic"),
+                    "file_hash": metadata.get("file_hash")
                 })
 
         except Exception:
