@@ -3,8 +3,15 @@ const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
 const axios = require('axios');
+const { SyncEngine } = require('./sync_engine');
 
 const PROJECT_ROOT = path.join(__dirname, '..');
+const SYNC_FOLDER = path.join(PROJECT_ROOT, 'sync', 'intellifil_files');
+
+// Ensure sync folder exists
+if (!fs.existsSync(SYNC_FOLDER)) {
+  fs.mkdirSync(SYNC_FOLDER, { recursive: true });
+}
 
 const venvCandidates = [
   path.join(PROJECT_ROOT,'backend', '.venv', 'Scripts', 'python.exe'),
@@ -100,6 +107,37 @@ let pyBuffer = '';
 let pendingRequests = new Map();  // requestId -> { resolve, timeout }
 let requestCounter = 0;
 const CHAT_BACKEND_URL = 'http://127.0.0.1:8000';
+
+// ── Remote Sync Engine ──────────────────────────────────────────────────────
+let syncEngine = null;
+
+function getSyncEngine() {
+  if (!syncEngine) {
+    syncEngine = new SyncEngine(SYNC_FOLDER);
+    // Forward events to renderer
+    syncEngine.on('status', (data) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('sync-status', data);
+      }
+    });
+    syncEngine.on('log', (msg) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('sync-log', msg);
+      }
+    });
+    syncEngine.on('files', (files) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('sync-files', files);
+      }
+    });
+    syncEngine.on('pending', (changes) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('sync-pending', changes);
+      }
+    });
+  }
+  return syncEngine;
+}
 
 function sendToPython(payload, timeoutMs = 120000) {
   return new Promise((resolve) => {
@@ -439,6 +477,7 @@ ipcMain.on('open-file', (event, filePath) => {
   });
 });
 
+
 function registerIpcHandlers() {
   if (ipcHandlersRegistered) return;
   ipcHandlersRegistered = true;
@@ -566,6 +605,147 @@ function registerIpcHandlers() {
     }
     return files;
   });
+
+  // ========== SYNC HANDLERS ==========
+  
+  ipcMain.handle('get-sync-files', async () => {
+    try {
+      if (!fs.existsSync(SYNC_FOLDER)) {
+        return { success: true, items: [] };
+      }
+      
+      const fileList = await fs.promises.readdir(SYNC_FOLDER);
+      const items = [];
+      const now = Date.now();
+      
+      for (const item of fileList) {
+        if (item.startsWith('.')) continue; // skip hidden/temp
+        try {
+          const fullPath = path.join(SYNC_FOLDER, item);
+          const stats = await fs.promises.stat(fullPath);
+          if (stats.isFile()) {
+            items.push({
+              name: item,
+              path: fullPath,
+              size: stats.size,
+              modified: stats.mtimeMs,
+              isRecent: (now - stats.mtimeMs) < 60000 
+            });
+          }
+        } catch (e) {
+          console.warn('Failed to read sync file stat:', item, e);
+        }
+      }
+      return { success: true, items: items.sort((a,b) => b.modified - a.modified) };
+    } catch (err) {
+      return { success: false, items: [], error: err.message };
+    }
+  });
+
+  ipcMain.handle('select-files-for-sync', async (event) => {
+    try {
+      const result = await dialog.showOpenDialog(mainWindow, {
+        title: 'Select Files to Sync to Mobile',
+        properties: ['openFile', 'multiSelections']
+      });
+
+      if (result.canceled || result.filePaths.length === 0) {
+        return { success: true, added: 0 };
+      }
+
+      let added = 0;
+      for (const sourcePath of result.filePaths) {
+        const fileName = path.basename(sourcePath);
+        const destPath = path.join(SYNC_FOLDER, fileName);
+        if (sourcePath !== destPath) {
+          await fs.promises.copyFile(sourcePath, destPath);
+          added++;
+        }
+      }
+      return { success: true, added };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('remove-sync-file', async (event, fileName) => {
+    try {
+      const filePath = path.join(SYNC_FOLDER, fileName);
+      if (fs.existsSync(filePath)) {
+        await fs.promises.unlink(filePath);
+      }
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  // ── Remote Sync Engine IPC ────────────────────────────────────────
+
+  ipcMain.handle('sync-connect', async (_event, { signalingUrl, sessionId, isInitiator }) => {
+    try {
+      const engine = getSyncEngine();
+      await engine.connect(signalingUrl, sessionId, isInitiator);
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('sync-disconnect', async () => {
+    try {
+      if (syncEngine) syncEngine.disconnect();
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('sync-approve', async (_event, filepath) => {
+    try {
+      if (syncEngine) syncEngine.approvePendingChange(filepath);
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('sync-reject', async (_event, filepath) => {
+    try {
+      if (syncEngine) syncEngine.rejectPendingChange(filepath);
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('sync-approve-all', async () => {
+    try {
+      if (syncEngine) syncEngine.approveAllPending();
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('sync-reject-all', async () => {
+    try {
+      if (syncEngine) syncEngine.rejectAllPending();
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('sync-get-pending', async () => {
+    try {
+      return { success: true, items: syncEngine ? syncEngine.getPendingChanges() : [] };
+    } catch (err) {
+      return { success: false, items: [], error: err.message };
+    }
+  });
+
+  // ===================================
 
   ipcMain.handle('read-file', async (event, filePath) => {
     try {
@@ -859,6 +1039,12 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', () => {
+  if (syncEngine) {
+    console.log('[SyncEngine] Cleaning up');
+    syncEngine.destroy();
+    syncEngine = null;
+  }
+
   if (pyProcess) {
     console.log('[Python] Killing engine process');
     pyProcess.kill();

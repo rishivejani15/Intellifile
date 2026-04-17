@@ -51,15 +51,41 @@ body {
 
 /* Top Navigation Bar */
 .App-header {
-  display: none;
+  background-color: #252526;
+  min-height: 55px;
+  display: flex;
+  align-items: flex-end;
+  padding: 0 20px;
+  border-bottom: 1px solid #333;
 }
 
-.App-header h1 {
-  display: none;
+.tab-nav {
+  display: flex;
+  gap: 16px;
+  height: 100%;
 }
 
-.App-header p {
-  display: none;
+.tab-btn {
+  background: transparent;
+  border: none;
+  color: #888;
+  padding: 14px 24px;
+  font-size: 15px;
+  font-weight: 500;
+  cursor: pointer;
+  border-bottom: 3px solid transparent;
+  transition: all 0.2s;
+  letter-spacing: 0.5px;
+}
+
+.tab-btn:hover {
+  color: #ccc;
+  background-color: rgba(255,255,255,0.02);
+}
+
+.tab-btn.active {
+  color: #fff;
+  border-bottom-color: #0e639c;
 }
 
 /* Container Layout - 3 columns: left sidebar, main content, right sidebar */
