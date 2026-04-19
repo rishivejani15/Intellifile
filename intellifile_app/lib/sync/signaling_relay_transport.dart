@@ -121,7 +121,9 @@ class SignalingRelaySyncTransport implements SyncConnection {
     }
 
     if (type == 'signaling-reconnected') {
-      debugPrint('[relay-transport] Signaling WS reconnected, re-joining session');
+      debugPrint(
+        '[relay-transport] Signaling WS reconnected, re-joining session',
+      );
       // Re-join the session automatically after signaling reconnects
       await _signaling.send({
         'type': 'join',

@@ -1,4 +1,4 @@
-# sync/server.py
+# sync/server.py — Local Sync WebSocket Server
 
 import asyncio
 import json
@@ -11,21 +11,21 @@ from fastapi.responses import JSONResponse
 
 try:
     from sync.merkle import build_merkle_tree, find_changed_files, load_merkle_cache, init_merkle_db, save_merkle_cache
-    from sync.checksum import get_block_checksums, compute_delta, apply_delta, file_checksum
+    from sync.checksum import BLOCK_SIZE, get_block_checksums, compute_delta, apply_delta, file_checksum
     from sync.vector_clock import load_clock, save_clock, load_all_clocks, init_clock_db
     from sync.watcher import start_watcher
     from sync.mdns import start_mdns, stop_mdns
 except ModuleNotFoundError:
     from merkle import build_merkle_tree, find_changed_files, load_merkle_cache, init_merkle_db, save_merkle_cache
-    from checksum import get_block_checksums, compute_delta, apply_delta, file_checksum
+    from checksum import BLOCK_SIZE, get_block_checksums, compute_delta, apply_delta, file_checksum
     from vector_clock import load_clock, save_clock, load_all_clocks, init_clock_db
     from watcher import start_watcher
     from mdns import start_mdns, stop_mdns
 
 # ─── Configuration ─────────────────────────────────────────────────────────────
 
-DB_PATH     = os.environ.get("INTELLIFIL_DB", "intellifil.db")
-SYNC_FOLDER = os.environ.get("INTELLIFIL_SYNC", "./intellifil_files")
+DB_PATH     = os.path.join(os.path.dirname(__file__), "intellifil.db")
+SYNC_FOLDER = os.path.join(os.path.dirname(__file__), "intellifil_files")
 
 logging.basicConfig(
     level=logging.INFO,
@@ -34,21 +34,24 @@ logging.basicConfig(
 )
 log = logging.getLogger("intellifil")
 
-app = FastAPI(title="IntelliFile Sync Server")
+app = FastAPI(title="IntelliFile Local Sync Server")
 connected_clients: list[WebSocket] = []
 _event_loop: asyncio.AbstractEventLoop | None = None
 
-# ─── Pending Changes Store ─────────────────────────────────────────────────────
-# Tracks changes detected locally that are awaiting mobile approval.
-# Key: filepath, Value: {event_type, timestamp, file_size}
+# mDNS handles (stored so stop_mdns can be called on shutdown)
+_zeroconf = None
+_zeroconf_info = None
 
+# ─── Pending Changes Store ─────────────────────────────────────────────────────
+# Tracks local file changes awaiting mobile approval.
+# Key: relative filepath, Value: {event_type, timestamp, file_size}
 _pending_changes: dict[str, dict] = {}
 
-# Tracks changes mobile reported, awaiting PC approval (auto-approved for now).
+# Tracks changes mobile reported; key: filepath.
 _pending_mobile_changes: dict[str, dict] = {}
 
 
-# ─── REST endpoints ───────────────────────────────────────────────────────────
+# ─── REST endpoints ────────────────────────────────────────────────────────────
 
 @app.get("/status")
 async def status():
@@ -72,14 +75,14 @@ async def list_files():
                 rel_path = os.path.relpath(abs_path, SYNC_FOLDER).replace("\\", "/")
                 stat = os.stat(abs_path)
                 files.append({
-                    "path": rel_path,
-                    "size": stat.st_size,
+                    "path":     rel_path,
+                    "size":     stat.st_size,
                     "modified": stat.st_mtime,
                 })
     return JSONResponse({"files": files, "count": len(files)})
 
 
-# ─── WebSocket endpoint ───────────────────────────────────────────────────────
+# ─── WebSocket endpoint ────────────────────────────────────────────────────────
 
 @app.websocket("/sync")
 async def sync_endpoint(ws: WebSocket):
@@ -88,24 +91,35 @@ async def sync_endpoint(ws: WebSocket):
     log.info("Mobile connected (%d total)", len(connected_clients))
 
     try:
-        # ── Step 1: Send our handshake ────────────────────────────────────
+        # ── Step 1: Send our handshake ────────────────────────────────────────
         local_tree   = build_merkle_tree(SYNC_FOLDER)
         local_clocks = load_all_clocks(DB_PATH)
+        local_block_checksums = {}
+        for rel in (k for k in local_tree if k != "__root__"):
+            abs_p = os.path.join(SYNC_FOLDER, rel)
+            if os.path.exists(abs_p):
+                local_block_checksums[rel] = get_block_checksums(abs_p)
 
         await ws.send_json({
-            "type":   "handshake",
-            "tree":   local_tree,
-            "clocks": local_clocks,
+            "type":             "handshake",
+            "tree":             local_tree,
+            "clocks":           local_clocks,
+            "block_checksums":  local_block_checksums,
         })
 
-        # ── Step 2: Receive mobile's handshake ────────────────────────────
-        msg           = await ws.receive_json()
-        mobile_tree   = msg.get("tree", {})
-        mobile_clocks = msg.get("clocks", {})
+        # ── Step 2: Receive mobile's handshake ────────────────────────────────
+        msg                   = await ws.receive_json()
+        mobile_tree           = msg.get("tree", {})
+        mobile_clocks         = msg.get("clocks", {})
         mobile_block_checksums = msg.get("block_checksums", {})
 
-        # ── Step 3: Find what changed ─────────────────────────────────────
-        changed = find_changed_files(mobile_tree, local_tree)
+        # ── Step 3: Diff the trees ─────────────────────────────────────────────
+        # find_changed_files(a, b):
+        #   'deleted'  → in a but NOT in b  → we call with (local, mobile)
+        #                so 'deleted' = on PC but not on mobile → push to mobile
+        #   'added'    → in b (mobile) but not in a (local PC) → pull from mobile
+        #   'modified' → in both, checksums differ              → use vector clock
+        changed = find_changed_files(local_tree, mobile_tree)
 
         if not changed:
             await ws.send_json({"type": "in_sync"})
@@ -115,23 +129,23 @@ async def sync_endpoint(ws: WebSocket):
                 await _resolve_and_send(
                     ws, filepath, change_type,
                     mobile_clocks, mobile_block_checksums,
+                    local_block_checksums,
                 )
-
-            # Signal that initial sync batch is complete
             await ws.send_json({"type": "sync_complete"})
 
-        # ── Step 4: Stay alive, handle incoming messages ──────────────────
+        # ── Step 4: Stay alive, handle subsequent messages ─────────────────────
         while True:
             data = await ws.receive_json()
             await _handle_mobile_message(ws, data)
 
     except WebSocketDisconnect:
-        connected_clients.remove(ws)
-        log.info("Mobile disconnected (%d remaining)", len(connected_clients))
+        pass
     except Exception as exc:
         log.error("WebSocket error: %s", exc, exc_info=True)
+    finally:
         if ws in connected_clients:
             connected_clients.remove(ws)
+        log.info("Mobile disconnected (%d remaining)", len(connected_clients))
 
 
 async def _resolve_and_send(
@@ -140,50 +154,78 @@ async def _resolve_and_send(
     change_type: str,
     mobile_clocks: dict,
     mobile_block_checksums: dict,
+    local_block_checksums: dict,
 ):
-    """Resolve a single changed file and send appropriate message."""
+    """
+    Resolve a single changed file and send the appropriate message.
+
+    Called with find_changed_files(local_tree, mobile_tree) semantics:
+      'deleted'  → file is on PC but NOT on mobile → send it to mobile
+      'added'    → file is on mobile but NOT on PC → request it from mobile
+      'modified' → both have it, content differs  → vector clock decides
+    """
     local_clock  = load_clock(DB_PATH, filepath)
     remote_clock = mobile_clocks.get(filepath, {})
     verdict      = local_clock.compare(remote_clock)
 
+    local_path = os.path.join(SYNC_FOLDER, filepath)
+
     if change_type == "deleted":
-        # File exists on mobile but was deleted on PC
-        if verdict in ("local_wins", "identical"):
+        # File exists on PC but not on mobile — send it
+        if os.path.exists(local_path):
+            remote_cs = mobile_block_checksums.get(filepath, {})
+            local_clock.tick()
+            save_clock(DB_PATH, filepath, local_clock)
+            await send_delta_chunked(
+                ws, filepath, local_path, remote_cs,
+                local_clock.clock, "added",
+            )
+            log.info("Sent new file to mobile: %s", filepath)
+        return
+
+    if change_type == "added":
+        # File exists on mobile but not on PC — request it
+        local_cs = local_block_checksums.get(filepath, {})
+        await ws.send_json({
+            "type":             "request_delta",
+            "filepath":         filepath,
+            "block_checksums":  local_cs,
+        })
+        log.info("Requested file from mobile: %s", filepath)
+        return
+
+    # change_type == 'modified'
+    if verdict in ("local_wins", "identical"):
+        # PC has the newer version — send to mobile
+        if os.path.exists(local_path):
+            remote_cs = mobile_block_checksums.get(filepath, {})
+            local_clock.tick()
+            save_clock(DB_PATH, filepath, local_clock)
+            await send_delta_chunked(
+                ws, filepath, local_path, remote_cs,
+                local_clock.clock, "modified",
+            )
+            log.info("Sent delta to mobile: %s (%s)", filepath, change_type)
+        else:
+            # File vanished between tree-build and send — treat as delete
             await ws.send_json({
                 "type":     "delete",
                 "filepath": filepath,
                 "clock":    local_clock.clock,
             })
-            log.info("Sent delete: %s", filepath)
-        return
-
-    if verdict in ("local_wins", "identical"):
-        # Mobile needs our version → send delta
-        remote_cs = mobile_block_checksums.get(filepath, {})
-        local_path = os.path.join(SYNC_FOLDER, filepath)
-        if os.path.exists(local_path):
-            deltas = compute_delta(local_path, remote_cs)
-            await ws.send_json({
-                "type":     "delta",
-                "filepath": filepath,
-                "deltas":   deltas,
-                "clock":    local_clock.clock,
-                "change":   change_type,
-            })
-            log.info("Sent delta: %s (%s)", filepath, change_type)
+            log.warning("File vanished mid-handshake, sent delete: %s", filepath)
 
     elif verdict == "remote_wins":
-        # We need mobile's version → ask for it
-        local_path = os.path.join(SYNC_FOLDER, filepath)
-        local_block_cs = get_block_checksums(local_path)
+        # Mobile has the newer version — request delta from mobile
+        local_cs = get_block_checksums(local_path) if os.path.exists(local_path) else {}
         await ws.send_json({
-            "type":            "request_delta",
-            "filepath":        filepath,
-            "block_checksums": local_block_cs,
+            "type":             "request_delta",
+            "filepath":         filepath,
+            "block_checksums":  local_cs,
         })
-        log.info("Requested delta: %s", filepath)
+        log.info("Requested delta from mobile: %s", filepath)
 
-    elif verdict == "conflict":
+    else:  # conflict
         await ws.send_json({
             "type":     "conflict",
             "filepath": filepath,
@@ -196,77 +238,90 @@ async def _handle_mobile_message(ws: WebSocket, data: dict):
     msg_type = data.get("type")
 
     if msg_type == "delta":
-        # Mobile pushed a delta to us
-        filepath = data["filepath"]
+        filepath   = data["filepath"]
         local_path = os.path.join(SYNC_FOLDER, filepath)
         os.makedirs(os.path.dirname(local_path), exist_ok=True)
 
-        apply_delta(local_path, data["deltas"])
-
-        vc = load_clock(DB_PATH, filepath)
-        vc.merge(data["clock"])
-        save_clock(DB_PATH, filepath, vc)
-
-        # Update merkle cache so watcher ignores this change
-        cached_tree = load_merkle_cache(DB_PATH)
-        cached_tree[filepath] = file_checksum(local_path)
-        save_merkle_cache(DB_PATH, cached_tree)
-
-        log.info("Applied delta from mobile: %s", filepath)
-
-        # Send acknowledgment
-        await ws.send_json({
-            "type":     "ack",
-            "filepath": filepath,
-        })
-
-    elif msg_type == "delete":
-        # Mobile deleted a file
-        filepath = data["filepath"]
-        local_path = os.path.join(SYNC_FOLDER, filepath)
-        if os.path.exists(local_path):
-            os.remove(local_path)
-            log.info("Deleted file from mobile request: %s", filepath)
+        expected_size = data.get("size")
+        apply_delta(local_path, data.get("deltas", []), expected_size)
 
         vc = load_clock(DB_PATH, filepath)
         vc.merge(data.get("clock", {}))
         save_clock(DB_PATH, filepath, vc)
 
-        # Update merkle cache so watcher ignores this delete
+        # Update Merkle cache so watcher ignores this change
+        cached_tree = load_merkle_cache(DB_PATH)
+        if os.path.exists(local_path):
+            cached_tree[filepath] = file_checksum(local_path)
+        save_merkle_cache(DB_PATH, cached_tree)
+
+        log.info("Applied delta from mobile: %s", filepath)
+        await ws.send_json({"type": "ack", "filepath": filepath})
+
+    elif msg_type == "handshake":
+        mobile_tree = data.get("tree", {})
+        mobile_clocks = data.get("clocks", {})
+        mobile_block_checksums = data.get("block_checksums", {})
+
+        local_tree = build_merkle_tree(SYNC_FOLDER)
+        local_block_checksums = {}
+        for rel in (k for k in local_tree if k != "__root__"):
+            abs_p = os.path.join(SYNC_FOLDER, rel)
+            if os.path.exists(abs_p):
+                local_block_checksums[rel] = get_block_checksums(abs_p)
+
+        changed = find_changed_files(local_tree, mobile_tree)
+        log.info("[reconnect-handshake] %d file(s) differ after reconnect", len(changed))
+
+        if not changed:
+            await ws.send_json({"type": "in_sync"})
+        else:
+            for filepath, change_type in changed.items():
+                await _resolve_and_send(
+                    ws, filepath, change_type,
+                    mobile_clocks, mobile_block_checksums,
+                    local_block_checksums,
+                )
+            await ws.send_json({"type": "sync_complete"})
+
+    elif msg_type == "delete":
+        filepath   = data["filepath"]
+        local_path = os.path.join(SYNC_FOLDER, filepath)
+        if os.path.exists(local_path):
+            os.remove(local_path)
+            log.info("Deleted (mobile request): %s", filepath)
+
+        vc = load_clock(DB_PATH, filepath)
+        vc.merge(data.get("clock", {}))
+        save_clock(DB_PATH, filepath, vc)
+
         cached_tree = load_merkle_cache(DB_PATH)
         if filepath in cached_tree:
             del cached_tree[filepath]
             save_merkle_cache(DB_PATH, cached_tree)
 
-        await ws.send_json({
-            "type":     "ack",
-            "filepath": filepath,
-        })
+        await ws.send_json({"type": "ack", "filepath": filepath})
 
     elif msg_type == "change_pending":
         # Mobile reports a file changed — auto-approve and request the delta
-        filepath = data["filepath"]
+        filepath    = data["filepath"]
         change_type = data.get("change_type", "modified")
-        log.info("Mobile reports change pending: %s (%s)", filepath, change_type)
+        log.info("Mobile change_pending: %s (%s)", filepath, change_type)
 
-        # Auto-approve: tell mobile to send the actual delta
         _pending_mobile_changes[filepath] = {
             "change_type": change_type,
-            "timestamp": time.time(),
+            "timestamp":   time.time(),
         }
 
-        await ws.send_json({
-            "type":     "sync_approved",
-            "filepath": filepath,
-        })
+        await ws.send_json({"type": "sync_approved", "filepath": filepath})
         log.info("Auto-approved mobile change: %s", filepath)
 
     elif msg_type == "sync_approved":
-        # Mobile approved a pending change from PC — send the full delta
+        # Mobile approved a PC-initiated change — send the full delta
         filepath = data["filepath"]
-        pending = _pending_changes.pop(filepath, None)
+        pending  = _pending_changes.pop(filepath, None)
         if pending is None:
-            log.warning("sync_approved for unknown pending change: %s", filepath)
+            log.warning("sync_approved for unknown pending: %s", filepath)
             return
 
         event_type = pending["event_type"]
@@ -281,62 +336,61 @@ async def _handle_mobile_message(ws: WebSocket, data: dict):
                     "clock":    vc.clock,
                 })
                 log.info("Sent approved delete: %s", filepath)
+            elif os.path.exists(local_path):
+                vc     = load_clock(DB_PATH, filepath)
+                vc.tick()
+                save_clock(DB_PATH, filepath, vc)
+                await send_delta_chunked(
+                    ws, filepath, local_path, {},
+                    vc.clock, event_type,
+                )
+                log.info("Sent approved delta: %s (%s)", filepath, event_type)
             else:
-                if os.path.exists(local_path):
-                    deltas = compute_delta(local_path, {})
-                    vc     = load_clock(DB_PATH, filepath)
-                    await ws.send_json({
-                        "type":     "delta",
-                        "filepath": filepath,
-                        "deltas":   deltas,
-                        "clock":    vc.clock,
-                        "change":   event_type,
-                    })
-                    log.info("Sent approved delta: %s (%s)", filepath, event_type)
-                else:
-                    log.warning("File disappeared before approval: %s", filepath)
+                vc = load_clock(DB_PATH, filepath)
+                await ws.send_json({
+                    "type":     "delete",
+                    "filepath": filepath,
+                    "clock":    vc.clock,
+                })
+                log.warning("File gone by approval time, sent delete: %s", filepath)
         except Exception as exc:
-            log.error("Error sending approved delta for %s: %s", filepath, exc)
+            log.error("Error sending approved change for %s: %s", filepath, exc)
 
     elif msg_type == "sync_rejected":
-        # Mobile rejected a pending change from PC — discard it
         filepath = data["filepath"]
-        removed = _pending_changes.pop(filepath, None)
-        if removed:
-            log.info("Mobile rejected change: %s (discarded)", filepath)
-        else:
-            log.warning("sync_rejected for unknown pending change: %s", filepath)
+        _pending_changes.pop(filepath, None)
+        log.info("Mobile rejected change: %s", filepath)
 
     elif msg_type == "ack":
-        log.info("Mobile acknowledged: %s", data.get("filepath"))
+        log.info("Mobile ack: %s", data.get("filepath"))
+
+    elif msg_type == "in_sync":
+        log.info("Mobile reports in_sync")
 
     else:
-        log.warning("Unknown message type: %s", msg_type)
+        log.warning("Unknown message type from mobile: %s", msg_type)
 
 
-# ─── Push changes to all connected mobile clients ─────────────────────────────
+# ─── Push changes to all connected mobile clients ──────────────────────────────
 
 async def push_change_pending_to_clients(filepath: str, event_type: str):
     """
-    Called by watcher when a file changes on PC.
-    Instead of immediately pushing the delta, we send a lightweight
-    'change_pending' notification. The mobile must approve before we send data.
+    Called by the file watcher when a file changes on PC.
+    Sends a lightweight 'change_pending' notification; mobile must approve
+    before the actual delta is sent.
     """
     if not connected_clients:
         log.debug("No clients connected, skipping push for %s", filepath)
         return
 
-    local_path = os.path.join(SYNC_FOLDER, filepath)
-
-    # Gather file metadata for the notification
-    file_size = 0
+    local_path  = os.path.join(SYNC_FOLDER, filepath)
+    file_size   = 0
     modified_at = time.time()
     if event_type != "deleted" and os.path.exists(local_path):
-        stat = os.stat(local_path)
-        file_size = stat.st_size
+        stat        = os.stat(local_path)
+        file_size   = stat.st_size
         modified_at = stat.st_mtime
 
-    # Store pending change so we can fulfil it on approval
     _pending_changes[filepath] = {
         "event_type":  event_type,
         "timestamp":   time.time(),
@@ -358,19 +412,52 @@ async def push_change_pending_to_clients(filepath: str, event_type: str):
             log.error("Push change_pending failed for %s: %s", filepath, exc)
 
 
-# ─── Startup ──────────────────────────────────────────────────────────────────
+async def send_delta_chunked(
+    ws: WebSocket,
+    filepath: str,
+    local_path: str,
+    remote_cs: dict,
+    clock: dict,
+    change: str,
+):
+    try:
+        deltas = compute_delta(local_path, remote_cs)
+        total_chunks = max(1, (len(deltas) + 49) // 50)
+        size = os.path.getsize(local_path)
+
+        for idx in range(total_chunks):
+            start = idx * 50
+            end = start + 50
+            chunk = deltas[start:end]
+            log.info("[chunked-delta] sending chunk %d/%d for %s per chunk", idx + 1, total_chunks, filepath)
+            await ws.send_json({
+                "type":     "delta",
+                "filepath": filepath,
+                "deltas":   chunk,
+                "clock":    clock,
+                "change":   change,
+                "size":     size,
+            })
+    except Exception as exc:
+        log.error("Chunked delta send failed for %s: %s", filepath, exc, exc_info=True)
+        raise
+
+
+# ─── Startup ───────────────────────────────────────────────────────────────────
 
 @app.on_event("startup")
 async def startup():
-    global _event_loop
+    global _event_loop, _zeroconf, _zeroconf_info
     _event_loop = asyncio.get_running_loop()
 
     os.makedirs(SYNC_FOLDER, exist_ok=True)
     init_clock_db(DB_PATH)
     init_merkle_db(DB_PATH)
 
-    # Start file watcher — callback comes from a background thread,
-    # so we must use run_coroutine_threadsafe instead of create_task.
+    log.info("Active BLOCK_SIZE: %d", BLOCK_SIZE)
+    if BLOCK_SIZE != 128 * 1024:
+        log.warning("BLOCK_SIZE mismatch detected: %d", BLOCK_SIZE)
+
     def on_change(filepath: str, event_type: str):
         if _event_loop is not None and _event_loop.is_running():
             asyncio.run_coroutine_threadsafe(
@@ -378,16 +465,29 @@ async def startup():
                 _event_loop,
             )
 
-    start_watcher(on_change)
+    # Pass explicit paths so watcher never uses wrong module-level defaults
+    start_watcher(on_change, db_path=DB_PATH, sync_folder=SYNC_FOLDER)
 
-    # Advertise on LAN via mDNS
     try:
-        start_mdns()
+        _zeroconf, _zeroconf_info = start_mdns()
     except Exception as exc:
         log.warning("mDNS startup skipped: %s", exc)
 
-    log.info("IntelliFile sync server running on 0.0.0.0:8765")
-    log.info("Sync folder: %s", os.path.abspath(SYNC_FOLDER))
+    log.info("IntelliFile local sync server running on 0.0.0.0:8765")
+    log.info("Sync folder : %s", os.path.abspath(SYNC_FOLDER))
+    log.info("Database    : %s", os.path.abspath(DB_PATH))
+
+
+@app.on_event("shutdown")
+async def shutdown():
+    global _zeroconf, _zeroconf_info
+    if _zeroconf is not None and _zeroconf_info is not None:
+        try:
+            stop_mdns(_zeroconf, _zeroconf_info)
+        except Exception as exc:
+            log.warning("mDNS shutdown error: %s", exc)
+        _zeroconf = None
+        _zeroconf_info = None
 
 
 if __name__ == "__main__":

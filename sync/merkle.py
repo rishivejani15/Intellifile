@@ -1,6 +1,7 @@
 # pc/sync/merkle.py
 
 import hashlib
+import logging
 import os
 import sqlite3
 import time
@@ -10,6 +11,20 @@ try:
 except ModuleNotFoundError:
     from checksum import file_checksum
 
+log = logging.getLogger("intellifil.merkle")
+
+_IGNORE_FILES = {"desktop.ini", "thumbs.db", ".ds_store"}
+
+
+def _get_conn(db_path: str) -> sqlite3.Connection:
+    conn = sqlite3.connect(db_path, timeout=10)
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+    except sqlite3.Error as exc:
+        log.warning("SQLite PRAGMA failed: %s", exc)
+    return conn
+
 
 def build_merkle_tree(folder: str) -> dict:
     """
@@ -18,8 +33,18 @@ def build_merkle_tree(folder: str) -> dict:
     Root hash changes if ANY file changes — O(1) check.
     """
     tree = {}
-    for root, _, files in os.walk(folder):
+    for root, dirs, files in os.walk(folder):
+        dirs[:] = [d for d in dirs if not d.startswith(".")]
         for fname in sorted(files):
+            if fname.startswith("."):
+                log.debug("[merkle] skipping %s", os.path.join(root, fname))
+                continue
+            if fname.lower().endswith(".tmp"):
+                log.debug("[merkle] skipping %s", os.path.join(root, fname))
+                continue
+            if fname.lower() in _IGNORE_FILES:
+                log.debug("[merkle] skipping %s", os.path.join(root, fname))
+                continue
             abs_path = os.path.join(root, fname)
             rel_path = os.path.relpath(abs_path, folder)
             # normalize path separators (Windows vs Linux)
@@ -67,7 +92,7 @@ def find_changed_files(local_tree: dict, remote_tree: dict) -> dict:
 # ─── Merkle cache (SQLite) ─────────────────────────────────────────────────────
 
 def init_merkle_db(db_path: str):
-    conn = sqlite3.connect(db_path)
+    conn = _get_conn(db_path)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS merkle_cache (
             filepath    TEXT PRIMARY KEY,
@@ -80,8 +105,10 @@ def init_merkle_db(db_path: str):
 
 
 def save_merkle_cache(db_path: str, tree: dict):
-    conn = sqlite3.connect(db_path)
+    conn = _get_conn(db_path)
     ts = time.time()
+
+    # Upsert all current entries
     for path, checksum in tree.items():
         conn.execute("""
             INSERT INTO merkle_cache (filepath, checksum, updated_at)
@@ -90,12 +117,21 @@ def save_merkle_cache(db_path: str, tree: dict):
                 checksum   = excluded.checksum,
                 updated_at = excluded.updated_at
         """, (path, checksum, ts))
+
+    # Delete rows whose paths are no longer in the tree (i.e. file was removed)
+    existing = {row[0] for row in conn.execute(
+        "SELECT filepath FROM merkle_cache"
+    ).fetchall()}
+    stale = existing - set(tree.keys())
+    for path in stale:
+        conn.execute("DELETE FROM merkle_cache WHERE filepath = ?", (path,))
+
     conn.commit()
     conn.close()
 
 
 def load_merkle_cache(db_path: str) -> dict:
-    conn = sqlite3.connect(db_path)
+    conn = _get_conn(db_path)
     rows = conn.execute(
         "SELECT filepath, checksum FROM merkle_cache"
     ).fetchall()

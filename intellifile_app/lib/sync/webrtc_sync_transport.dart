@@ -75,12 +75,7 @@ class WebRtcSyncTransport implements SyncConnection {
 
   @override
   Future<void> send(Map<String, dynamic> message) async {
-    // In relay fallback mode, route through the signaling WebSocket
-    if (_usingRelay) {
-      await _signaling.send(message);
-      return;
-    }
-
+    // 1. Prefer DataChannel (true P2P) when available
     final channel = _dataChannel;
     if (channel != null &&
         channel.state == RTCDataChannelState.RTCDataChannelOpen) {
@@ -88,6 +83,13 @@ class WebRtcSyncTransport implements SyncConnection {
       return;
     }
 
+    // 2. Fall back to signaling WebSocket relay
+    if (_signaling.isConnected) {
+      await _signaling.send(message);
+      return;
+    }
+
+    // 3. Neither available — queue for later
     _pendingMessages.add(message);
   }
 
@@ -155,15 +157,13 @@ class WebRtcSyncTransport implements SyncConnection {
         _iceRestartFailures = 0;
         _usingRelay = false;
         _setState(SyncConnectionState.connected);
-      } else if (state ==
-              RTCPeerConnectionState.RTCPeerConnectionStateFailed) {
+      } else if (state == RTCPeerConnectionState.RTCPeerConnectionStateFailed) {
         _attemptIceRestart();
       } else if (state ==
-              RTCPeerConnectionState.RTCPeerConnectionStateDisconnected) {
+          RTCPeerConnectionState.RTCPeerConnectionStateDisconnected) {
         // Brief disconnections are normal — wait for ICE to recover
         debugPrint('[webrtc] Peer disconnected, waiting for recovery...');
-      } else if (state ==
-          RTCPeerConnectionState.RTCPeerConnectionStateClosed) {
+      } else if (state == RTCPeerConnectionState.RTCPeerConnectionStateClosed) {
         if (!_usingRelay) {
           _setState(SyncConnectionState.disconnected);
         }
@@ -295,6 +295,17 @@ class WebRtcSyncTransport implements SyncConnection {
     }
 
     // ── Peer lifecycle events ─────────────────────────────────────
+    if (type == 'joined') {
+      debugPrint('[webrtc] Joined session, peerCount=${message['peerCount']}');
+      final peerCount = message['peerCount'] is int 
+          ? message['peerCount'] 
+          : int.tryParse(message['peerCount']?.toString() ?? '1');
+      if (peerCount != null && peerCount >= 2) {
+        _setState(SyncConnectionState.connected);
+      }
+      return;
+    }
+
     if (type == 'peer-reconnecting') {
       debugPrint('[webrtc] Peer may reconnect within ${message['ttl']}s');
       // Don't disconnect — peer may come back
@@ -303,6 +314,7 @@ class WebRtcSyncTransport implements SyncConnection {
 
     if (type == 'peer-joined') {
       debugPrint('[webrtc] Peer joined — re-establishing P2P if needed');
+      _setState(SyncConnectionState.connected);
       if (!_usingRelay && _peerConnection == null) {
         await _createPeerConnection();
         if (_isInitiator) {
@@ -363,12 +375,11 @@ class WebRtcSyncTransport implements SyncConnection {
       return;
     }
 
-    // ── Sync protocol messages (relay fallback mode) ─────────────
-    if (_usingRelay) {
-      // When in relay mode, sync messages arrive via signaling WS
-      // instead of the DataChannel — route them to the sync handler
-      unawaited(onMessage(message));
-    }
+    // ── Sync protocol messages (via relay) ──────────────────────────
+    // Always forward non-signaling messages to the sync handler.
+    // The peer may send sync messages via WS relay even before P2P
+    // is established (e.g. if the Electron side has no wrtc).
+    unawaited(onMessage(message));
   }
 
   void _flushPendingMessages() {

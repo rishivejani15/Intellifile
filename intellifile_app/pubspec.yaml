@@ -29,6 +29,7 @@ dependencies:
   # ── File actions ───────────────────────────────────────────
   open_filex: ^4.7.0             # Open files with system app
   share_plus: ^10.1.4            # Share files via OS share sheet
+  shared_preferences: ^2.5.5
 
 dev_dependencies:
   flutter_test:

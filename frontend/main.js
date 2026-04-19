@@ -102,6 +102,7 @@ function isSystemFile(filename) {
 
 let pyProcess;
 let chatBackendProcess;
+let syncServerProcess;
 let pyReady = false;
 let pyBuffer = '';
 let pendingRequests = new Map();  // requestId -> { resolve, timeout }
@@ -245,6 +246,29 @@ function startChatBackend() {
   chatBackendProcess.on('close', (code) => {
     console.log('[ChatBackend] Process exited with code:', code);
     chatBackendProcess = null;
+  });
+}
+
+function startSyncServer() {
+  const scriptPath = path.join(__dirname, '../sync/server.py');
+  console.log('[SyncServer] Starting sync server from:', scriptPath);
+
+  syncServerProcess = spawn(PYTHON_EXECUTABLE, [scriptPath], {
+    cwd: path.join(__dirname, '..'),
+    stdio: ['ignore', 'pipe', 'pipe']
+  });
+
+  syncServerProcess.stdout.on('data', (data) => {
+    console.log('[SyncServer stdout]', data.toString().trim());
+  });
+
+  syncServerProcess.stderr.on('data', (data) => {
+    console.error('[SyncServer stderr]', data.toString().trim());
+  });
+
+  syncServerProcess.on('close', (code) => {
+    console.log('[SyncServer] Process exited with code:', code);
+    syncServerProcess = null;
   });
 }
 
@@ -909,6 +933,8 @@ function registerIpcHandlers() {
 
   ipcMain.handle('get-drives-info', getDrivesInfo);
 
+
+
 }
 
 // Separate function to get drives info (can be called internally)
@@ -1029,6 +1055,7 @@ app.on('ready', () => {
   registerIpcHandlers();
   startPython();
   startChatBackend();
+  startSyncServer();
   createWindow();
 });
 
@@ -1055,6 +1082,12 @@ app.on('before-quit', () => {
     console.log('[ChatBackend] Killing API process');
     chatBackendProcess.kill();
     chatBackendProcess = null;
+  }
+
+  if (syncServerProcess) {
+    console.log('[SyncServer] Killing server process');
+    syncServerProcess.kill();
+    syncServerProcess = null;
   }
 });
 

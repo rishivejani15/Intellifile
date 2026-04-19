@@ -5,6 +5,7 @@
 
 import 'dart:io';
 import 'package:crypto/crypto.dart';
+import 'package:flutter/foundation.dart';
 
 /// Block size for chunking files: 128 KB
 const int kBlockSize = 128 * 1024;
@@ -34,15 +35,17 @@ Future<Map<int, String>> getBlockChecksums(String filepath) async {
 /// Compute all block checksums for every file in [syncFolder].
 /// Returns `{relativePath: {blockIndex: checksumHex}}`.
 Future<Map<String, Map<int, String>>> getAllBlockChecksums(
-    String syncFolder) async {
+  String syncFolder,
+) async {
   final result = <String, Map<int, String>>{};
   final dir = Directory(syncFolder);
   if (!await dir.exists()) return result;
 
   await for (final entity in dir.list(recursive: true)) {
     if (entity is File) {
-      final relPath =
-          entity.path.replaceFirst('$syncFolder/', '').replaceAll('\\', '/');
+      final relPath = entity.path
+          .replaceFirst('$syncFolder/', '')
+          .replaceAll('\\', '/');
       result[relPath] = await getBlockChecksums(entity.path);
     }
   }
@@ -63,16 +66,16 @@ class BlockDelta {
   });
 
   Map<String, dynamic> toJson() => {
-        'block': block,
-        'checksum': checksum,
-        'data': data,
-      };
+    'block': block,
+    'checksum': checksum,
+    'data': data,
+  };
 
   factory BlockDelta.fromJson(Map<String, dynamic> json) => BlockDelta(
-        block: json['block'] as int,
-        checksum: json['checksum'] as String,
-        data: json['data'] as String,
-      );
+    block: json['block'] as int,
+    checksum: json['checksum'] as String,
+    data: json['data'] as String,
+  );
 }
 
 /// Compare local file blocks against [remoteChecksums].
@@ -93,15 +96,18 @@ Future<List<BlockDelta>> computeDelta(
       if (chunk.isEmpty) break;
 
       final localChecksum = md5.convert(chunk).toString();
-      final remoteChecksum = remoteChecksums[index]?.toString() ??
+      final remoteChecksum =
+          remoteChecksums[index]?.toString() ??
           remoteChecksums[index.toString()]?.toString();
 
       if (remoteChecksum != localChecksum) {
-        deltas.add(BlockDelta(
-          block: index,
-          checksum: localChecksum,
-          data: _bytesToHex(chunk),
-        ));
+        deltas.add(
+          BlockDelta(
+            block: index,
+            checksum: localChecksum,
+            data: _bytesToHex(chunk),
+          ),
+        );
       }
       index++;
     }
@@ -113,44 +119,35 @@ Future<List<BlockDelta>> computeDelta(
 
 /// Apply received block deltas to a local file.
 /// Only the changed blocks are overwritten.
-Future<void> applyDelta(String filepath, List<dynamic> deltasRaw) async {
-  final blocks = <int, List<int>>{};
+Future<void> applyDelta(
+  String filepath,
+  List<dynamic> deltasRaw, {
+  int? expectedSize,
+}) async {
+  try {
+    final file = File(filepath);
+    await file.parent.create(recursive: true);
+    await file.writeAsBytes([], mode: FileMode.append);
 
-  // Read existing file blocks
-  final file = File(filepath);
-  if (await file.exists()) {
-    final raf = await file.open(mode: FileMode.read);
+    final raf = await file.open(mode: FileMode.append);
     try {
-      int index = 0;
-      while (true) {
-        final chunk = await raf.read(kBlockSize);
-        if (chunk.isEmpty) break;
-        blocks[index] = chunk;
-        index++;
+      for (final delta in deltasRaw) {
+        final d = delta is BlockDelta
+            ? delta
+            : BlockDelta.fromJson(Map<String, dynamic>.from(delta as Map));
+        await raf.setPosition(d.block * kBlockSize);
+        await raf.writeFrom(_hexToBytes(d.data));
+      }
+
+      if (expectedSize != null && expectedSize > 0) {
+        await raf.truncate(expectedSize);
       }
     } finally {
       await raf.close();
     }
-  }
-
-  // Apply changed blocks
-  for (final delta in deltasRaw) {
-    final d = delta is BlockDelta ? delta : BlockDelta.fromJson(
-      Map<String, dynamic>.from(delta as Map),
-    );
-    blocks[d.block] = _hexToBytes(d.data);
-  }
-
-  // Write all blocks back in order
-  await file.parent.create(recursive: true);
-  final raf = await file.open(mode: FileMode.write);
-  try {
-    final sortedKeys = blocks.keys.toList()..sort();
-    for (final key in sortedKeys) {
-      await raf.writeFrom(blocks[key]!);
-    }
-  } finally {
-    await raf.close();
+  } catch (e) {
+    debugPrint('[applyDelta] failed on $filepath: $e');
+    rethrow;
   }
 }
 
@@ -159,9 +156,8 @@ Future<String> fileChecksum(String filepath) async {
   final file = File(filepath);
   if (!await file.exists()) return '';
 
-  final digestOutput = md5.startChunkedConversion(
-    _DigestSink(),
-  );
+  final sink = _DigestSink();
+  final digestOutput = md5.startChunkedConversion(sink);
 
   final raf = await file.open(mode: FileMode.read);
   try {
@@ -174,16 +170,17 @@ Future<String> fileChecksum(String filepath) async {
     await raf.close();
   }
   digestOutput.close();
-  return _DigestSink.lastDigest.toString();
+  return sink.digest!.toString();
 }
 
 /// Simple sink that captures the final Digest from a chunked conversion.
+/// Each instance holds its own result — safe for concurrent calls.
 class _DigestSink implements Sink<Digest> {
-  static late Digest lastDigest;
+  Digest? digest;
 
   @override
   void add(Digest data) {
-    lastDigest = data;
+    digest = data;
   }
 
   @override

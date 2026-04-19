@@ -7,7 +7,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:nsd/nsd.dart';
 
-const String _serviceType = '_intellifil._tcp';
+const String _serviceType = '_intellifile._tcp';
 
 class MdnsBrowser {
   Discovery? _discovery;
@@ -26,12 +26,15 @@ class MdnsBrowser {
     try {
       _discovery = await startDiscovery(_serviceType);
 
+      debugPrint('[mdns] browsing for $_serviceType on LAN');
+
       _discovery!.addListener(() {
         for (final service in _discovery!.services) {
           final host = service.host;
           final port = service.port;
 
           if (host != null && port != null) {
+            debugPrint('[mdns] resolved service: host=$host port=$port');
             final address = '$host:$port';
 
             // Only emit new addresses
@@ -39,11 +42,13 @@ class MdnsBrowser {
               debugPrint('[mdns] Found PC at $address');
               _controller.add(address);
             }
+          } else {
+            debugPrint(
+              '[mdns] skipping incomplete service record: ${service.name}',
+            );
           }
         }
       });
-
-      debugPrint('[mdns] Browsing for IntelliFile on LAN...');
     } catch (e) {
       debugPrint('[mdns] Start failed: $e');
       // Fall back to manual connection if mDNS fails

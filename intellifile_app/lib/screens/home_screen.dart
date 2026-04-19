@@ -23,7 +23,7 @@ class _HomeScreenState extends State<HomeScreen>
   late TabController _tabController;
   final _manualIpController = TextEditingController();
   final _signalingUrlController = TextEditingController(
-    text: 'ws://127.0.0.1:8787',
+    text: 'https://intellifile-signaling.onrender.com',
   );
   final _sessionIdController = TextEditingController();
 
@@ -333,6 +333,7 @@ class _HomeScreenState extends State<HomeScreen>
     try {
       await showModalBottomSheet(
         context: context,
+        isScrollControlled: true,
         backgroundColor: const Color(0xFF1A1A2E),
         shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
@@ -340,195 +341,210 @@ class _HomeScreenState extends State<HomeScreen>
         builder: (context) {
           return StatefulBuilder(
             builder: (context, setModalState) {
-              return Padding(
-                padding: EdgeInsets.fromLTRB(
-                  24,
-                  24,
-                  24,
-                  MediaQuery.of(context).viewInsets.bottom + 24,
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Connect',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.white,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    ToggleButtons(
-                      isSelected: [isLanMode, !isLanMode],
-                      onPressed: (index) {
-                        setModalState(() {
-                          isLanMode = index == 0;
-                        });
-                      },
-                      borderRadius: BorderRadius.circular(10),
-                      fillColor: const Color(0xFF6C5CE7),
-                      selectedColor: Colors.white,
-                      color: Colors.white70,
-                      constraints: const BoxConstraints(
-                        minHeight: 40,
-                        minWidth: 96,
-                      ),
-                      children: const [Text('LAN'), Text('Remote')],
-                    ),
-                    const SizedBox(height: 16),
-                    if (isLanMode) ...[
-                      Text(
-                        'Enter your PC address (shown in server console)',
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: Colors.white.withOpacity(0.5),
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      TextField(
-                        controller: _manualIpController,
-                        style: const TextStyle(color: Colors.white),
-                        decoration: InputDecoration(
-                          hintText: '192.168.1.100:8765',
-                          hintStyle: TextStyle(
-                            color: Colors.white.withOpacity(0.3),
+              final bottomInset = MediaQuery.viewInsetsOf(context).bottom;
+              return SafeArea(
+                top: false,
+                child: AnimatedPadding(
+                  duration: const Duration(milliseconds: 180),
+                  curve: Curves.easeOut,
+                  padding: EdgeInsets.only(bottom: bottomInset),
+                  child: SingleChildScrollView(
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Connect',
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.white,
+                            ),
                           ),
-                          filled: true,
-                          fillColor: const Color(0xFF0D0D1A),
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
-                            borderSide: BorderSide.none,
+                          const SizedBox(height: 12),
+                          ToggleButtons(
+                            isSelected: [isLanMode, !isLanMode],
+                            onPressed: (index) {
+                              setModalState(() {
+                                isLanMode = index == 0;
+                              });
+                            },
+                            borderRadius: BorderRadius.circular(10),
+                            fillColor: const Color(0xFF6C5CE7),
+                            selectedColor: Colors.white,
+                            color: Colors.white70,
+                            constraints: const BoxConstraints(
+                              minHeight: 40,
+                              minWidth: 96,
+                            ),
+                            children: const [Text('LAN'), Text('Remote')],
                           ),
-                          prefixIcon: const Icon(
-                            Icons.computer,
-                            color: Color(0xFF6C5CE7),
-                          ),
-                        ),
-                        keyboardType: TextInputType.url,
-                      ),
-                    ] else ...[
-                      TextField(
-                        controller: _signalingUrlController,
-                        style: const TextStyle(color: Colors.white),
-                        decoration: InputDecoration(
-                          labelText: 'Signaling URL',
-                          labelStyle: TextStyle(
-                            color: Colors.white.withOpacity(0.6),
-                          ),
-                          hintText: 'ws://127.0.0.1:8787',
-                          hintStyle: TextStyle(
-                            color: Colors.white.withOpacity(0.3),
-                          ),
-                          filled: true,
-                          fillColor: const Color(0xFF0D0D1A),
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
-                            borderSide: BorderSide.none,
-                          ),
-                          prefixIcon: const Icon(
-                            Icons.hub,
-                            color: Color(0xFF6C5CE7),
-                          ),
-                        ),
-                        keyboardType: TextInputType.url,
-                      ),
-                      const SizedBox(height: 12),
-                      TextField(
-                        controller: _sessionIdController,
-                        style: const TextStyle(color: Colors.white),
-                        decoration: InputDecoration(
-                          labelText: 'Session Code',
-                          labelStyle: TextStyle(
-                            color: Colors.white.withOpacity(0.6),
-                          ),
-                          hintText: 'room-123',
-                          hintStyle: TextStyle(
-                            color: Colors.white.withOpacity(0.3),
-                          ),
-                          filled: true,
-                          fillColor: const Color(0xFF0D0D1A),
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
-                            borderSide: BorderSide.none,
-                          ),
-                          prefixIcon: const Icon(
-                            Icons.vpn_key,
-                            color: Color(0xFF6C5CE7),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      ToggleButtons(
-                        isSelected: [isInitiator, !isInitiator],
-                        onPressed: (index) {
-                          setModalState(() {
-                            isInitiator = index == 0;
-                          });
-                        },
-                        borderRadius: BorderRadius.circular(10),
-                        fillColor: const Color(0xFF6C5CE7),
-                        selectedColor: Colors.white,
-                        color: Colors.white70,
-                        constraints: const BoxConstraints(
-                          minHeight: 40,
-                          minWidth: 96,
-                        ),
-                        children: const [Text('Host'), Text('Join')],
-                      ),
-                    ],
-                    const SizedBox(height: 16),
-                    SizedBox(
-                      width: double.infinity,
-                      height: 48,
-                      child: ElevatedButton(
-                        onPressed: () async {
-                          try {
-                            if (isLanMode) {
-                              final address = _manualIpController.text.trim();
-                              if (address.isEmpty) return;
-                              await widget.syncManager.connectManually(address);
-                            } else {
-                              final signalingUri = _signalingUrlController.text
-                                  .trim();
-                              final sessionId = _sessionIdController.text
-                                  .trim();
-                              if (signalingUri.isEmpty || sessionId.isEmpty)
-                                return;
-                              await widget.syncManager.connectRemotely(
-                                signalingUri,
-                                sessionId,
-                                isInitiator,
-                              );
-                            }
-
-                            if (context.mounted) {
-                              Navigator.pop(context);
-                            }
-                          } catch (_) {
-                            if (!context.mounted) return;
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text('Connection failed'),
+                          const SizedBox(height: 16),
+                          if (isLanMode) ...[
+                            Text(
+                              'Enter your PC address (shown in server console)',
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: Colors.white.withOpacity(0.5),
                               ),
-                            );
-                          }
-                        },
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF6C5CE7),
-                          foregroundColor: Colors.white,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
+                            ),
+                            const SizedBox(height: 12),
+                            TextField(
+                              controller: _manualIpController,
+                              style: const TextStyle(color: Colors.white),
+                              textInputAction: TextInputAction.done,
+                              decoration: InputDecoration(
+                                hintText: '192.168.1.100:8765',
+                                hintStyle: TextStyle(
+                                  color: Colors.white.withOpacity(0.3),
+                                ),
+                                filled: true,
+                                fillColor: const Color(0xFF0D0D1A),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                  borderSide: BorderSide.none,
+                                ),
+                                prefixIcon: const Icon(
+                                  Icons.computer,
+                                  color: Color(0xFF6C5CE7),
+                                ),
+                              ),
+                              keyboardType: TextInputType.url,
+                            ),
+                          ] else ...[
+                            TextField(
+                              controller: _signalingUrlController,
+                              style: const TextStyle(color: Colors.white),
+                              textInputAction: TextInputAction.next,
+                              decoration: InputDecoration(
+                                labelText: 'Signaling URL',
+                                labelStyle: TextStyle(
+                                  color: Colors.white.withOpacity(0.6),
+                                ),
+                                hintText:
+                                    'https://intellifile-signaling.onrender.com',
+                                hintStyle: TextStyle(
+                                  color: Colors.white.withOpacity(0.3),
+                                ),
+                                filled: true,
+                                fillColor: const Color(0xFF0D0D1A),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                  borderSide: BorderSide.none,
+                                ),
+                                prefixIcon: const Icon(
+                                  Icons.hub,
+                                  color: Color(0xFF6C5CE7),
+                                ),
+                              ),
+                              keyboardType: TextInputType.url,
+                            ),
+                            const SizedBox(height: 12),
+                            TextField(
+                              controller: _sessionIdController,
+                              style: const TextStyle(color: Colors.white),
+                              textInputAction: TextInputAction.done,
+                              decoration: InputDecoration(
+                                labelText: 'Session Code',
+                                labelStyle: TextStyle(
+                                  color: Colors.white.withOpacity(0.6),
+                                ),
+                                hintText: 'room-123',
+                                hintStyle: TextStyle(
+                                  color: Colors.white.withOpacity(0.3),
+                                ),
+                                filled: true,
+                                fillColor: const Color(0xFF0D0D1A),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                  borderSide: BorderSide.none,
+                                ),
+                                prefixIcon: const Icon(
+                                  Icons.vpn_key,
+                                  color: Color(0xFF6C5CE7),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            ToggleButtons(
+                              isSelected: [isInitiator, !isInitiator],
+                              onPressed: (index) {
+                                setModalState(() {
+                                  isInitiator = index == 0;
+                                });
+                              },
+                              borderRadius: BorderRadius.circular(10),
+                              fillColor: const Color(0xFF6C5CE7),
+                              selectedColor: Colors.white,
+                              color: Colors.white70,
+                              constraints: const BoxConstraints(
+                                minHeight: 40,
+                                minWidth: 96,
+                              ),
+                              children: const [Text('Host'), Text('Join')],
+                            ),
+                          ],
+                          const SizedBox(height: 16),
+                          SizedBox(
+                            width: double.infinity,
+                            height: 48,
+                            child: ElevatedButton(
+                              onPressed: () async {
+                                try {
+                                  if (isLanMode) {
+                                    final address = _manualIpController.text
+                                        .trim();
+                                    if (address.isEmpty) return;
+                                    await widget.syncManager.connectManually(
+                                      address,
+                                    );
+                                  } else {
+                                    final signalingUri = _signalingUrlController
+                                        .text
+                                        .trim();
+                                    final sessionId = _sessionIdController.text
+                                        .trim();
+                                    if (signalingUri.isEmpty ||
+                                        sessionId.isEmpty)
+                                      return;
+                                    await widget.syncManager.connectRemotely(
+                                      signalingUri,
+                                      sessionId,
+                                      isInitiator,
+                                    );
+                                  }
+
+                                  if (context.mounted) {
+                                    Navigator.pop(context);
+                                  }
+                                } catch (_) {
+                                  if (!context.mounted) return;
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text('Connection failed'),
+                                    ),
+                                  );
+                                }
+                              },
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFF6C5CE7),
+                                foregroundColor: Colors.white,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                              ),
+                              child: const Text(
+                                'Connect',
+                                style: TextStyle(fontWeight: FontWeight.w600),
+                              ),
+                            ),
                           ),
-                        ),
-                        child: const Text(
-                          'Connect',
-                          style: TextStyle(fontWeight: FontWeight.w600),
-                        ),
+                        ],
                       ),
                     ),
-                  ],
+                  ),
                 ),
               );
             },

@@ -45,8 +45,7 @@ Future<Map<String, String>> buildMerkleTree(String folder) async {
   }
 
   // Root = hash of all (path:checksum) pairs sorted
-  final entries = tree.entries.toList()
-    ..sort((a, b) => a.key.compareTo(b.key));
+  final entries = tree.entries.toList()..sort((a, b) => a.key.compareTo(b.key));
   final combined = entries.map((e) => '${e.key}:${e.value}').join();
   tree['__root__'] = md5.convert(utf8.encode(combined)).toString();
 
@@ -70,10 +69,8 @@ Map<String, String> findChangedFiles(
 
   final changed = <String, String>{};
 
-  final allPaths = <String>{
-    ...localTree.keys,
-    ...remoteTree.keys,
-  }..remove('__root__');
+  final allPaths = <String>{...localTree.keys, ...remoteTree.keys}
+    ..remove('__root__');
 
   for (final path in allPaths) {
     final localCs = localTree[path]?.toString();
@@ -84,9 +81,9 @@ Map<String, String> findChangedFiles(
     } else if (localCs != null && remoteCs != null) {
       changed[path] = 'modified';
     } else if (remoteCs != null && localCs == null) {
-      changed[path] = 'added'; // exists on remote, not local
+      changed[path] = 'remote_only'; // exists on remote, not local
     } else {
-      changed[path] = 'deleted'; // exists locally, deleted on remote
+      changed[path] = 'local_only'; // exists locally, not on remote
     }
   }
 

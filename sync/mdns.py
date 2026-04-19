@@ -3,8 +3,8 @@
 import socket
 from zeroconf import ServiceInfo, Zeroconf
 
-SERVICE_TYPE = "_intellifil._tcp.local."
-SERVICE_NAME = "InteliFil._intellifil._tcp.local."
+SERVICE_TYPE = "_intellifile._tcp.local."
+SERVICE_NAME = "IntelliFile._intellifile._tcp.local."
 PORT         = 8765
 
 
@@ -24,6 +24,8 @@ def start_mdns() -> tuple[Zeroconf, ServiceInfo]:
     Mobile will discover this automatically.
     """
     ip  = get_local_ip()
+    print(f"[mdns] local ip: {ip}")
+    print(f"[mdns] service name: {SERVICE_NAME}")
     info = ServiceInfo(
         SERVICE_TYPE,
         SERVICE_NAME,
@@ -33,7 +35,7 @@ def start_mdns() -> tuple[Zeroconf, ServiceInfo]:
     )
     zeroconf = Zeroconf()
     zeroconf.register_service(info)
-    print(f"[mdns] advertising InteliFil at {ip}:{PORT}")
+    print(f"[mdns] advertising IntelliFile at {ip}:{PORT}")
     return zeroconf, info
 
 

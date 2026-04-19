@@ -34,7 +34,7 @@ class WsClient {
   WsConnectionState get state => _state;
   bool get isConnected => _state == WsConnectionState.connected;
 
-  static const int _maxReconnectAttempts = 20;
+  static const int _maxReconnectAttempts = 999999;
   static const Duration _baseDelay = Duration(milliseconds: 500);
   static const Duration _maxDelay = Duration(seconds: 30);
 
@@ -137,7 +137,7 @@ class WsClient {
     if (_shouldReconnect && _reconnectAttempts < _maxReconnectAttempts) {
       _scheduleReconnect();
     } else if (_reconnectAttempts >= _maxReconnectAttempts) {
-      debugPrint('[ws] Max reconnect attempts reached');
+      debugPrint('[ws] Reconnect attempt $_reconnectAttempts - still retrying');
     }
   }
 

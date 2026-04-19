@@ -40,7 +40,7 @@ try {
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
-const BLOCK_SIZE = 128 * 1024; // 128 KB — must match mobile
+const BLOCK_SIZE = 128 * 1024; // MUST match Python BLOCK_SIZE
 const DEVICE_ID = 'pc';
 const POLL_INTERVAL_MS = 3000;
 
@@ -101,15 +101,20 @@ function getAllBlockChecksums(syncFolder) {
 /** Build a Merkle tree for syncFolder: { relPath: md5, __root__: rootHash } */
 function buildMerkleTree(syncFolder) {
   const tree = {};
+  console.log(`[MerkleTree] Trying to build tree for folder: ${syncFolder}`);
   if (!fs.existsSync(syncFolder)) {
+    console.log(`[MerkleTree] Folder DOES NOT EXIST: ${syncFolder}`);
     tree['__root__'] = md5(Buffer.from(''));
     return tree;
   }
+  let fileCount = 0;
   walkDir(syncFolder, (abs) => {
+    fileCount++;
     const rel = path.relative(syncFolder, abs).replace(/\\/g, '/');
     if (rel.startsWith('.') || rel.endsWith('.tmp')) return;
     tree[rel] = md5File(abs);
   });
+  console.log(`[MerkleTree] Found ${fileCount} files in ${syncFolder}`);
   const entries = Object.entries(tree).sort((a, b) => a[0].localeCompare(b[0]));
   const combined = entries.map(([k, v]) => `${k}:${v}`).join('');
   tree['__root__'] = md5(Buffer.from(combined));
@@ -153,70 +158,79 @@ function md5File(filepath) {
   }
 }
 
-/** Compute changed blocks between local file and remote checksums. */
-function computeDelta(filepath, remoteChecksums) {
-  const deltas = [];
+/** Compute changed blocks between local file and remote checksums and stream them in chunks. */
+function computeDeltaStream(filepath, remoteChecksums, onChunk) {
   try {
     const fd = fs.openSync(filepath, 'r');
     let index = 0;
     const buf = Buffer.alloc(BLOCK_SIZE);
+    let chunkBuffer = [];
+    
     while (true) {
       const bytesRead = fs.readSync(fd, buf, 0, BLOCK_SIZE, null);
       if (bytesRead === 0) break;
+      
       const chunk = buf.slice(0, bytesRead);
       const localCs = md5(chunk);
       const remoteCs = (remoteChecksums[index] || remoteChecksums[String(index)]) || null;
+      
       if (remoteCs !== localCs) {
-        deltas.push({
+        chunkBuffer.push({
           block: index,
           checksum: localCs,
           data: bytesToHex(chunk),
         });
+        
+        // 50 blocks = 6.4MB per packet, safe for WebRTC DataChannels and WS
+        if (chunkBuffer.length >= 50) {
+          onChunk([...chunkBuffer]);
+          chunkBuffer = [];
+        }
       }
       index++;
     }
+    
+    if (chunkBuffer.length > 0) {
+      onChunk(chunkBuffer);
+    }
+    
     fs.closeSync(fd);
   } catch (e) {
-    console.warn('[sync-engine] computeDelta error:', e.message);
+    console.warn('[sync-engine] computeDeltaStream error:', e.message);
   }
-  return deltas;
 }
 
 /** Apply incoming delta blocks to a local file. */
-function applyDelta(filepath, deltasRaw) {
-  const blocks = {};
-
-  // Read existing blocks
-  try {
-    if (fs.existsSync(filepath)) {
-      const fd = fs.openSync(filepath, 'r');
-      let index = 0;
-      const buf = Buffer.alloc(BLOCK_SIZE);
-      while (true) {
-        const bytesRead = fs.readSync(fd, buf, 0, BLOCK_SIZE, null);
-        if (bytesRead === 0) break;
-        blocks[index] = Buffer.from(buf.slice(0, bytesRead));
-        index++;
-      }
-      fs.closeSync(fd);
-    }
-  } catch (_) { /* new file */ }
-
-  // Apply deltas
-  for (const d of deltasRaw) {
-    blocks[d.block] = hexToBytes(d.data);
-  }
-
-  // Write back
+function applyDelta(filepath, deltasRaw, expectedSize) {
+  // Fix RAM bloat + Destructive overwrite
+  console.log(`[sync-engine] applyDelta: processing ${deltasRaw.length} chunks for ${filepath}`);
+  
   const dir = path.dirname(filepath);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 
-  const fd = fs.openSync(filepath, 'w');
-  const sortedKeys = Object.keys(blocks).map(Number).sort((a, b) => a - b);
-  for (const key of sortedKeys) {
-    fs.writeSync(fd, blocks[key], 0, blocks[key].length);
+  let fd = null;
+  try {
+    const createFd = fs.openSync(filepath, 'a');
+    fs.closeSync(createFd);
+    fd = fs.openSync(filepath, 'r+');
+    for (const d of deltasRaw) {
+      const position = d.block * BLOCK_SIZE;
+      const buf = hexToBytes(d.data);
+      fs.writeSync(fd, buf, 0, buf.length, position);
+    }
+    
+    if (expectedSize !== undefined && expectedSize !== null) {
+      fs.ftruncateSync(fd, expectedSize);
+    }
+
+    const stat = fs.fstatSync(fd);
+    console.log(`[sync-engine] applyDelta: applied successfully to ${filepath} (size: ${stat.size}b)`);
+  } catch (e) {
+    console.error(`[applyDelta] failed on ${filepath}: ${e.message}`);
+    throw e;
+  } finally {
+    if (fd !== null) fs.closeSync(fd);
   }
-  fs.closeSync(fd);
 }
 
 /** Compare two Merkle trees. */
@@ -230,8 +244,8 @@ function findChangedFiles(localTree, remoteTree) {
     const remoteCs = remoteTree[p] || null;
     if (localCs === remoteCs) continue;
     if (localCs && remoteCs) changed[p] = 'modified';
-    else if (remoteCs && !localCs) changed[p] = 'added';
-    else changed[p] = 'deleted';
+    else if (remoteCs && !localCs) changed[p] = 'remote_only';
+    else changed[p] = 'local_only';
   }
   return changed;
 }
@@ -258,7 +272,7 @@ class VectorClockStore {
 
   tick(filepath) {
     const clock = this.load(filepath);
-    clock[DEVICE_ID] = Date.now() / 1000;
+    clock[DEVICE_ID] = (clock[DEVICE_ID] || 0) + 1;
     this.save(filepath, clock);
     return clock;
   }
@@ -266,7 +280,9 @@ class VectorClockStore {
   merge(filepath, remoteClock) {
     const clock = this.load(filepath);
     for (const [k, v] of Object.entries(remoteClock)) {
-      clock[k] = Math.max(clock[k] || 0, Number(v));
+      const localVal = Math.floor(clock[k] || 0);
+      const remoteVal = Math.floor(v || 0);
+      clock[k] = Math.max(localVal, remoteVal);
     }
     this.save(filepath, clock);
     return clock;
@@ -288,6 +304,10 @@ class VectorClockStore {
 class SyncEngine extends EventEmitter {
   constructor(syncFolder) {
     super();
+    this._log(`SyncEngine initialized with folder: ${syncFolder}`);
+    if (!require('fs').existsSync(syncFolder)) {
+      this._log(`Warning: syncFolder does not exist at init: ${syncFolder}`);
+    }
     this.syncFolder = syncFolder;
     this._vcStore = new VectorClockStore();
     this._ws = null;
@@ -299,7 +319,9 @@ class SyncEngine extends EventEmitter {
     this._messageQueue = [];
     this._processingQueue = false;
     this._pendingChanges = [];
-    this._awaitingRemoteApproval = new Set();
+    this._awaitingRemoteApproval = new Map();
+    // Tracks mobile-reported changes keyed by filepath, for use in _handleSyncApproved
+    this._pendingMobileChanges = {};
 
     // ── Reconnection state ──────────────────────────────────────────
     this._reconnectAttempt = 0;
@@ -364,11 +386,14 @@ class SyncEngine extends EventEmitter {
     }
 
     try {
-      // Normalize URL to ws://
+      // Normalize URL to ws(s)://
       let wsUrl = signalingUrl.trim();
       if (wsUrl.startsWith('http://')) wsUrl = 'ws://' + wsUrl.slice(7);
       else if (wsUrl.startsWith('https://')) wsUrl = 'wss://' + wsUrl.slice(8);
-      else if (!wsUrl.startsWith('ws://') && !wsUrl.startsWith('wss://')) wsUrl = 'ws://' + wsUrl;
+      else if (!wsUrl.startsWith('ws://') && !wsUrl.startsWith('wss://')) {
+        const isLocalhost = wsUrl.includes('localhost') || wsUrl.includes('127.0.0.1');
+        wsUrl = isLocalhost ? 'ws://' + wsUrl : 'wss://' + wsUrl;
+      }
 
       this._ws = new WebSocket(wsUrl);
 
@@ -399,6 +424,14 @@ class SyncEngine extends EventEmitter {
         this._log('WebSocket disconnected');
         this._ws = null;
         this._stopWatcher();
+        
+        // Fix: Clean up WebRTC to prevent dangling ICE gatherers hanging in background
+        console.log('[sync-engine] WebSocket closed, cleaning up WebRTC resources');
+        try { if (this._dc) this._dc.close(); } catch (_) { }
+        try { if (this._pc) this._pc.close(); } catch (_) { }
+        this._dc = null;
+        this._pc = null;
+
         if (this._shouldReconnect) {
           this._scheduleReconnect();
         } else {
@@ -408,7 +441,6 @@ class SyncEngine extends EventEmitter {
 
       this._ws.on('error', (err) => {
         this._log('WebSocket error: ' + err.message);
-        // Don't emit error status if we're going to reconnect
         // The 'close' event will fire after this and handle reconnection
       });
     } catch (e) {
@@ -677,7 +709,7 @@ class SyncEngine extends EventEmitter {
       this._log('🔄 Falling back to WebSocket relay mode');
       this._emit('status', { status: 'connected_relay', message: 'Connected (Relay Fallback)' });
       // Close the failed peer connection to free resources
-      try { this._pc?.close(); } catch (_) {}
+      try { this._pc?.close(); } catch (_) { }
       this._pc = null;
       this._dc = null;
     } else {
@@ -732,12 +764,8 @@ class SyncEngine extends EventEmitter {
         }
 
         // Start sync handshake (works via either transport)
-        if (isInitiator) {
-          this._log('I am initiator, sending handshake...');
-          this._sendHandshake();
-        } else {
-          this._log('I am joiner, waiting for handshake from initiator...');
-        }
+        this._log('Both peers present, sending handshake (PC always initiates sync)...');
+        this._sendHandshake();
       }
       return;
     }
@@ -755,12 +783,8 @@ class SyncEngine extends EventEmitter {
         }
       }
 
-      if (isInitiator) {
-        this._log('I am initiator, sending handshake...');
-        this._sendHandshake();
-      } else {
-        this._log('I am joiner, waiting for handshake from initiator...');
-      }
+      this._log('Peer joined, sending handshake (PC always initiates sync)...');
+      this._sendHandshake();
       return;
     }
 
@@ -782,8 +806,8 @@ class SyncEngine extends EventEmitter {
       this._emitPending();
       this._stopWatcher();
       // Clean up WebRTC
-      try { this._dc?.close(); } catch (_) {}
-      try { this._pc?.close(); } catch (_) {}
+      try { this._dc?.close(); } catch (_) { }
+      try { this._pc?.close(); } catch (_) { }
       this._dc = null;
       this._pc = null;
       return;
@@ -837,7 +861,7 @@ class SyncEngine extends EventEmitter {
         await this._handleHandshake(msg);
         break;
       case 'delta':
-        this._log(`  delta: filepath=${msg.filepath} blocks=${(msg.deltas||[]).length} change=${msg.change}`);
+        this._log(`  delta: filepath=${msg.filepath} blocks=${(msg.deltas || []).length} change=${msg.change}`);
         await this._handleDelta(msg);
         break;
       case 'delete':
@@ -888,7 +912,7 @@ class SyncEngine extends EventEmitter {
     const clocks = this._vcStore.loadAll();
     const blockChecksums = getAllBlockChecksums(this.syncFolder);
 
-    this._log(`📤 Building handshake: ${treeFiles.length} files, root=${tree['__root__']?.substring(0,8)}...`);
+    this._log(`📤 Building handshake: ${treeFiles.length} files, root=${tree['__root__']?.substring(0, 8)}...`);
     this._log(`   files: [${treeFiles.join(', ')}]`);
 
     this._sendSyncMessage({
@@ -910,7 +934,7 @@ class SyncEngine extends EventEmitter {
     const remoteBlockChecksums = msg.block_checksums || {};
 
     const remoteFiles = Object.keys(remoteTree).filter(k => k !== '__root__');
-    this._log(`📥 Remote handshake: ${remoteFiles.length} files, root=${(remoteTree['__root__'] || '').substring(0,8)}...`);
+    this._log(`📥 Remote handshake: ${remoteFiles.length} files, root=${(remoteTree['__root__'] || '').substring(0, 8)}...`);
     this._log(`   remote files: [${remoteFiles.join(', ')}]`);
 
     // Build our local state
@@ -919,78 +943,105 @@ class SyncEngine extends EventEmitter {
     const localBlockChecksums = getAllBlockChecksums(this.syncFolder);
 
     const localFiles = Object.keys(localTree).filter(k => k !== '__root__');
-    this._log(`📤 Local state: ${localFiles.length} files, root=${localTree['__root__']?.substring(0,8)}...`);
+    this._log(`📤 Local state: ${localFiles.length} files, root=${localTree['__root__']?.substring(0, 8)}...`);
     this._log(`   local files: [${localFiles.join(', ')}]`);
 
-    // Send our handshake response
-    this._sendSyncMessage({
-      type: 'handshake',
-      tree: localTree,
-      clocks: localClocks,
-      block_checksums: localBlockChecksums,
-    });
+    // ── BUG FIX: Never send a second handshake from _handleHandshake. ──────────
+    // The PC sends exactly ONE handshake in _sendHandshake() (called from peer-joined).
+    // Responding to an incoming handshake with another handshake created an infinite
+    // ping-pong loop.  Instead, the PC simply uses the remote tree it just received
+    // to diff and send deltas — the protocol is initiator-driven, not echo-based.
+    // ────────────────────────────────────────────────────────────────────────────
 
     this._lastLocalTree = localTree;
-    this._log('📤 Handshake response sent');
 
     // Diff the trees — figure out what needs syncing
+    // findChangedFiles(a, b):
+    //   'local_only'  → in a (local) but NOT in b (remote) → push to remote
+    //   'remote_only' → in b (remote) but NOT in a (local) → request from remote
+    //   'modified'    → in both, checksums differ           → vector clock decides
     const changes = findChangedFiles(localTree, remoteTree);
     const changeEntries = Object.entries(changes);
 
     if (changeEntries.length === 0) {
       this._sendSyncMessage({ type: 'in_sync' });
       this._emit('status', { status: 'synced', message: 'All files in sync' });
-      this._log('Already in sync');
+      this._log('✅ Already in sync');
       this._startWatcher();
       return;
     }
 
-    this._log(`Found ${changeEntries.length} differences`);
+    this._log(`Found ${changeEntries.length} difference(s)`);
 
     for (const [filepath, changeType] of changeEntries) {
-      if (changeType === 'added') {
-        // File exists on remote only — request delta from remote
-        const bcs = remoteBlockChecksums[filepath] || {};
+      if (changeType === 'remote_only') {
+        // File exists on remote (mobile) but not locally — request it
+        this._log(`Requesting remote-only file from mobile: ${filepath}`);
+        const localCs = localBlockChecksums[filepath] || {};
         this._sendSyncMessage({
           type: 'request_delta',
           filepath,
-          block_checksums: localBlockChecksums[filepath] || {},
+          block_checksums: localCs,
         });
-      } else if (changeType === 'modified') {
-        // Both sides have it — use vector clocks to decide winner
-        const localClock = this._vcStore.load(filepath);
-        const remoteClock = remoteClocks[filepath] || {};
-        const result = this._compareClock(localClock, remoteClock);
 
-        if (result === 'remote_wins' || result === 'identical') {
+      } else if (changeType === 'modified') {
+        // Both sides have it — use vector clocks to decide the winner
+        const localClock  = this._vcStore.load(filepath);
+        const remoteClock = remoteClocks[filepath] || {};
+        const result      = this._compareClock(localClock, remoteClock);
+
+        if (result === 'remote_wins') {
           // Request updated content from remote
           this._sendSyncMessage({
             type: 'request_delta',
             filepath,
             block_checksums: localBlockChecksums[filepath] || {},
           });
-        } else if (result === 'local_wins') {
-          // Send our version to remote
+          this._log(`  ${filepath}: remote_wins → request_delta`);
+
+        } else if (result === 'local_wins' || result === 'identical') {
+          // Push our version to remote
           const localPath = path.join(this.syncFolder, filepath);
           if (fs.existsSync(localPath)) {
-            const deltas = computeDelta(localPath, remoteBlockChecksums[filepath] || {});
+            const fileSize = fs.statSync(localPath).size;
             const vc = this._vcStore.tick(filepath);
-            this._sendSyncMessage({
-              type: 'delta',
-              filepath,
-              deltas,
-              clock: vc,
-              change: 'modified',
+            computeDeltaStream(localPath, remoteBlockChecksums[filepath] || {}, (deltasChunk) => {
+              this._sendSyncMessage({
+                type: 'delta',
+                filepath,
+                deltas: deltasChunk,
+                clock: vc,
+                change: 'modified',
+                size: fileSize,
+              });
             });
+            this._log(`  ${filepath}: local_wins → sent delta`);
           }
+
         } else {
-          // Conflict
+          // Conflict — notify both sides
           this._sendSyncMessage({ type: 'conflict', filepath });
           this._log(`⚠ Conflict: ${filepath}`);
         }
-      } else if (changeType === 'deleted') {
-        // File exists locally but not on remote — remote deleted it
-        this._log(`Ignored remote delete for: ${filepath}`);
+
+      } else if (changeType === 'local_only') {
+        // File exists locally but not on remote — push it
+        this._log(`Pushing local-only file to remote: ${filepath}`);
+        const localPath = path.join(this.syncFolder, filepath);
+        if (fs.existsSync(localPath)) {
+          const fileSize = fs.statSync(localPath).size;
+          const vc = this._vcStore.tick(filepath);
+          computeDeltaStream(localPath, {}, (deltasChunk) => {
+            this._sendSyncMessage({
+              type: 'delta',
+              filepath,
+              deltas: deltasChunk,
+              clock: vc,
+              change: 'added',
+              size: fileSize,
+            });
+          });
+        }
       }
     }
 
@@ -1003,38 +1054,88 @@ class SyncEngine extends EventEmitter {
   // ── Delta handling ────────────────────────────────────────────────
 
   async _handleDelta(msg) {
-    const { filepath, deltas, clock, change } = msg;
+    const { filepath, deltas, clock, change, size } = msg;
     this._emit('status', { status: 'syncing', message: `Syncing: ${filepath}` });
 
+    // Guard watcher — prevent it from re-announcing what we just wrote
+    this._processingSync = true;
     try {
       if (change === 'deleted') {
-        this._log(`Ignored remote delete info for: ${filepath}`);
+        // Mobile is telling us a file was deleted on their side — delete it here too
+        const localPath = path.join(this.syncFolder, filepath);
+        if (fs.existsSync(localPath)) {
+          fs.unlinkSync(localPath);
+          this._log(`Deleted (remote requested): ${filepath}`);
+        } else {
+          this._log(`Delete: file already absent: ${filepath}`);
+        }
       } else {
         const localPath = path.join(this.syncFolder, filepath);
         const dir = path.dirname(localPath);
         if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-        applyDelta(localPath, deltas || []);
-        this._log(`Synced: ${filepath}`);
+        // Pass the authoritative file size so applyDelta can truncate correctly
+        // when the incoming version is shorter than what we have locally.
+        applyDelta(localPath, deltas || [], size);
+        this._log(`Synced: ${filepath} (${size != null ? size + 'b' : 'size unknown'})`);
       }
 
       if (clock) {
         this._vcStore.merge(filepath, clock);
       }
 
+      // Update the Merkle snapshot for this one file rather than rebuilding the
+      // whole tree — avoids O(n) full-walk after every incoming delta.
+      const localPath = path.join(this.syncFolder, filepath);
+      if (change === 'deleted' || !fs.existsSync(localPath)) {
+        delete this._lastLocalTree[filepath];
+      } else {
+        this._lastLocalTree[filepath] = md5File(localPath);
+      }
+      // Recompute the root hash so the watcher snapshot stays accurate
+      const entries = Object.entries(this._lastLocalTree)
+        .filter(([k]) => k !== '__root__')
+        .sort((a, b) => a[0].localeCompare(b[0]));
+      this._lastLocalTree['__root__'] = md5(Buffer.from(entries.map(([k, v]) => `${k}:${v}`).join('')));
+
       this._sendSyncMessage({ type: 'ack', filepath });
       this._emitFiles();
       this._emit('status', { status: 'synced', message: 'Sync complete' });
     } catch (e) {
       this._log(`Error syncing ${filepath}: ${e.message}`);
+    } finally {
+      this._processingSync = false;
     }
   }
 
   async _handleDelete(msg) {
-    this._log(`Ignored delete request for: ${msg.filepath}`);
-    if (msg.clock) {
-      this._vcStore.merge(msg.filepath, msg.clock);
+    const { filepath, clock } = msg;
+    const localPath = path.join(this.syncFolder, filepath);
+
+    // Guard watcher — prevent it from re-reporting the deletion
+    this._processingSync = true;
+    try {
+      if (fs.existsSync(localPath)) {
+        fs.unlinkSync(localPath);
+        this._log(`Deleted (mobile requested): ${filepath}`);
+      } else {
+        this._log(`Delete: already absent: ${filepath}`);
+      }
+      if (clock) this._vcStore.merge(filepath, clock);
+
+      // Update snapshot entry without a full tree rebuild
+      delete this._lastLocalTree[filepath];
+      const entries = Object.entries(this._lastLocalTree)
+        .filter(([k]) => k !== '__root__')
+        .sort((a, b) => a[0].localeCompare(b[0]));
+      this._lastLocalTree['__root__'] = md5(Buffer.from(entries.map(([k, v]) => `${k}:${v}`).join('')));
+
+      this._sendSyncMessage({ type: 'ack', filepath });
+      this._emitFiles();
+    } catch (e) {
+      this._log(`Error deleting ${filepath}: ${e.message}`);
+    } finally {
+      this._processingSync = false;
     }
-    this._sendSyncMessage({ type: 'ack', filepath: msg.filepath });
   }
 
   async _handleRequestDelta(msg) {
@@ -1046,15 +1147,16 @@ class SyncEngine extends EventEmitter {
       return;
     }
 
-    const deltas = computeDelta(localPath, block_checksums || {});
     const vc = this._vcStore.tick(filepath);
 
-    this._sendSyncMessage({
-      type: 'delta',
-      filepath,
-      deltas,
-      clock: vc,
-      change: 'modified',
+    computeDeltaStream(localPath, block_checksums || {}, (deltasChunk) => {
+      this._sendSyncMessage({
+        type: 'delta',
+        filepath,
+        deltas: deltasChunk,
+        clock: vc,
+        change: 'modified',
+      });
     });
 
     this._log(`Sent to mobile: ${filepath}`);
@@ -1063,16 +1165,30 @@ class SyncEngine extends EventEmitter {
   // ── Pending change approval flow ──────────────────────────────────
 
   _handleChangePending(msg) {
-    // Remove existing entry for same file
-    this._pendingChanges = this._pendingChanges.filter(c => c.filepath !== msg.filepath);
+    const filepath   = msg.filepath;
+    const changeType = msg.change_type || 'modified';
+
+    // Track in _pendingMobileChanges so _handleSyncApproved can look it up
+    this._pendingMobileChanges[filepath] = { changeType };
+
+    // Remove any stale entry for the same file then record the new one
+    this._pendingChanges = this._pendingChanges.filter(c => c.filepath !== filepath);
     this._pendingChanges.push({
-      filepath: msg.filepath,
-      changeType: msg.change_type || 'modified',
-      fileSize: msg.file_size || 0,
+      filepath,
+      changeType,
+      fileSize:   msg.file_size  || 0,
       modifiedAt: msg.modified_at || 0,
       receivedAt: Date.now(),
     });
-    this._log(`Change pending from mobile: ${msg.filepath} (${msg.change_type || 'modified'})`);
+    this._log(`Auto-approving mobile change: ${filepath} (${changeType})`);
+
+    // ── AUTO-APPROVE ─────────────────────────────────────────────────────────
+    // Mobile changes are applied instantly — no PC user interaction required.
+    // Send sync_approved so mobile immediately sends its delta / delete.
+    this._sendSyncMessage({ type: 'sync_approved', filepath });
+
+    // Clear from visible pending list (already approved)
+    this._pendingChanges = this._pendingChanges.filter(c => c.filepath !== filepath);
     this._emitPending();
   }
 
@@ -1081,23 +1197,34 @@ class SyncEngine extends EventEmitter {
     this._awaitingRemoteApproval.delete(filepath);
 
     const localPath = path.join(this.syncFolder, filepath);
-    if (!fs.existsSync(localPath)) {
-      this._log(`Approved file no longer exists: ${filepath}`);
+    const pending   = this._pendingMobileChanges[filepath] || {};
+    delete this._pendingMobileChanges[filepath];
+
+    if (!fs.existsSync(localPath) || pending.changeType === 'deleted') {
+      // File is gone or mobile explicitly deleted it — send a delete instruction
+      const vc = this._vcStore.tick(filepath);
+      this._sendSyncMessage({ type: 'delete', filepath, clock: vc });
+      this._log(`Approved — file gone, sent delete for: ${filepath}`);
+      this._emitFiles();
       return;
     }
 
-    const vc = this._vcStore.tick(filepath);
-    const deltas = computeDelta(localPath, {});
-
-    this._sendSyncMessage({
-      type: 'delta',
-      filepath,
-      deltas,
-      clock: vc,
-      change: 'modified',
+    // Send the current file content as a delta (with correct size for truncation)
+    const fileSize = fs.statSync(localPath).size;
+    const vc       = this._vcStore.tick(filepath);
+    computeDeltaStream(localPath, {}, (deltasChunk) => {
+      this._sendSyncMessage({
+        type: 'delta',
+        filepath,
+        deltas: deltasChunk,
+        clock: vc,
+        change: 'modified',
+        size: fileSize,
+      });
     });
 
-    this._log(`Sent approved change to mobile: ${filepath}`);
+    this._log(`Sent approved change to mobile: ${filepath} (${fileSize}b)`);
+    this._emitFiles();
   }
 
   _handleSyncRejected(msg) {
@@ -1129,6 +1256,15 @@ class SyncEngine extends EventEmitter {
     try {
       const currentTree = buildMerkleTree(this.syncFolder);
 
+      const expired = new Set();
+      const now = Date.now();
+      this._awaitingRemoteApproval.forEach((ts, fp) => {
+        if (now - ts > 30000) {
+          this._awaitingRemoteApproval.delete(fp);
+          expired.add(fp);
+        }
+      });
+
       if (Object.keys(this._lastLocalTree).length === 0) {
         this._lastLocalTree = currentTree;
         return;
@@ -1139,22 +1275,29 @@ class SyncEngine extends EventEmitter {
       const changed = findChangedFiles(currentTree, this._lastLocalTree);
 
       for (const [filepath, changeType] of Object.entries(changed)) {
-        if (changeType === 'deleted') {
-          // Check for phantom delete
-          const localPath = path.join(this.syncFolder, filepath);
-          if (fs.existsSync(localPath)) {
-            const cs = md5File(localPath);
-            if (cs) this._lastLocalTree[filepath] = cs;
-            continue;
+        if (changeType === 'remote_only') {
+          // File is in _lastLocalTree (old snapshot) but gone from currentTree = deleted on PC
+          if (this._awaitingRemoteApproval.has(filepath)) continue;
+          this._awaitingRemoteApproval.set(filepath, Date.now());
+          const vc = this._vcStore.tick(filepath);
+          this._sendSyncMessage({
+            type: 'change_pending',
+            filepath,
+            change_type: 'deleted',
+            file_size: 0,
+            modified_at: Math.floor(Date.now() * 0.001),
+          });
+          if (expired.has(filepath)) {
+            this._log(`[watcher] re-notifying ${filepath} (approval TTL expired)`);
           }
-          this._log(`Ignored local delete for: ${filepath}`);
+          this._log(`Notified mobile of local delete: ${filepath}`);
           continue;
         }
 
         if (this._awaitingRemoteApproval.has(filepath)) continue;
 
         // Notify mobile about the change — wait for approval
-        this._awaitingRemoteApproval.add(filepath);
+        this._awaitingRemoteApproval.set(filepath, Date.now());
         const localPath = path.join(this.syncFolder, filepath);
         try {
           const stat = fs.statSync(localPath);
@@ -1165,6 +1308,9 @@ class SyncEngine extends EventEmitter {
             file_size: stat.size,
             modified_at: stat.mtimeMs / 1000,
           });
+          if (expired.has(filepath)) {
+            this._log(`[watcher] re-notifying ${filepath} (approval TTL expired)`);
+          }
           this._log(`Notified mobile: ${filepath} (${changeType})`);
         } catch (e) {
           this._awaitingRemoteApproval.delete(filepath);
@@ -1304,12 +1450,12 @@ class SyncEngine extends EventEmitter {
     }
     // Close DataChannel
     if (this._dc) {
-      try { this._dc.close(); } catch (_) {}
+      try { this._dc.close(); } catch (_) { }
       this._dc = null;
     }
     // Close PeerConnection
     if (this._pc) {
-      try { this._pc.close(); } catch (_) {}
+      try { this._pc.close(); } catch (_) { }
       this._pc = null;
     }
     // Close WebSocket

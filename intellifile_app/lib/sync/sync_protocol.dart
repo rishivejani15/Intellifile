@@ -19,6 +19,7 @@ SyncMessage parseSyncMessage(Map<String, dynamic> json) {
         deltas: json['deltas'] as List,
         clock: Map<String, dynamic>.from(json['clock'] as Map),
         change: json['change'] as String,
+        size: (json['size'] as num?)?.toInt(),
       );
     case 'delete':
       return DeleteMessage(
@@ -77,11 +78,13 @@ class DeltaMessage extends SyncMessage {
   final List deltas;
   final Map<String, dynamic> clock;
   final String change;
+  final int? size;
   const DeltaMessage({
     required this.filepath,
     required this.deltas,
     required this.clock,
     required this.change,
+    this.size,
   });
 }
 

@@ -398,6 +398,8 @@ class FileListTile extends StatelessWidget {
 
     if (confirmed == true) {
       try {
+        final relPath = p.relative(absPath, from: syncFolder);
+        syncManager?.markLocallyRemoved(relPath.replaceAll('\\', '/'));
         final file = File(absPath);
         if (await file.exists()) {
           await file.delete();

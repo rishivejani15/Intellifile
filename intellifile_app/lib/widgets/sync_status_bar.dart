@@ -99,7 +99,8 @@ class SyncStatusBar extends StatelessWidget {
   }
 
   Widget _buildIcon() {
-    final isAnimating = status == SyncStatus.syncing ||
+    final isAnimating =
+        status == SyncStatus.syncing ||
         status == SyncStatus.connecting ||
         status == SyncStatus.discovering;
 

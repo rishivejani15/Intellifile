@@ -5,6 +5,7 @@
 // Uses sqflite for persistence on mobile.
 
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
@@ -18,21 +19,20 @@ class VectorClock {
   Map<String, double> clock;
 
   VectorClock({required this.deviceId, Map<String, double>? clock})
-      : clock = clock ?? {};
+    : clock = clock ?? {};
 
   /// Tick this device's entry — call after every local file edit.
   void tick() {
-    clock[deviceId] =
-        DateTime.now().millisecondsSinceEpoch / 1000.0;
+    clock[deviceId] = (clock[deviceId] ?? 0) + 1;
+    debugPrint('[clock] ticked $deviceId -> ${clock[deviceId]}');
   }
 
   /// Merge a remote clock into this one — take max per device.
   void merge(Map<String, dynamic> other) {
     for (final entry in other.entries) {
       final remoteTs = (entry.value as num).toDouble();
-      clock[entry.key] = (clock[entry.key] ?? 0) > remoteTs
-          ? clock[entry.key]!
-          : remoteTs;
+      final localTs = clock[entry.key] ?? 0;
+      clock[entry.key] = localTs > remoteTs ? localTs : remoteTs;
     }
   }
 
@@ -109,7 +109,8 @@ class VectorClockStore {
 
     if (rows.isNotEmpty) {
       final clockJson =
-          jsonDecode(rows.first['clock_json'] as String) as Map<String, dynamic>;
+          jsonDecode(rows.first['clock_json'] as String)
+              as Map<String, dynamic>;
       return VectorClock.fromJson(kDeviceId, clockJson);
     }
     return VectorClock(deviceId: kDeviceId);
@@ -118,15 +119,11 @@ class VectorClockStore {
   /// Save a vector clock for a file.
   static Future<void> saveClock(String filepath, VectorClock vc) async {
     final db = await _getDb();
-    await db.insert(
-      'vector_clocks',
-      {
-        'filepath': filepath,
-        'clock_json': jsonEncode(vc.clock),
-        'updated_at': DateTime.now().millisecondsSinceEpoch / 1000.0,
-      },
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
+    await db.insert('vector_clocks', {
+      'filepath': filepath,
+      'clock_json': jsonEncode(vc.clock),
+      'updated_at': DateTime.now().millisecondsSinceEpoch / 1000.0,
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
   /// Load all vector clocks — sent during handshake.
@@ -135,8 +132,9 @@ class VectorClockStore {
     final rows = await db.query('vector_clocks');
     final result = <String, dynamic>{};
     for (final row in rows) {
-      result[row['filepath'] as String] =
-          jsonDecode(row['clock_json'] as String);
+      result[row['filepath'] as String] = jsonDecode(
+        row['clock_json'] as String,
+      );
     }
     return result;
   }

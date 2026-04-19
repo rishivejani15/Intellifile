@@ -1,12 +1,32 @@
 # pc/sync/vector_clock.py
 
-import time
 import json
+import logging
 import sqlite3
+import time
 from dataclasses import dataclass, field
 
 
 DEVICE_ID = "pc"  # change to "mobile" on mobile side
+
+log = logging.getLogger("intellifil.vector_clock")
+
+
+def _to_int(value) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _get_conn(db_path: str) -> sqlite3.Connection:
+    conn = sqlite3.connect(db_path, timeout=10)
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+    except sqlite3.Error as exc:
+        log.warning("SQLite PRAGMA failed: %s", exc)
+    return conn
 
 
 @dataclass
@@ -16,12 +36,12 @@ class VectorClock:
 
     def tick(self):
         """Call this every time the local device edits a file."""
-        self.clock[self.device_id] = time.time()
+        self.clock[self.device_id] = _to_int(self.clock.get(self.device_id, 0)) + 1
 
     def merge(self, other: dict):
         """Merge a remote clock into this one — take max per device."""
         for device, ts in other.items():
-            self.clock[device] = max(self.clock.get(device, 0), ts)
+            self.clock[device] = max(_to_int(self.clock.get(device, 0)), _to_int(ts))
 
     def compare(self, other: dict) -> str:
         """
@@ -29,11 +49,11 @@ class VectorClock:
         Returns one of: 'local_wins' | 'remote_wins' | 'identical' | 'conflict'
         """
         local_newer = any(
-            self.clock.get(d, 0) > other.get(d, 0)
+            _to_int(self.clock.get(d, 0)) > _to_int(other.get(d, 0))
             for d in set(self.clock) | set(other)
         )
         remote_newer = any(
-            other.get(d, 0) > self.clock.get(d, 0)
+            _to_int(other.get(d, 0)) > _to_int(self.clock.get(d, 0))
             for d in set(self.clock) | set(other)
         )
 
@@ -60,7 +80,7 @@ class VectorClock:
 
 def init_clock_db(db_path: str):
     """Create the vector_clocks table if it doesn't exist."""
-    conn = sqlite3.connect(db_path)
+    conn = _get_conn(db_path)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS vector_clocks (
             filepath    TEXT PRIMARY KEY,
@@ -73,7 +93,7 @@ def init_clock_db(db_path: str):
 
 
 def save_clock(db_path: str, filepath: str, vc: VectorClock):
-    conn = sqlite3.connect(db_path)
+    conn = _get_conn(db_path)
     conn.execute("""
         INSERT INTO vector_clocks (filepath, clock_json, updated_at)
         VALUES (?, ?, ?)
@@ -87,7 +107,7 @@ def save_clock(db_path: str, filepath: str, vc: VectorClock):
 
 def load_clock(db_path: str, filepath: str) -> VectorClock:
     """Load clock for a file. Returns a fresh clock if not found."""
-    conn = sqlite3.connect(db_path)
+    conn = _get_conn(db_path)
     row = conn.execute(
         "SELECT clock_json FROM vector_clocks WHERE filepath=?",
         (filepath,)
@@ -101,7 +121,7 @@ def load_clock(db_path: str, filepath: str) -> VectorClock:
 
 def load_all_clocks(db_path: str) -> dict:
     """Load all clocks — sent to remote device during sync handshake."""
-    conn = sqlite3.connect(db_path)
+    conn = _get_conn(db_path)
     rows = conn.execute(
         "SELECT filepath, clock_json FROM vector_clocks"
     ).fetchall()

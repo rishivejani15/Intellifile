@@ -89,16 +89,16 @@ function generateSessionCode() {
 // ── Status indicator colors ──────────────────────────────────────────────
 
 const STATUS_CONFIG = {
-  idle:             { color: '#636e72', label: 'Idle',                  dot: '⚪', cssClass: '' },
-  connecting:       { color: '#f39c12', label: 'Connecting',            dot: '🟡', cssClass: '' },
-  reconnecting:     { color: '#e17055', label: 'Reconnecting',         dot: '🟠', cssClass: 'pulsing' },
-  waiting:          { color: '#3498db', label: 'Waiting',               dot: '🔵', cssClass: '' },
-  syncing:          { color: '#6c5ce7', label: 'Syncing',               dot: '🟣', cssClass: '' },
-  synced:           { color: '#00b894', label: 'Connected',             dot: '🟢', cssClass: '' },
-  connected_p2p:    { color: '#00b894', label: 'Connected (P2P)',       dot: '🟢', cssClass: '' },
-  connected_relay:  { color: '#fdcb6e', label: 'Connected (Relay)',     dot: '🟡', cssClass: '' },
-  error:            { color: '#e74c3c', label: 'Error',                 dot: '🔴', cssClass: '' },
-  disconnected:     { color: '#636e72', label: 'Disconnected',          dot: '⚪', cssClass: '' },
+  idle: { color: '#636e72', label: 'Idle', dot: '⚪', cssClass: '' },
+  connecting: { color: '#f39c12', label: 'Connecting', dot: '🟡', cssClass: '' },
+  reconnecting: { color: '#e17055', label: 'Reconnecting', dot: '🟠', cssClass: 'pulsing' },
+  waiting: { color: '#3498db', label: 'Waiting', dot: '🔵', cssClass: '' },
+  syncing: { color: '#6c5ce7', label: 'Syncing', dot: '🟣', cssClass: '' },
+  synced: { color: '#00b894', label: 'Connected', dot: '🟢', cssClass: '' },
+  connected_p2p: { color: '#00b894', label: 'Connected (P2P)', dot: '🟢', cssClass: '' },
+  connected_relay: { color: '#fdcb6e', label: 'Connected (Relay)', dot: '🟡', cssClass: '' },
+  error: { color: '#e74c3c', label: 'Error', dot: '🔴', cssClass: '' },
+  disconnected: { color: '#636e72', label: 'Disconnected', dot: '⚪', cssClass: '' },
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -123,7 +123,7 @@ const SyncManager = () => {
   // ── Connection form state ────────────────────────────────────────
   const savedSettings = JSON.parse(localStorage.getItem('intellifile_sync') || '{}');
   const [showConnectPanel, setShowConnectPanel] = useState(false);
-  const [signalingUrl, setSignalingUrl] = useState(savedSettings.signalingUrl || 'wss://YOUR_SIGNALING_URL');
+  const [signalingUrl, setSignalingUrl] = useState(savedSettings.signalingUrl || 'wss://intellifile-signaling.onrender.com');
   const [sessionId, setSessionId] = useState(savedSettings.sessionId || '');
   const [isInitiator, setIsInitiator] = useState(savedSettings.isInitiator ?? true);
   const [activeTab, setActiveTab] = useState('files'); // 'files' | 'activity'
@@ -219,11 +219,22 @@ const SyncManager = () => {
       }));
     }
 
+    // Auto-connect if we have saved settings
+    if (savedSettings.sessionId && savedSettings.signalingUrl) {
+      if (window.intellifile?.syncConnect) {
+        window.intellifile.syncConnect({
+          signalingUrl: savedSettings.signalingUrl,
+          sessionId: savedSettings.sessionId,
+          isInitiator: savedSettings.isInitiator ?? true,
+        }).catch(e => console.error('Auto-connect failed:', e));
+      }
+    }
+
     return () => {
       clearInterval(interval);
       cleanups.forEach(fn => fn && fn());
     };
-  }, [loadFiles]);
+  }, [loadFiles]); // note: savedSettings is read outside so we just auto-connect on initial load.
 
   // ── Auto-dismiss notifications ───────────────────────────────────────
 
@@ -461,10 +472,10 @@ const SyncManager = () => {
               Connect
             </button>
             <p className="connect-hint">
-              Deploy signaling server once, use forever. Your files never touch it.<br/><br/>
-              <strong>Setup:</strong> Deploy <code>backend/signaling_server.py</code> to Render/Railway (free tier).<br/>
-              Paste the URL above (e.g. <code>wss://intellifile-signal.onrender.com</code>).<br/>
-              Enter the same session code on your mobile app and tap "Join".<br/><br/>
+              Deploy signaling server once, use forever. Your files never touch it.<br /><br />
+              <strong>Setup:</strong> Deploy <code>backend/signaling_server.py</code> to Render/Railway (free tier).<br />
+              Paste the URL above (e.g. <code>wss://intellifile-signal.onrender.com</code>).<br />
+              Enter the same session code on your mobile app and tap "Join".<br /><br />
               <em>Privacy: The signaling server only sees session codes and WebRTC negotiation (~1 KB). Zero file data.</em>
             </p>
           </div>

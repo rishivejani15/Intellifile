@@ -17,6 +17,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
 import 'package:permission_handler/permission_handler.dart';
 import 'package:external_path/external_path.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'checksum_engine.dart';
 import 'merkle_tree.dart';
@@ -26,6 +27,9 @@ import 'sync_protocol.dart';
 import 'mdns_browser.dart';
 import 'webrtc_sync_transport.dart';
 import 'ws_sync_transport.dart';
+
+Future<Map<String, String>> _buildMerkleIsolate(String folder) =>
+    buildMerkleTree(folder);
 
 // ─── Sync state exposed to UI ───────────────────────────────────────────────
 
@@ -81,8 +85,10 @@ class SyncManager extends ChangeNotifier {
   // Pending changes from PC awaiting user approval
   final List<PendingChange> _pendingChanges = [];
 
-  // Pending local changes awaiting PC approval (tracked for UI feedback)
-  final Set<String> _awaitingPcApproval = {};
+  // Pending local changes awaiting PC approval — maps filepath → change metadata
+  // ('local_only'|'modified'|'deleted') so _handleSyncApproved knows what to send.
+  final Map<String, _PendingApproval> _awaitingPcApproval = {};
+  final Set<String> _locallyRemovedFiles = {};
 
   SyncStatus get status => _status;
   String get statusMessage => _statusMessage;
@@ -94,6 +100,8 @@ class SyncManager extends ChangeNotifier {
   List<PendingChange> get pendingChanges => List.unmodifiable(_pendingChanges);
   bool get hasPendingChanges => _pendingChanges.isNotEmpty;
   int get pendingChangeCount => _pendingChanges.length;
+
+  void markLocallyRemoved(String relPath) => _locallyRemovedFiles.add(relPath);
 
   // File watcher
   Timer? _watchTimer;
@@ -108,7 +116,12 @@ class SyncManager extends ChangeNotifier {
   Future<void> init() async {
     if (Platform.isAndroid) {
       // Request permissions for public storage access
-      await [Permission.storage, Permission.manageExternalStorage].request();
+      final status = await Permission.storage.request();
+      if (!status.isGranted) {
+        debugPrint(
+          '[sync] WARNING: storage permission denied - writes may fail and show no dialog',
+        );
+      }
 
       final downloadPath = await ExternalPath.getExternalStoragePublicDirectory(
         ExternalPath.DIRECTORY_DOWNLOAD,
@@ -120,6 +133,9 @@ class SyncManager extends ChangeNotifier {
     }
 
     await Directory(_syncFolder).create(recursive: true);
+    if (!await Directory(_syncFolder).exists()) {
+      throw Exception('Sync folder could not be created at $_syncFolder');
+    }
     debugPrint('[sync-proof] Sync Folder Absolute Path: $_syncFolder');
 
     await _rebindTransport(WsSyncTransport(onMessage: _handleRawMessage));
@@ -137,6 +153,19 @@ class SyncManager extends ChangeNotifier {
     });
 
     await _mdns.start();
+
+    // Load saved remote settings
+    final prefs = await SharedPreferences.getInstance();
+    final signalingUrl = prefs.getString('remote_signaling_url');
+    final sessionId = prefs.getString('remote_session_id');
+    final isInitiator = prefs.getBool('remote_is_initiator');
+
+    if (signalingUrl != null && sessionId != null && isInitiator != null) {
+      _addLog('Found saved remote connection. Auto-connecting...');
+      connectRemotely(signalingUrl, sessionId, isInitiator).catchError((e) {
+        debugPrint('[sync-error] Auto-connect failed: $e');
+      });
+    }
 
     // Start local file watcher (poll every 3 seconds)
     _startLocalWatcher();
@@ -162,10 +191,14 @@ class SyncManager extends ChangeNotifier {
     String sessionId,
     bool isInitiator,
   ) async {
+    // Save settings so we can auto-reconnect later
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('remote_signaling_url', signalingUri);
+    await prefs.setString('remote_session_id', sessionId);
+    await prefs.setBool('remote_is_initiator', isInitiator);
+
     _connectionProfile = _ConnectionProfile.remote;
-    await _rebindTransport(
-      WebRtcSyncTransport(onMessage: _handleRawMessage),
-    );
+    await _rebindTransport(WebRtcSyncTransport(onMessage: _handleRawMessage));
 
     final signalingHost = Uri.tryParse(signalingUri)?.host;
     final hostDisplay = (signalingHost == null || signalingHost.isEmpty)
@@ -243,9 +276,9 @@ class SyncManager extends ChangeNotifier {
       debugPrint('[sync-debug] Error in queue: $e\n$stack');
     } finally {
       // Refresh tree so watcher doesn't think incoming syncs are local edits
-      _lastLocalTree = await buildMerkleTree(_syncFolder);
+      _lastLocalTree = await compute(_buildMerkleIsolate, _syncFolder);
       debugPrint(
-        '[sync-debug] post-queue _lastLocalTree rebuilt. Keys: ${_lastLocalTree.keys.toList()}',
+        '[watcher] tree rebuilt in isolate, root=${_lastLocalTree['__root__']?.substring(0, 8)}',
       );
       _isProcessingSync = false;
       _isProcessingQueue = false;
@@ -300,6 +333,10 @@ class SyncManager extends ChangeNotifier {
   }
 
   Future<void> _handleHandshake(HandshakeMessage msg) async {
+    if (!(_connection?.isConnected ?? false)) {
+      debugPrint('[handshake] WARNING: not connected, skipping handshake');
+      return;
+    }
     _setStatus(SyncStatus.syncing, 'Exchanging file state...');
 
     // Build our local state
@@ -323,8 +360,16 @@ class SyncManager extends ChangeNotifier {
       'block_checksums': serializedChecksums,
     });
 
+    final rootHash = localTree['__root__']?.toString();
+    final rootShort = rootHash == null
+        ? 'null'
+        : rootHash.substring(0, rootHash.length < 8 ? rootHash.length : 8);
+    debugPrint(
+      '[handshake] sent to PC: ${localTree.length - 1} file(s), root=$rootShort',
+    );
+
     _lastLocalTree = localTree;
-    _addLog('Handshake sent to PC');
+    _addLog('Handshake response sent to PC');
   }
 
   Future<void> _handleDelta(DeltaMessage msg) async {
@@ -334,13 +379,18 @@ class SyncManager extends ChangeNotifier {
       final localPath = p.join(_syncFolder, msg.filepath);
 
       if (msg.change == 'deleted') {
-        // USER REQUEST: Disable all physical deletion
-        _addLog('Ignored remote delete info for: ${msg.filepath}');
+        // PC says this file was deleted — remove it locally too
+        final file = File(localPath);
+        if (await file.exists()) {
+          await file.delete();
+          _addLog('Deleted (via delta): ${msg.filepath}');
+          debugPrint('[sync-proof] FILE DELETED AT: $localPath');
+        }
       } else {
         // Create parent directories
         await Directory(p.dirname(localPath)).create(recursive: true);
         // Apply delta
-        await applyDelta(localPath, msg.deltas);
+        await applyDelta(localPath, msg.deltas, expectedSize: msg.size);
         _addLog('Synced: ${msg.filepath}');
         debugPrint('[sync-proof] FILE PHYSICALLY SAVED TO: $localPath');
       }
@@ -366,10 +416,11 @@ class SyncManager extends ChangeNotifier {
       final localPath = p.join(_syncFolder, msg.filepath);
       final file = File(localPath);
       if (await file.exists()) {
-        // USER REQUEST: Disable all physical deletion
-        _addLog(
-          'Ignored PC delete request for: ${msg.filepath} (deletion disabled)',
-        );
+        await file.delete();
+        _addLog('Deleted: ${msg.filepath}');
+        debugPrint('[sync-proof] FILE DELETED AT: $localPath');
+      } else {
+        _addLog('Delete: file already absent: ${msg.filepath}');
       }
 
       final vc = await VectorClockStore.loadClock(msg.filepath);
@@ -394,7 +445,10 @@ class SyncManager extends ChangeNotifier {
       }
 
       final deltas = await computeDelta(localPath, msg.blockChecksums);
+      final fileSize = await File(localPath).length();
       final vc = await VectorClockStore.loadClock(msg.filepath);
+
+      debugPrint('[delta] sending ${msg.filepath} size=${fileSize}b');
 
       await _connection?.send({
         'type': 'delta',
@@ -402,6 +456,7 @@ class SyncManager extends ChangeNotifier {
         'deltas': deltas.map((d) => d.toJson()).toList(),
         'clock': vc.toJson(),
         'change': 'modified',
+        'size': fileSize,
       });
 
       _pendingSyncs++;
@@ -446,32 +501,46 @@ class SyncManager extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// PC approved our local change — now send the actual delta.
+  /// PC approved our local change — now send the actual delta (or delete).
   Future<void> _handleSyncApproved(SyncApprovedMessage msg) async {
     final filepath = msg.filepath;
-    _awaitingPcApproval.remove(filepath);
+    final pendingChange = _awaitingPcApproval.remove(filepath);
+    final pendingChangeType = pendingChange?.changeType;
 
     try {
       final localPath = p.join(_syncFolder, filepath);
+      final vc = await VectorClockStore.loadClock(filepath);
 
-      if (!await File(localPath).exists()) {
-        debugPrint('[sync] Approved file no longer exists: $filepath');
+      // If this was a deletion, or the file simply no longer exists, send delete
+      if (pendingChangeType == 'deleted' || !await File(localPath).exists()) {
+        vc.tick();
+        await VectorClockStore.saveClock(filepath, vc);
+        await _connection?.send({
+          'type': 'delete',
+          'filepath': filepath,
+          'clock': vc.toJson(),
+        });
+        _pendingSyncs++;
+        _addLog('Sent delete to PC: $filepath');
+        notifyListeners();
         return;
       }
 
-      // Tick vector clock
-      final vc = await VectorClockStore.loadClock(filepath);
+      // Otherwise send the full delta
       vc.tick();
       await VectorClockStore.saveClock(filepath, vc);
 
-      // Compute and send delta
       final deltas = await computeDelta(localPath, {});
+      final fileSize = await File(localPath).length();
+
+      debugPrint('[delta] sending ${msg.filepath} size=${fileSize}b');
       await _connection?.send({
         'type': 'delta',
         'filepath': filepath,
         'deltas': deltas.map((d) => d.toJson()).toList(),
         'clock': vc.toJson(),
         'change': 'modified',
+        'size': fileSize,
       });
 
       _pendingSyncs++;
@@ -502,7 +571,10 @@ class SyncManager extends ChangeNotifier {
     if (!(_connection?.isConnected ?? false) || _isProcessingSync) return;
 
     try {
-      final currentTree = await buildMerkleTree(_syncFolder);
+      final currentTree = await compute(_buildMerkleIsolate, _syncFolder);
+      debugPrint(
+        '[watcher] tree rebuilt in isolate, root=${currentTree['__root__']?.substring(0, 8)}',
+      );
 
       if (_lastLocalTree.isEmpty) {
         _lastLocalTree = currentTree;
@@ -526,12 +598,13 @@ class SyncManager extends ChangeNotifier {
       }
 
       for (final entry in changed.entries) {
+        _awaitingPcApproval.removeWhere((_, v) => v.isExpired);
         final filepath = entry.key;
         final changeType = entry.value;
 
         // --- DOUBLE CHECK VFS INDEX OMISSION ---
         final localPath = p.join(_syncFolder, filepath);
-        if (changeType == 'deleted') {
+        if (changeType == 'remote_only') {
           if (File(localPath).existsSync()) {
             debugPrint(
               '[BUG CATCH] VFS Omission! $filepath physically exists but was omitted by tree. Skipping phantom delete.',
@@ -544,17 +617,33 @@ class SyncManager extends ChangeNotifier {
           }
         }
 
-        if (changeType == 'deleted') {
-          // USER REQUEST: Disable all physical deletion
-          _addLog('Ignored local delete for: $filepath (deletion disabled)');
-          continue;
+        if (changeType == 'remote_only') {
+          if (_locallyRemovedFiles.remove(filepath)) {
+            _lastLocalTree.remove(filepath);
+            continue;
+          }
         }
 
         // Skip if we're already waiting for PC approval on this file
-        if (_awaitingPcApproval.contains(filepath)) continue;
+        if (_awaitingPcApproval.containsKey(filepath)) continue;
+
+        // For deleted files, send change_pending immediately without
+        // trying to stat the (now-missing) file.
+        if (changeType == 'remote_only') {
+          _awaitingPcApproval[filepath] = _PendingApproval('deleted');
+          await _connection?.send({
+            'type': 'change_pending',
+            'filepath': filepath,
+            'change_type': 'deleted',
+            'file_size': 0,
+            'modified_at': DateTime.now().millisecondsSinceEpoch / 1000.0,
+          });
+          _addLog('Notified PC of local delete: $filepath');
+          continue;
+        }
 
         // Send change_pending notification to PC instead of immediate delta
-        _awaitingPcApproval.add(filepath);
+        _awaitingPcApproval[filepath] = _PendingApproval(changeType);
         await _connection?.send({
           'type': 'change_pending',
           'filepath': filepath,
@@ -682,3 +771,12 @@ class SyncManager extends ChangeNotifier {
 }
 
 enum _ConnectionProfile { lan, remote }
+
+class _PendingApproval {
+  final String changeType;
+  final DateTime sentAt;
+
+  _PendingApproval(this.changeType) : sentAt = DateTime.now();
+
+  bool get isExpired => DateTime.now().difference(sentAt).inSeconds > 30;
+}
