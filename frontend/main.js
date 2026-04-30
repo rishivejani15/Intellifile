@@ -99,6 +99,9 @@ let pyReady = false;
 let pyBuffer = '';
 let pendingRequests = new Map();  // requestId -> { resolve, timeout }
 let requestCounter = 0;
+let fileWatchers = new Map();
+let fileContents = new Map();
+let debounceTimers = new Map();
 const CHAT_BACKEND_URL = 'http://127.0.0.1:8000';
 
 function sendToPython(payload, timeoutMs = 120000) {
@@ -117,6 +120,100 @@ function sendToPython(payload, timeoutMs = 120000) {
     pendingRequests.set(id, { resolve, timeout: timer });
     pyProcess.stdin.write(JSON.stringify(payload) + '\n');
   });
+}
+
+function startWatchingFile(filePath) {
+  if (!filePath) return;
+  
+  const normPath = filePath.toLowerCase();
+  if (fileWatchers.has(normPath)) {
+    console.log(`[Watcher] Already watching: ${filePath}`);
+    return;
+  }
+
+  try {
+    const chokidar = require('chokidar');
+    console.log(`[Watcher] Starting watch: ${filePath}`);
+
+    const watcher = chokidar.watch(filePath, {
+      awaitWriteFinish: { stabilityThreshold: 1500, pollInterval: 100 }
+    });
+
+    watcher.on('change', (p) => {
+      console.log(`[Watcher] Raw Change detected: ${p}`);
+      const normP = p.toLowerCase().replace(/\//g, '\\');
+      const extP = path.extname(p).toLowerCase();
+      const isBinaryP = ['.docx', '.xlsx'].includes(extP);
+
+      if (debounceTimers.has(normP)) {
+        clearTimeout(debounceTimers.get(normP));
+      }
+      
+      debounceTimers.set(normP, setTimeout(async () => {
+        debounceTimers.delete(normP);
+        console.log(`[Watcher] Processing debounced change for: ${p}`);
+
+        try {
+          if (!fs.existsSync(p)) return; // Handle rapid temp file deletions
+          let currentVal = isBinaryP ? fs.statSync(p).mtimeMs.toString() : fs.readFileSync(p, 'utf-8');
+          let lastVal = fileContents.get(normP) || '';
+
+          if (!isBinaryP && currentVal.trim() === lastVal.trim()) return;
+          if (isBinaryP && currentVal === lastVal) return;
+
+          console.log(`[Watcher] Change verified. Triggering version save...`);
+          // For binary files, pass path as "content" to let engine parse it
+          const result = await sendToPython({
+            action: "save_version",
+            file_path: p,
+            old_content: isBinaryP ? p : lastVal,
+            new_content: isBinaryP ? p : currentVal
+          });
+
+          if (result && result.success) {
+            fileContents.set(normP, currentVal);
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              // Sync with VersionTimeline.js which expects 'version-updated' and { filePath }
+              mainWindow.webContents.send('version-updated', {
+                filePath: p,
+                versionId: result.data?.version_id,
+                summary: result.data?.summary,
+                riskLevel: result.data?.risk_level
+              });
+            }
+          }
+        } catch (err) {
+          console.error(`[Watcher] Update error: ${err.message}`);
+        }
+      }, 2500)); // 2.5-second debounce window to outlast MS Word's save process
+    });
+
+    watcher.on('unlink', (p) => stopWatchingFile(p));
+
+    fileWatchers.set(normPath, watcher);
+    fileContents.set(normPath, '');
+    console.log(`[Watcher] ✅ Watching: ${filePath}`);
+  } catch (err) {
+    console.error(`[Watcher] Error starting watch for ${filePath}:`, err);
+  }
+}
+
+function stopWatchingFile(filePath) {
+  if (!filePath) return;
+  
+  const normPath = filePath.toLowerCase();
+  const watcher = fileWatchers.get(normPath);
+
+  if (watcher) {
+    watcher.close();
+    fileWatchers.delete(normPath);
+    fileContents.delete(normPath);
+    if (debounceTimers.has(normPath)) {
+      clearTimeout(debounceTimers.get(normPath));
+      debounceTimers.delete(normPath);
+    }
+    console.log(`[Watcher] ✅ Stopped watching: ${filePath}`);
+  }
 }
 
 function startPython() {
@@ -191,7 +288,7 @@ function startChatBackend() {
   const scriptPath = path.join(__dirname, '../backend/chat/backend/main.py');
   console.log('[ChatBackend] Starting API from:', scriptPath);
 
-  chatBackendProcess = spawn(PYTHON_EXECUTABLE, [scriptPath], {
+  chatBackendProcess = spawn(PYTHON_EXECUTABLE, ['-m', 'uvicorn', 'backend.chat.backend.main:app', '--host', '127.0.0.1', '--port', '8000'], {
     cwd: path.join(__dirname, '..'),
     stdio: ['ignore', 'pipe', 'pipe']
   });
@@ -230,6 +327,19 @@ ipcMain.handle('chat-ask', async (_event, query) => {
     return response.data;
   } catch (err) {
     return { ok: false, answer: `Chat request failed: ${err.message || 'unknown error'}` };
+  }
+});
+
+ipcMain.handle('chat-status', async () => {
+  try {
+    const response = await axios.get(`${CHAT_BACKEND_URL}/chat/status`, { timeout: 5000 });
+    return response.data;
+  } catch (err) {
+    return {
+      enabled: false,
+      mode: 'none',
+      reason: `Chat backend unavailable: ${err.message || 'unknown error'}`,
+    };
   }
 });
 
@@ -859,6 +969,17 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', () => {
+  // Stop all file watchers
+  for (const [filePath, watcher] of fileWatchers) {
+    watcher.close();
+  }
+  fileWatchers.clear();
+  fileContents.clear();
+  for (const timer of debounceTimers.values()) {
+    clearTimeout(timer);
+  }
+  debounceTimers.clear();
+
   if (pyProcess) {
     console.log('[Python] Killing engine process');
     pyProcess.kill();

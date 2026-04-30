@@ -31,6 +31,9 @@ contextBridge.exposeInMainWorld('intellifile', {
   chatAsk: (query) => {
     return ipcRenderer.invoke('chat-ask', query);
   },
+  chatStatus: () => {
+    return ipcRenderer.invoke('chat-status');
+  },
   startChatStream: (query) => {
     return ipcRenderer.send('chat-stream-start', query);
   },
