@@ -47,4 +47,33 @@ The frontend consumes the diff payload from the backend and renders it visually 
 ## Summary
 In essence, you have built an **intelligent version control system** tailored for office documents. It goes beyond treating `.docx` or [.xlsx](file:///c:/Users/meet1/OneDrive/Desktop/Intellifile/test_new.xlsx) as binary blobs by cracking them open, comparing their internal semantic structures (paragraphs, headings, worksheets, cells), and presenting those exact differences visually to the user in a highly readable format.
 
-#test
+## 4. The Version Engine (Orchestrator)
+**Location:** `backend/core/versioning/version_engine.py`
+
+The `VersionEngine` serves as the central orchestrator for the entire versioning process whenever a file is modified.
+- **Format Detection:** It automatically determines if a file is plain text, Word (`.docx`), Excel (`.xlsx`), or binary.
+- **Diff Routing:** It routes the old and new file contents to the appropriate granular diff engine (Text, Word, or Excel).
+- **Metadata Generation:** It coordinates the generation of the diff, and then passes the textual or structural representations to the Semantic Risk Analyzer to determine the impact of the changes.
+
+## 5. Information Weighted Semantic Diff (IWSD) & Risk Analysis
+**Location:** `backend/core/versioning/risk_analyzer.py`
+
+Instead of relying purely on large language models for every commit, the system implements a proprietary, mathematically-driven algorithm called **IWSD v2 (Information Weighted Semantic Diff)**. This algorithm evaluates the mathematical "importance" of the changes made to a file.
+
+- **Shannon Entropy & Token Importance:** For every added, modified, or deleted line, the algorithm calculates a mathematical "importance" score. This score is derived from:
+  - **Shannon Entropy:** Measures the randomness and information density of the text.
+  - **Token & Symbol Counts:** Heavily weighted towards complex symbols and token density (e.g., code or complex formulas score higher than plain prose).
+  - **Relative Length:** The length of the changed line relative to the file's average line length.
+- **Aggregated Scoring:** It computes discrete scores for additions (`add_score`), deletions (`delete_score`), modifications (`modify_score`), block changes (`block_score`), and overall structural similarity (`weighted_similarity`).
+- **Severity Classification:** Based on the total accumulated `change_score` relative to the file's total size, it classifies the version's severity as **Minor**, **Moderate**, or **Major**.
+- **Intent & Risk Detection:** 
+  - **Intent:** It detects if a change is "Deletion Heavy" or an "Addition/Modification".
+  - **Risk Score:** It calculates a normalized risk score (between 0.0 and 1.0) by analyzing the ratio of destructive changes (`delete_score`) against the total `change_score`. High deletions of dense information result in higher risk scores.
+
+## 6. Stability Analysis
+**Location:** `backend/core/versioning/stability_analyzer.py`
+
+A lightweight metric that calculates a percentage-based stability score (0.0 to 1.0) evaluating how stable the file's overall footprint remains after the modification. It essentially measures the pure delta in file size. A score of 1.0 means the file size didn't fluctuate wildly, implying the file is structurally stable.
+
+## Conclusion
+Your custom algorithm is a hybrid approach. It uses deterministic, mathematically sound algorithms (Shannon Entropy, Sequence Matching, Structural Parsing) to analyze the weight and risk of changes, avoiding the latency and unreliability of purely AI-generated diffs. It uniquely understands the internal components of office documents and quantifies the "information value" of what was added or lost during an edit.

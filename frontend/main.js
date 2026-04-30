@@ -40,6 +40,7 @@ let pendingRequests = new Map();
 let requestCounter = 0;
 let fileWatchers = new Map();
 let fileContents = new Map();
+let debounceTimers = new Map();
 let win = null;
 
 function sendToPython(payload, timeoutMs = 30000) {
@@ -188,43 +189,53 @@ function startWatchingFile(filePath) {
     awaitWriteFinish: { stabilityThreshold: 1500, pollInterval: 100 }
   });
 
-  watcher.on('change', async (p) => {
-    console.log(`[Watcher] Change: ${p}`);
+  watcher.on('change', (p) => {
+    console.log(`[Watcher] Raw Change detected: ${p}`);
     const normP = p.toLowerCase().replace(/\//g, '\\');
-    const extP = path.extname(p).toLowerCase();
-    const isBinaryP = ['.docx', '.xlsx'].includes(extP);
-
-    try {
-      let currentVal = isBinaryP ? fs.statSync(p).mtimeMs.toString() : fs.readFileSync(p, 'utf-8');
-      let lastVal = fileContents.get(normP) || '';
-
-      if (!isBinaryP && currentVal.trim() === lastVal.trim()) return;
-      if (isBinaryP && currentVal === lastVal) return;
-
-      console.log(`[Watcher] Change verified. Triggering version save...`);
-      // For binary files, pass path as "content" to let engine parse it
-      const result = await sendToPython({
-        action: "save_version",
-        file_path: p,
-        old_content: isBinaryP ? p : lastVal,
-        new_content: isBinaryP ? p : currentVal
-      });
-
-      if (result && result.success) {
-        fileContents.set(normP, currentVal);
-        if (win) {
-          // Sync with VersionTimeline.js which expects 'version-updated' and { filePath }
-          win.webContents.send('version-updated', {
-            filePath: p,
-            versionId: result.data.version_id,
-            summary: result.data.summary,
-            riskLevel: result.data.risk_level
-          });
-        }
-      }
-    } catch (err) {
-      console.error(`[Watcher] Update error: ${err.message}`);
+    
+    if (debounceTimers.has(normP)) {
+      clearTimeout(debounceTimers.get(normP));
     }
+    
+    debounceTimers.set(normP, setTimeout(async () => {
+      debounceTimers.delete(normP);
+      console.log(`[Watcher] Processing debounced change for: ${p}`);
+      const extP = path.extname(p).toLowerCase();
+      const isBinaryP = ['.docx', '.xlsx'].includes(extP);
+
+      try {
+        if (!fs.existsSync(p)) return; // Handle rapid temp file deletions
+        let currentVal = isBinaryP ? fs.statSync(p).mtimeMs.toString() : fs.readFileSync(p, 'utf-8');
+        let lastVal = fileContents.get(normP) || '';
+
+        if (!isBinaryP && currentVal.trim() === lastVal.trim()) return;
+        if (isBinaryP && currentVal === lastVal) return;
+
+        console.log(`[Watcher] Change verified. Triggering version save...`);
+        // For binary files, pass path as "content" to let engine parse it
+        const result = await sendToPython({
+          action: "save_version",
+          file_path: p,
+          old_content: isBinaryP ? p : lastVal,
+          new_content: isBinaryP ? p : currentVal
+        });
+
+        if (result && result.success) {
+          fileContents.set(normP, currentVal);
+          if (win) {
+            // Sync with VersionTimeline.js which expects 'version-updated' and { filePath }
+            win.webContents.send('version-updated', {
+              filePath: p,
+              versionId: result.data.version_id,
+              summary: result.data.summary,
+              riskLevel: result.data.risk_level
+            });
+          }
+        }
+      } catch (err) {
+        console.error(`[Watcher] Update error: ${err.message}`);
+      }
+    }, 2500)); // 2.5-second debounce window to outlast MS Word's save process
   });
 
   watcher.on('unlink', (p) => stopWatchingFile(p));

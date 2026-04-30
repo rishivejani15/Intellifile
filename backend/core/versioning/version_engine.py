@@ -58,9 +58,9 @@ class VersionEngine:
             diff["is_structured"] = True
             diff["format"] = "word"
             
-            # Stringify for IWSD
-            old_str = json.dumps(old_struct) if isinstance(old_struct, dict) else str(old_struct)
-            new_str = json.dumps(new_struct) if isinstance(new_struct, dict) else str(new_struct)
+            # Stringify for IWSD (must use indent to allow line-by-line diff fallback)
+            old_str = json.dumps(old_struct, indent=2) if isinstance(old_struct, dict) else str(old_struct)
+            new_str = json.dumps(new_struct, indent=2) if isinstance(new_struct, dict) else str(new_struct)
             
             semantic_results = analyze_semantics(old_str, new_str)
             semantic_data = semantic_results
@@ -80,24 +80,58 @@ class VersionEngine:
             diff["is_structured"] = True
             diff["format"] = "excel"
             
-            # Stringify for IWSD
-            old_str = json.dumps(old_struct) if isinstance(old_struct, dict) else str(old_struct)
-            new_str = json.dumps(new_struct) if isinstance(new_struct, dict) else str(new_struct)
+            # Stringify for IWSD (must use indent to allow line-by-line diff fallback)
+            old_str = json.dumps(old_struct, indent=2) if isinstance(old_struct, dict) else str(old_struct)
+            new_str = json.dumps(new_struct, indent=2) if isinstance(new_struct, dict) else str(new_struct)
             
             semantic_results = analyze_semantics(old_str, new_str)
             semantic_data = semantic_results
             intent = semantic_results["intent"]
             
-            summary = f"Excel sheet updated: {diff.get('changed_cells_count', 0)} cells changed."
+            added_sheets_count = len(diff.get('added_sheets', []))
+            removed_sheets_count = len(diff.get('removed_sheets', []))
+            affected_sheets = list(set([c['sheet'] for c in diff.get('changed_cells', [])]))
+            
+            summary_parts = []
+            if added_sheets_count > 0:
+                summary_parts.append(f"{added_sheets_count} sheet(s) added")
+            if removed_sheets_count > 0:
+                summary_parts.append(f"{removed_sheets_count} sheet(s) removed")
+                
+            modified_sheets = [s for s in affected_sheets if s not in diff.get('added_sheets', []) and s not in diff.get('removed_sheets', [])]
+            if len(modified_sheets) > 0:
+                summary_parts.append(f"{len(modified_sheets)} sheet(s) modified")
+                
+            if not summary_parts and len(affected_sheets) > 0:
+                summary_parts.append(f"{len(affected_sheets)} sheet(s) modified")
+                
+            prefix = ", ".join(summary_parts) if summary_parts else "1 sheet modified"
+            
+            if len(affected_sheets) == 1 and not diff.get('added_sheets') and not diff.get('removed_sheets'):
+                prefix = f"Sheet '{affected_sheets[0]}' modified"
+            elif len(diff.get('added_sheets', [])) == 1 and not diff.get('removed_sheets') and len(modified_sheets) == 0:
+                prefix = f"Sheet '{diff['added_sheets'][0]}' added"
+            
+            summary = f"{prefix} ({diff.get('changed_cells_count', 0)} cells changed)."
         else:
             diff = "Binary file change detected."
             semantic_data = {}
             semantic_results = {"severity": "Minor"} # Default array for later
             summary = "Binary file updated."
             intent = "Binary Update"
+            new_struct = None
+            old_str = ""
+            new_str = ""
 
         risk = semantic_results.get("severity", "Low") if format_type != "binary" else "Low"
-        stability = calculate_stability(old_content, new_content) if format_type == "text" else 0.9
+        
+        # Calculate true stability instead of hardcoding 0.9
+        if format_type == "text":
+            stability = calculate_stability(old_content, new_content)
+        elif format_type in ["word", "excel"]:
+            stability = calculate_stability(old_str, new_str)
+        else:
+            stability = 0.9
 
         return {
             "summary": summary,
@@ -106,6 +140,7 @@ class VersionEngine:
             "stability_score": stability,
             "semantic": semantic_data,
             "diff": diff,
+            "raw_structure": new_struct if format_type in ["word", "excel"] else None,
             "format": format_type
         }
 
@@ -133,7 +168,6 @@ class VersionEngine:
                             old_content = json.load(f)
                     else:
                         # If structure is missing, we must use the previous binary file path
-                        # We can find it by checking common extensions or looking for the biggest file starting with ID
                         file_dir = os.path.join(storage_root, fid)
                         for f in os.listdir(file_dir):
                             if f.startswith(last_version_id) and not f.endswith(".json"):
@@ -149,11 +183,12 @@ class VersionEngine:
             "intent": result["intent"],
             "risk_level": result["risk_level"],
             "stability_score": result["stability_score"],
-            "semantic": result["semantic"]
+            "semantic": result["semantic"],
+            "diff": result["diff"]
         }
 
-        if format_type in ["word", "excel"]:
-            metadata["structured_data"] = result["diff"]
+        if format_type in ["word", "excel"] and result.get("raw_structure"):
+            metadata["structured_data"] = result["raw_structure"]
 
         version_id = save_snapshot(file_path, new_content, metadata)
         metadata["version_id"] = version_id
