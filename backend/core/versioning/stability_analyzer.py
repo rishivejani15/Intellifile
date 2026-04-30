@@ -10,11 +10,14 @@ def calculate_stability(old_content: str, new_content: str) -> float:
     if old_len == 0:
         return 1.0
 
-    delta = abs(new_len - old_len) / old_len
-
-    stability = 1 - delta
+    max_len = max(old_len, new_len)
+    if max_len == 0:
+        return 1.0
+        
+    delta = abs(new_len - old_len)
+    stability = 1.0 - (delta / float(max_len))
 
     # Clamp between 0 and 1
     stability = max(0.0, min(stability, 1.0))
 
-    return round(stability, 3)
+    return float(round(stability, 3))

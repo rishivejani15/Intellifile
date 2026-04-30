@@ -16,13 +16,13 @@ if _BACKEND_DIR not in sys.path:
     sys.path.insert(0, _BACKEND_DIR)
 
 from core.faiss_manager import invalidate_cache, load_index
-from chat_store import get_chat_index_size, reset_chat_store
+from .chat_store import get_chat_index_size, reset_chat_store
 from core.versioning.rollback_manager import restore_version
 from core.versioning.snapshot_manager import compare_versions, list_versions
 from core.versioning.version_engine import VersionEngine
 from indexing.single_file_ingest import reset_canonical_index_store
-from llm import chat, ingest_file, init_models, is_chat_model_loaded
-from models import ChatQueryRequest, ChatResponse, IngestResponse
+from .llm import chat, ingest_file, init_models, is_chat_model_loaded, get_chat_status
+from .models import ChatQueryRequest, ChatResponse, IngestResponse
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("IntelliFile")
@@ -68,12 +68,21 @@ async def startup_event():
 async def health_check():
     idx = load_index()
     index_size = idx.ntotal if idx is not None else 0
+    chat_status = get_chat_status()
     return {
         "status": "ok",
         "chat_model": "loaded" if is_chat_model_loaded() else "not_loaded",
+        "chat_enabled": bool(chat_status.get("enabled")),
+        "chat_mode": chat_status.get("mode"),
+        "chat_lock_reason": chat_status.get("reason", ""),
         "faiss_index_size": int(index_size),
         "chat_index_size": int(get_chat_index_size()),
     }
+
+
+@app.get("/chat/status")
+async def chat_status():
+    return get_chat_status()
 
 
 @app.post("/download_model")

@@ -44,6 +44,27 @@ def compare_excel_structures(old_struct, new_struct):
                         "old_value": None,
                         "new_value": data["value"]
                     })
+        else:
+            # Sheet was completely removed, log all its cells as removed
+            old_sheet = old_struct[sheet]
+            for coord, data in old_sheet.items():
+                changed_cells.append({
+                    "sheet": sheet,
+                    "cell": coord,
+                    "old_value": data["value"],
+                    "new_value": None
+                })
+                
+    # Check for cells in newly added sheets
+    for sheet in added_sheets:
+        new_sheet = new_struct[sheet]
+        for coord, data in new_sheet.items():
+            changed_cells.append({
+                "sheet": sheet,
+                "cell": coord,
+                "old_value": None,
+                "new_value": data["value"]
+            })
 
     return {
         "removed_sheets": list(removed_sheets),

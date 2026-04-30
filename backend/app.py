@@ -6,9 +6,8 @@ import os
 import threading
 import time
 
-# Import backend functions
-sys.path.append('backend')
-from llm import ingest_file, chat
+# Import backend chat functions
+from chat.backend.llm import ingest_file, chat
 
 class IntelliFileApp:
     def __init__(self, root):
@@ -26,7 +25,19 @@ class IntelliFileApp:
     def start_backend(self):
         backend_path = os.path.join(os.getcwd(), "backend")
         python_exe = sys.executable
-        self.backend_process = subprocess.Popen([python_exe, "-m", "uvicorn", "main:app", "--host", "127.0.0.1", "--port", "8001"], cwd=backend_path)
+        self.backend_process = subprocess.Popen(
+            [
+                python_exe,
+                "-m",
+                "uvicorn",
+                "chat.backend.main:app",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                "8001",
+            ],
+            cwd=backend_path,
+        )
 
     def create_widgets(self):
         # Menu

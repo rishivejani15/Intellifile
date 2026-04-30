@@ -2,78 +2,29 @@ import json
 import sys
 import os
 
-# Ensure backend/ is on sys.path so `core.*` imports work
+# Ensure backend/ is on sys.path
 _BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
 if _BACKEND_DIR not in sys.path:
     sys.path.insert(0, _BACKEND_DIR)
 
-sys.stderr.write("[engine] Starting up...\n")
+sys.stderr.write("[engine] Starting resilient process...\n")
 sys.stderr.flush()
 
-try:
-    sys.stderr.write("[engine] Loading model...\n")
-    sys.stderr.flush()
-    from core.search import semantic_search
-    from core.faiss_manager import load_index, invalidate_cache
-    sys.stderr.write("[engine] Model loaded OK\n")
-    sys.stderr.flush()
-except Exception as e:
-    sys.stderr.write(f"[engine] FATAL import error: {e}\n")
-    sys.stderr.flush()
-    sys.exit(1)
+# Global engine instances (lazy loaded)
+_version_engine = None
 
-
-def _run_indexing(req_id=None):
-    """
-    Run the full index-then-embed pipeline for the whole device.
-    Streams progress lines to stdout so the frontend can show live updates.
-    """
-    import time
-    import json as _json
-    from indexing.index_files import index_files_incremental
-    from indexing.update_faiss import update_faiss
-
-    pipeline_start = time.perf_counter()
-
-    def send_progress(phase, detail="", pct=None):
-        elapsed = time.perf_counter() - pipeline_start
-        msg = {
-            "_id": req_id,
-            "type": "progress",
-            "phase": phase,
-            "detail": detail,
-            "elapsed": round(elapsed, 1),
-        }
-        if pct is not None:
-            msg["pct"] = pct
-        print(_json.dumps(msg), flush=True)
-
-    send_progress("scan", "Scanning drives for files…")
-    affected = index_files_incremental(progress_cb=send_progress)
-
-    send_progress("embed", f"Embedding {len(affected)} chunks…")
-    update_faiss(affected, progress_cb=send_progress)
-
-    # After building new vectors, make search pick them up
-    invalidate_cache()
-    load_index(force_reload=True)
-
-    total_secs = time.perf_counter() - pipeline_start
-    mins, secs = divmod(int(total_secs), 60)
-    time_str = f"{mins}m {secs}s" if mins else f"{secs}s"
-    send_progress("done", f"Indexing complete in {time_str}", pct=100)
-
-    # ── Auto-run a second pass to catch any files missed during extraction ──
-    send_progress("scan", "Running verification pass…")
-    affected2 = index_files_incremental(progress_cb=send_progress)
-    if affected2:
-        send_progress("embed", f"Embedding {len(affected2)} new chunks…")
-        update_faiss(affected2, progress_cb=send_progress)
-        invalidate_cache()
-        load_index(force_reload=True)
-        extra_secs = time.perf_counter() - pipeline_start - total_secs
-        send_progress("done", f"Verification pass done (+{int(extra_secs)}s)", pct=100)
-
+def get_version_engine():
+    global _version_engine
+    if _version_engine is None:
+        try:
+            from core.versioning.version_engine import VersionEngine
+            _version_engine = VersionEngine()
+        except Exception as e:
+            sys.stderr.write(f"[engine] VersionEngine Lazy Init Error: {e}\n")
+            class MockVE:
+                def process_and_save(self, *args): return {"error": f"Init failed: {e}"}
+            _version_engine = MockVE()
+    return _version_engine
 
 print("IntelliFile Python Engine Ready", flush=True)
 
@@ -85,26 +36,138 @@ while True:
 
         request = json.loads(line.strip())
         action = request.get("action")
-        req_id = request.get("_id")       # echo back for request multiplexing
+        req_id = request.get("_id")
 
         if action == "search":
-            query = request.get("query", "").strip()
-            results = semantic_search(query)
-            response = {
-                "_id": req_id,
-                "results": [
-                    {"path": path, "score": round(float(score), 3)}
-                    for path, score in results
-                ]
-            }
-            print(json.dumps(response), flush=True)
+            try:
+                from core.search import semantic_search
+                query = request.get("query", "").strip()
+                results = semantic_search(query)
+                response = {
+                    "_id": req_id,
+                    "results": [{"path": p, "score": round(float(s), 3)} for p, s in results]
+                }
+                print(json.dumps(response), flush=True)
+            except Exception as e:
+                print(json.dumps({"_id": req_id, "error": f"Search failed: {e}"}), flush=True)
 
         elif action == "index":
-            _run_indexing(req_id=req_id)
-            print(json.dumps({"_id": req_id, "status": "indexed", "scope": "device"}), flush=True)
+            try:
+                folder = request.get("folder", "").strip()
+                from indexing.index_files import index_files_incremental
+                from indexing.update_faiss import update_faiss
+                from core.faiss_manager import load_index, invalidate_cache
+                
+                affected = index_files_incremental(folder)
+                update_faiss(affected)
+                invalidate_cache()
+                load_index(force_reload=True)
+                print(json.dumps({"_id": req_id, "status": "indexed", "folder": folder}), flush=True)
+            except Exception as e:
+                print(json.dumps({"_id": req_id, "error": f"Indexing failed: {e}"}), flush=True)
+
+        elif action == "save_version":
+            file_path = request.get("file_path")
+            old_content = request.get("old_content", "")
+            new_content = request.get("new_content", "")
+            
+            # Strict Deduplication: Prevent double-entries from Chokidar overlapping with internal saves
+            from core.versioning.snapshot_manager import get_last_version, compute_file_hash
+            import os
+            ext = os.path.splitext(file_path)[1].lower() if file_path else ""
+            is_binary = ext in [".docx", ".xlsx", ".pdf", ".zip"]
+            
+            try:
+                last_version = get_last_version(file_path)
+                current_hash = compute_file_hash(new_content if not is_binary else file_path, is_binary)
+                
+                if last_version and last_version.get("file_hash") == current_hash:
+                    # File is identical to the very last snapshot. Silently ignore duplicate.
+                    print(json.dumps({"_id": req_id, "success": True, "data": last_version}), flush=True)
+                    continue
+            except Exception:
+                pass
+                
+            ve = get_version_engine()
+            result = ve.process_and_save(file_path, old_content, new_content)
+            print(json.dumps({"_id": req_id, "success": True, "data": result}), flush=True)
+
+        elif action == "get_versions":
+            try:
+                from core.versioning.snapshot_manager import list_versions, get_last_version, compute_file_hash, get_version_content
+                import os
+                file_path = request.get("file_path")
+                
+                # Auto-sync external changes
+                if file_path and os.path.exists(file_path):
+                    ext = os.path.splitext(file_path)[1].lower()
+                    is_binary = ext in [".docx", ".xlsx", ".pdf", ".zip"]
+                    current_content = None
+                    if is_binary:
+                        current_hash = compute_file_hash(file_path, True)
+                    else:
+                        with open(file_path, "r", encoding="utf-8") as f:
+                            current_content = f.read()
+                        current_hash = compute_file_hash(current_content, False)
+                        
+                    last_version = get_last_version(file_path)
+                    
+                    if not last_version or last_version.get("file_hash") != current_hash:
+                        # Skip creating a meaningless version if it's a freshly created 0-byte file
+                        if not last_version and os.path.getsize(file_path) == 0:
+                            pass
+                        else:
+                            ve = get_version_engine()
+                            old_content = None
+                            if last_version:
+                                try:
+                                    old_content = get_version_content(file_path, last_version["version_id"])
+                                except Exception:
+                                    pass
+                                    
+                            # Prevent text diff engine crashes from NoneType by defaulting to empty string
+                            if not is_binary and old_content is None:
+                                old_content = ""
+                                    
+                            if is_binary:
+                                ve.process_and_save(file_path, old_content, file_path)
+                            else:
+                                ve.process_and_save(file_path, old_content, current_content)
+
+                versions = list_versions(file_path)
+                print(json.dumps({"_id": req_id, "success": True, "data": versions}), flush=True)
+            except Exception as e:
+                import traceback
+                print(json.dumps({"_id": req_id, "error": str(e) + " " + traceback.format_exc()}), flush=True)
+
+        elif action == "restore_version":
+            try:
+                from core.versioning.rollback_manager import restore_version
+                file_path = request.get("file_path")
+                version_id = request.get("version_id")
+                result = restore_version(file_path, version_id)
+                result["_id"] = req_id
+                print(json.dumps(result), flush=True)
+            except Exception as e:
+                print(json.dumps({"_id": req_id, "error": str(e)}), flush=True)
+            
+        elif action == "compare_versions":
+            try:
+                from core.versioning.snapshot_manager import compare_versions
+                file_path = request.get("file_path")
+                version_a = request.get("version_a")
+                version_b = request.get("version_b")
+                result = compare_versions(file_path, version_a, version_b)
+                print(json.dumps({"_id": req_id, "success": True, "data": result}), flush=True)
+            except Exception as e:
+                print(json.dumps({"_id": req_id, "error": str(e)}), flush=True)
 
         else:
             print(json.dumps({"_id": req_id, "error": "Unknown action"}), flush=True)
 
     except Exception as e:
-        print(json.dumps({"_id": req_id if 'req_id' in dir() else None, "error": str(e)}), flush=True)
+        # Global catch-all to prevent loop crash
+        try:
+            print(json.dumps({"_id": req_id if 'req_id' in locals() else None, "error": f"Critical engine error: {e}"}), flush=True)
+        except:
+            pass

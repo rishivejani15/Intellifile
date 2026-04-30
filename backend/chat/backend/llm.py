@@ -6,10 +6,12 @@ import time
 import logging
 from typing import List
 
+LLAMA_IMPORT_ERROR = ""
 try:
     from llama_cpp import Llama
 except Exception as e:
     print(f"Failed to import llama_cpp: {e}")
+    LLAMA_IMPORT_ERROR = str(e)
     Llama = None
 
 # Ensure backend root is available for canonical core/indexing imports.
@@ -17,12 +19,14 @@ _BACKEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..
 if _BACKEND_DIR not in sys.path:
     sys.path.insert(0, _BACKEND_DIR)
 
-from chat_store import ingest_chat_file, search_chat_chunks
+from .chat_store import ingest_chat_file, search_chat_chunks
 
 logger = logging.getLogger("IntelliFile.LLM")
 
 chat_model = None
 LLAMA_CPP_ENDPOINT = "http://127.0.0.1:8080/v1/chat/completions"
+CHAT_LOCK_REASON = ""
+CHAT_MODE = "none"
 
 # Global Chat State
 _chat_history = [] # List of {"role": "role", "content": "text"}
@@ -32,8 +36,41 @@ def reset_chat_history():
     _chat_history = []
     print("DEBUG: Chat history cleared.")
 
+
+def _detect_build_tools_missing_reason() -> str:
+    """Return a human-readable lock reason when local llama backend cannot be used."""
+    if not LLAMA_IMPORT_ERROR:
+        return ""
+
+    err = LLAMA_IMPORT_ERROR.lower()
+    build_tool_markers = [
+        "microsoft visual c++",
+        "build tools",
+        "cl.exe",
+        "unable to find vcvarsall",
+        "subprocess-exited-with-error",
+        "could not build wheels",
+    ]
+
+    # If import failure likely indicates missing compiler chain, lock with explicit guidance.
+    if any(marker in err for marker in build_tool_markers):
+        return "Chat is disabled: Visual Studio C++ Build Tools are required for local model support."
+
+    # Generic import failure fallback.
+    return f"Chat is disabled: llama-cpp failed to load ({LLAMA_IMPORT_ERROR})."
+
+
+def get_chat_status():
+    enabled = chat_model is not None
+    return {
+        "enabled": enabled,
+        "mode": CHAT_MODE,
+        "reason": "" if enabled else CHAT_LOCK_REASON,
+        "llama_import_error": LLAMA_IMPORT_ERROR,
+    }
+
 def init_models():
-    global chat_model
+    global chat_model, CHAT_LOCK_REASON, CHAT_MODE
     if chat_model is not None:
         return
 
@@ -43,6 +80,8 @@ def init_models():
         if response.status_code == 200:
             print("Chat model loaded successfully")
             chat_model = "server"  # Indicate server is used
+            CHAT_MODE = "server"
+            CHAT_LOCK_REASON = ""
             return
     except:
         pass
@@ -51,6 +90,10 @@ def init_models():
     if Llama is None:
         print("llama_cpp is not installed. Local model loading disabled; server mode only.")
         chat_model = None
+        CHAT_MODE = "none"
+        CHAT_LOCK_REASON = _detect_build_tools_missing_reason() or (
+            "Chat is disabled: no local model backend available and remote model server is not running."
+        )
         return
 
     models_dir = os.path.join(_BACKEND_DIR,"models")
@@ -69,6 +112,8 @@ def init_models():
     else:
         print("Chat model not found! Please place 'qwen2.5-1.5b-instruct-q4_k_m.gguf' in the models folder.")
         chat_model = None
+        CHAT_MODE = "none"
+        CHAT_LOCK_REASON = "Chat is disabled: no local GGUF model file found in backend/models."
         return
 
     print(f"Loading {model_name}...")
@@ -89,6 +134,8 @@ def init_models():
         n_gpu_layers=-1,
         verbose=False
     )
+    CHAT_MODE = "local"
+    CHAT_LOCK_REASON = ""
     print(f"{model_name} loaded successfully (Using {threads} threads)")
 
 
@@ -162,7 +209,7 @@ def chat(query, chunks=None, stream=False):
     print(f"\n[DEBUG] Starting Chat Process at {time.strftime('%H:%M:%S')}")
 
     if chat_model is None:
-        msg = "LLM model not available."
+        msg = CHAT_LOCK_REASON or "LLM model not available."
         if stream:
             yield msg
             return
