@@ -47,18 +47,6 @@ function App() {
         <div className="main-content">
           <div className="explorer-view">
             <div className="explorer-main">
-              <div className="explorer-controls" style={{ padding: '10px', background: '#252526', borderBottom: '1px solid #333' }}>
-                <button
-                  onClick={handleOpenFile}
-                  disabled={!selectedFile}
-                  style={{ padding: '6px 12px', background: '#0e639c', color: 'white', border: 'none', borderRadius: '4px', cursor: selectedFile ? 'pointer' : 'not-allowed' }}
-                >
-                  Open in External Editor
-                </button>
-                <span style={{ marginLeft: '12px', color: '#888', fontSize: '0.8rem' }}>
-                  {selectedFile ? 'Saving in external editor will trigger AI versioning automatically.' : 'Select a file to edit.'}
-                </span>
-              </div>
               <FileExplorer
                 onFileSelect={handleFileSelect}
                 selectedFiles={{}}

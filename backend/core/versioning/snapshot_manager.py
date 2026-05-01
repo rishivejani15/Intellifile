@@ -13,6 +13,13 @@ PROJECT_ROOT = os.path.abspath(os.path.join(CURRENT_DIR, "../../../"))
 BASE_VERSION_PATH = os.path.join(PROJECT_ROOT, "backend", "data", "storage", "versions")
 INDEX_VERSION_PATH = os.path.join(PROJECT_ROOT, "backend", "data", "storage", "version_index")
 
+# Clear transient cache on startup to reclaim space
+CACHE_PATH = os.path.join(PROJECT_ROOT, "backend", "data", "storage", "cache")
+if os.path.exists(CACHE_PATH):
+    import shutil
+    try: shutil.rmtree(CACHE_PATH); os.makedirs(CACHE_PATH)
+    except: pass
+
 def get_file_id(file_path: str) -> str:
     # Use realpath to resolve symlinks and absolute paths correctly on Windows
     norm_path = os.path.normpath(os.path.realpath(file_path)).lower()
@@ -216,11 +223,12 @@ def save_snapshot(file_path: str, content_or_path: Any, metadata: dict, custom_t
         pass
     elif is_binary:
         from core.versioning.chunk_manager import save_file_as_chunks
-        if os.path.exists(content_or_path):
+        source_path = file_path if os.path.exists(file_path) else content_or_path
+        
+        if isinstance(source_path, str) and os.path.exists(source_path):
             # Block-Based Deduplication: Split into small pieces
-            chunk_hashes = save_file_as_chunks(content_or_path)
+            chunk_hashes = save_file_as_chunks(source_path)
             metadata["chunk_hashes"] = chunk_hashes
-            # We don't save a full 'version_file' anymore for binary
             print(f"[Storage] Lego-Block Deduplication: Saved {len(chunk_hashes)} chunks.")
         else:
             # Fallback for memory-based binary (rare)
@@ -330,8 +338,14 @@ def get_version_content(file_path: str, version_id: str):
             metadata = json.load(f)
             if "chunk_hashes" in metadata:
                 from core.versioning.chunk_manager import rebuild_file_from_chunks
-                print(f"[Storage] Rebuilding {version_id} from {len(metadata['chunk_hashes'])} chunks...")
-                rebuild_file_from_chunks(metadata["chunk_hashes"], version_file)
+                # Use a cache directory for transient rebuilds to save permanent space
+                cache_dir = os.path.join(PROJECT_ROOT, "backend", "data", "storage", "cache")
+                os.makedirs(cache_dir, exist_ok=True)
+                version_file = os.path.join(cache_dir, f"{version_id}{ext}")
+                
+                if not os.path.exists(version_file):
+                    print(f"[Storage] Rebuilding {version_id} to cache...")
+                    rebuild_file_from_chunks(metadata["chunk_hashes"], version_file)
             else:
                 for f_name in os.listdir(file_dir):
                     if f_name.startswith(actual_id) and not f_name.endswith(".json"):
@@ -370,6 +384,15 @@ def compare_versions(file_path: str, version_a: str, version_b: str):
         # If we got dicts (structures), process_version handles them.
         # If we got strings (paths), it parses them.
         result = engine.process_version(file_path, path_a, path_b)
+
+        # Optimization: Cleanup cache files immediately after comparison
+        if "storage\\cache" in str(path_a) and os.path.exists(path_a):
+            try: os.remove(path_a)
+            except: pass
+        if "storage\\cache" in str(path_b) and os.path.exists(path_b):
+            try: os.remove(path_b)
+            except: pass
+
         return {
             "version_a": version_a,
             "version_b": version_b,

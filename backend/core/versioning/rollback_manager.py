@@ -58,22 +58,38 @@ def restore_version(file_path: str, version_timestamp: str) -> dict:
         if os.path.exists(file_path):
             import shutil
             backup_path = file_path + ".backup"
-            shutil.copy2(file_path, backup_path)
             
-            # Optimization: Hide the backup file on Windows so it doesn't clutter the UI
+            # Shield: If a hidden backup already exists, we must unhide it to overwrite it
+            if os.path.exists(backup_path):
+                try:
+                    import subprocess
+                    subprocess.run(['attrib', '-h', backup_path], capture_output=True, check=False)
+                    os.remove(backup_path) # Remove old one to be safe
+                except Exception: pass
+
             try:
+                shutil.copy2(file_path, backup_path)
+                # Optimization: Hide the backup file on Windows so it doesn't clutter the UI
                 import subprocess
                 subprocess.run(['attrib', '+h', backup_path], capture_output=True, check=False)
             except Exception:
                 pass
 
         # Restore
-        print(f"[Rollback] Restoring {version_file} to {file_path}")
-        import shutil
-        shutil.copy2(version_file, file_path)
+        print(f"[Rollback] Restoring {version_timestamp} to {file_path}")
+        if "chunk_hashes" in metadata:
+            from core.versioning.chunk_manager import rebuild_file_from_chunks
+            rebuild_file_from_chunks(metadata["chunk_hashes"], file_path)
+        else:
+            import shutil
+            shutil.copy2(version_file, file_path)
 
         restored_size = os.path.getsize(file_path)
         return {"success": True, "message": "Rollback successful", "restored_length": restored_size}
+    except PermissionError:
+        return {
+            "success": False, 
+            "error": "Access Denied: The file is currently open in another program (Word, Excel, etc.). Please close the file and try the rollback again."
+        }
     except Exception as e:
-        print(f"[Rollback] Error: {str(e)}")
         return {"success": False, "error": str(e)}

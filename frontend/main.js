@@ -197,7 +197,7 @@ function startWatchingFile(filePath) {
   const watcher = chokidar.watch(filePath, {
     persistent: true,
     ignoreInitial: true,
-    awaitWriteFinish: { stabilityThreshold: 1500, pollInterval: 100 }
+    awaitWriteFinish: { stabilityThreshold: 800, pollInterval: 100 }
   });
 
   watcher.on('change', (p) => {
@@ -223,7 +223,6 @@ function startWatchingFile(filePath) {
         if (isBinaryP && currentVal === lastVal) return;
 
         console.log(`[Watcher] Change verified. Triggering version save...`);
-        // For binary files, pass path as "content" to let engine parse it
         const result = await sendToPython({
           action: "save_version",
           file_path: p,
@@ -234,7 +233,6 @@ function startWatchingFile(filePath) {
         if (result && result.success) {
           fileContents.set(normP, currentVal);
           if (win) {
-            // Sync with VersionTimeline.js which expects 'version-updated' and { filePath }
             win.webContents.send('version-updated', {
               filePath: p,
               versionId: result.data.version_id,
@@ -246,7 +244,7 @@ function startWatchingFile(filePath) {
       } catch (err) {
         console.error(`[Watcher] Update error: ${err.message}`);
       }
-    }, 2500)); // 2.5-second debounce window to outlast MS Word's save process
+    }, 500)); // Reduced to 500ms for snappier UI response
   });
 
   watcher.on('unlink', (p) => stopWatchingFile(p));
@@ -323,7 +321,17 @@ function registerIpcHandlers() {
     try {
       const old = fs.existsSync(p) ? fs.readFileSync(p, 'utf-8') : "";
       fs.writeFileSync(p, c, 'utf-8');
-      await sendToPython({ action: "save_version", file_path: p, old_content: old, new_content: c });
+      const result = await sendToPython({ action: "save_version", file_path: p, old_content: old, new_content: c });
+      
+      // TRIGGER INSTANT UI UPDATE
+      if (result && result.success && win) {
+        win.webContents.send('version-updated', { 
+            filePath: p, 
+            versionId: result.data.version_id,
+            summary: result.data.summary,
+            riskLevel: result.data.risk_level
+        });
+      }
       return { success: true };
     } catch (e) { return { success: false, error: e.message }; }
   });

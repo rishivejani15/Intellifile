@@ -76,7 +76,7 @@ def run_smart_cleanup(file_path: str) -> dict:
                     delete_files.add(v["file"])
                 continue
             
-            # For 7 to 30 days: Currently we keep all (can be refined)
+            # For 7 to 30 days: Keep all (Can be refined in future)
             keep_files.add(v["file"])
 
         # Dependency Check: Don't delete a physical file if a KEPT version reuses it
@@ -112,6 +112,21 @@ def run_smart_cleanup(file_path: str) -> dict:
 
             os.remove(meta_path)
             deleted_count += 1
+
+        # Optimization: Clear the transient cache folder
+        cache_dir = os.path.join(PROJECT_ROOT, "backend", "data", "storage", "cache")
+        if os.path.exists(cache_dir):
+            for f in os.listdir(cache_dir):
+                try:
+                    fpath = os.path.join(cache_dir, f)
+                    freed_bytes += os.path.getsize(fpath)
+                    os.remove(fpath)
+                except: pass
+
+        # CRITICAL: Trigger Chunk Garbage Collection to free real MB
+        from core.versioning.chunk_manager import clean_orphaned_chunks
+        _, chunk_freed = clean_orphaned_chunks()
+        freed_bytes += chunk_freed
 
         return {
             "success": True, 

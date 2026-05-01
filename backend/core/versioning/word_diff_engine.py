@@ -23,6 +23,14 @@ def compare_word_structures(old_struct, new_struct):
                 old_text = old_paras[i]
                 new_text = new_paras[j]
                 
+                # SHIELD: Ignore legacy placeholders from old versions
+                if old_text == "[EMPTY LINE]" and new_text:
+                    para_diff.append({"type": "added", "text": new_text, "words_added": len(new_text.split())})
+                    continue
+                if old_text == "" and i == 0 and new_text:
+                    para_diff.append({"type": "added", "text": new_text, "words_added": len(new_text.split())})
+                    continue
+
                 # Word-level sub-diff
                 old_words = old_text.split()
                 new_words = new_text.split()

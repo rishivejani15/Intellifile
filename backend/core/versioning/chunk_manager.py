@@ -53,9 +53,44 @@ def rebuild_file_from_chunks(chunk_hashes: list, output_path: str):
             with open(chunk_path, "rb") as cf:
                 f.write(cf.read())
 
-def get_chunk_storage_stats():
-    """Returns total size of all chunks in MB."""
-    if not os.path.exists(CHUNK_STORE_PATH):
-        return 0
-    total_bytes = sum(os.path.getsize(os.path.join(CHUNK_STORE_PATH, f)) for f in os.listdir(CHUNK_STORE_PATH))
-    return round(total_bytes / (1024 * 1024), 2)
+def clean_orphaned_chunks():
+    """
+    Scans all version metadata across all files to find which chunks are still used.
+    Deletes any chunks that are no longer referenced.
+    """
+    from core.versioning.snapshot_manager import BASE_VERSION_PATH
+    import json
+    
+    used_chunks = set()
+    
+    # 1. Scan all folders in versions/
+    if os.path.exists(BASE_VERSION_PATH):
+        for file_id in os.listdir(BASE_VERSION_PATH):
+            file_dir = os.path.join(BASE_VERSION_PATH, file_id)
+            if not os.path.isdir(file_dir): continue
+            
+            # 2. Scan all .json files in each folder
+            for f in os.listdir(file_dir):
+                if f.endswith(".json") and not f.endswith(".structure.json"):
+                    try:
+                        with open(os.path.join(file_dir, f), "r", encoding="utf-8") as meta_f:
+                            data = json.load(meta_f)
+                            chunks = data.get("chunk_hashes", [])
+                            for ch in chunks:
+                                used_chunks.add(ch)
+                    except: continue
+
+    # 3. Delete chunks that are not used
+    deleted_count = 0
+    freed_bytes = 0
+    if os.path.exists(CHUNK_STORE_PATH):
+        for ch_file in os.listdir(CHUNK_STORE_PATH):
+            if ch_file not in used_chunks:
+                try:
+                    ch_path = os.path.join(CHUNK_STORE_PATH, ch_file)
+                    freed_bytes += os.path.getsize(ch_path)
+                    os.remove(ch_path)
+                    deleted_count += 1
+                except: continue
+                
+    return deleted_count, freed_bytes

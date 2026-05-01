@@ -21,16 +21,22 @@ def extract_word_structure(file_path):
         tables = []
 
         # 1. Extract Normal Paragraphs
-        for para in doc.paragraphs:
+        for i, para in enumerate(doc.paragraphs):
             text = para.text
-            # ... [Image/Break detection logic already here] ...
-            if not text.strip():
+            is_empty = not text.strip()
+            
+            if is_empty:
                 # [Keeping the object-aware logic we added earlier]
                 contains_image = any('w:drawing' in r.element.xml or 'w:pict' in r.element.xml for r in para.runs)
                 contains_break = any('w:br' in r.element.xml or 'w:lastRenderedPageBreak' in r.element.xml for r in para.runs)
-                if contains_image: text = "[IMAGE / GRAPHIC]"
-                elif contains_break: text = "[PAGE BREAK / SECTION]"
-                elif not text: text = "[EMPTY LINE]"
+                
+                if contains_image: 
+                    text = "[IMAGE / GRAPHIC]"
+                elif contains_break: 
+                    text = "[PAGE BREAK / SECTION]"
+                else:
+                    # TRUE EMPTY LINE: Skip it to prevent cluttering the timeline
+                    continue
 
             if para.style.name.startswith("Heading"):
                 headings.append(text)

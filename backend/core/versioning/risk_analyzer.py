@@ -209,10 +209,19 @@ def analyze_semantics(old_content: str, new_content: str, diff_text: str = "") -
     change_score = add_score + delete_score + modify_score + weighted_similarity + block_score + size_score
 
     # Intent Detection
+    total_removed = len(removed_lines_list)
+    total_added = len(added_lines_list)
     if sensitive_deletion_detected:
         intent = "Sensitive Data Deletion"
-    elif delete_score > add_score:
-        intent = "Deletion Heavy"
+    elif total_removed > total_added:
+        if total_removed > total_lines * 0.5:
+            intent = "Heavy Deletion"
+        elif total_removed > total_lines * 0.2:
+            intent = "Moderate Deletion"
+        else:
+            intent = "Light Deletion"
+    elif total_added > total_removed:
+        intent = "Addition/Modification"
     else:
         intent = "Addition/Modification"
         
@@ -220,7 +229,10 @@ def analyze_semantics(old_content: str, new_content: str, diff_text: str = "") -
     major_threshold = total_lines * 20
     moderate_threshold = total_lines * 10
     
-    if change_score > major_threshold:
+    if sensitive_deletion_detected:
+        # SECURITY OVERRIDE: If sensitive data is gone, it's always Major Risk
+        severity = "Major"
+    elif change_score > major_threshold:
         severity = "Major"
     elif change_score > moderate_threshold:
         severity = "Moderate"
