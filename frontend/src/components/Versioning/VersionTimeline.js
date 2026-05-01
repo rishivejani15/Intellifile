@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import VersionCard from './VersionCard';
 import VersionDiffViewer from './VersionDiffViewer';
-import { getVersions } from '../../services/versionService';
+import { getVersions, runSmartCleanup } from '../../services/versionService';
 import './versioning.css';
 
 const VersionTimeline = ({ filePath }) => {
@@ -106,13 +106,46 @@ const VersionTimeline = ({ filePath }) => {
         setCompareB(null);
     };
 
+    const handleCleanup = async () => {
+        const confirmed = window.confirm(
+            "IntelliFile Smart Cleanup\n\n" +
+            "This will apply the following retention policy to save disk space:\n" +
+            "• Keep ALL versions for the last 7 days.\n" +
+            "• Keep ONLY 1 version per day for versions older than 30 days.\n" +
+            "• DELETE all versions older than 1 year.\n\n" +
+            "Do you want to proceed with the cleanup?"
+        );
+
+        if (!confirmed) return;
+
+        setLoading(true);
+        try {
+            const res = await runSmartCleanup(filePath);
+            if (res && res.success) {
+                alert(`Cleanup Complete!\n\nDeleted ${res.deleted_versions} versions.\nFreed up ${res.freed_mb} MB of space.`);
+                fetchVersions();
+            } else {
+                alert("Cleanup failed: " + (res?.error || "Unknown error"));
+            }
+        } catch (err) {
+            alert("Error during cleanup: " + err.message);
+        } finally {
+            setLoading(false);
+        }
+    };
+
     return (
         <div className="version-timeline">
             <div className="timeline-header">
                 <h3>Version History</h3>
-                <button className="btn-refresh" onClick={fetchVersions} disabled={loading}>
-                    {loading ? '...' : 'Refresh'}
-                </button>
+                <div className="header-actions">
+                    <button className="btn-cleanup" onClick={handleCleanup} disabled={loading} title="Run Smart Cleanup">
+                        {loading ? '...' : '🧹'}
+                    </button>
+                    <button className="btn-refresh" onClick={fetchVersions} disabled={loading}>
+                        {loading ? '...' : 'Refresh'}
+                    </button>
+                </div>
             </div>
 
             {compareA && (
@@ -128,7 +161,7 @@ const VersionTimeline = ({ filePath }) => {
                 {!loading && versions.length === 0 && (
                     <div className="no-versions">No versions found for this file.</div>
                 )}
-                {versions.map((v) => (
+                {versions.map((v, index) => (
                     <VersionCard
                         key={v.version_id}
                         version={v}
@@ -136,6 +169,8 @@ const VersionTimeline = ({ filePath }) => {
                         onRefresh={fetchVersions}
                         onCompareClick={() => handleCompareClick(v.version_id)}
                         isSelecting={compareA === v.version_id}
+                        isLatest={index === 0}
+                        isBaseline={index === versions.length - 1 && versions.length > 1}
                     />
                 ))}
             </div>

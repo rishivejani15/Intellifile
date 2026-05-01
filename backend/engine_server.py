@@ -150,6 +150,16 @@ while True:
                 print(json.dumps(result), flush=True)
             except Exception as e:
                 print(json.dumps({"_id": req_id, "error": str(e)}), flush=True)
+
+        elif action == "smart_cleanup":
+            try:
+                from core.versioning.cleanup_manager import run_smart_cleanup
+                file_path = request.get("file_path")
+                result = run_smart_cleanup(file_path)
+                result["_id"] = req_id
+                print(json.dumps(result), flush=True)
+            except Exception as e:
+                print(json.dumps({"_id": req_id, "error": str(e)}), flush=True)
             
         elif action == "compare_versions":
             try:

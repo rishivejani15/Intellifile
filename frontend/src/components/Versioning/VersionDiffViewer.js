@@ -1,9 +1,19 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { parseDiff, Diff, Hunk, Header } from 'react-diff-view';
 import 'react-diff-view/style/index.css';
 import './versioning.css';
 
 const VersionDiffViewer = ({ diffText, versionA, versionB, onClose }) => {
+    useEffect(() => {
+        const handleKeyDown = (e) => {
+            if (e.key === 'Escape') {
+                onClose();
+            }
+        };
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [onClose]);
+
     if (!diffText) return null;
 
     const files = typeof diffText === 'string' ? parseDiff(diffText) : [];

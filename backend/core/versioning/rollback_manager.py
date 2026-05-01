@@ -14,46 +14,66 @@ def restore_version(file_path: str, version_timestamp: str) -> dict:
     """
 
     # Robust path normalization
-    norm_path = os.path.normpath(os.path.abspath(file_path)).lower()
-    file_identifier = generate_sha256(norm_path)
+    from core.versioning.snapshot_manager import get_file_id
+    file_identifier = get_file_id(file_path)
     file_dir = os.path.join(BASE_VERSION_PATH, file_identifier)
 
-    version_file = os.path.join(file_dir, f"{version_timestamp}.txt")
     meta_file = os.path.join(file_dir, f"{version_timestamp}.json")
+    if not os.path.exists(meta_file):
+        return {"success": False, "error": f"Metadata not found for version: {version_timestamp}"}
 
-    if not os.path.exists(version_file):
-        return {"success": False, "error": f"Version file not found: {version_file}"}
-
-    # Verify integrity
     try:
         with open(meta_file, "r", encoding="utf-8") as f:
             metadata = json.load(f)
+        
+        # Get the correct extension and physical file timestamp
+        ext = metadata.get("ext", ".txt")
+        actual_ts = metadata.get("reused_snapshot", version_timestamp)
+        version_file = os.path.join(file_dir, f"{actual_ts}{ext}")
 
-        # Read with newline='' to get the raw \n normalized content
-        with open(version_file, "r", encoding="utf-8", newline='') as f:
-            content = f.read()
+        if not os.path.exists(version_file):
+            # Shield: If it's a Chunked file, we need to rebuild it
+            if "chunk_hashes" in metadata:
+                from core.versioning.chunk_manager import rebuild_file_from_chunks
+                print(f"[Rollback] Rebuilding {version_timestamp} from {len(metadata['chunk_hashes'])} chunks...")
+                rebuild_file_from_chunks(metadata["chunk_hashes"], version_file)
+            else:
+                return {"success": False, "error": f"Version snapshot file not found: {version_file}"}
 
-        if generate_sha256(content) != metadata.get("file_hash"):
+        # Verify integrity
+        is_binary = ext in [".docx", ".xlsx", ".pdf", ".zip"]
+        
+        if is_binary:
+            from core.versioning.snapshot_manager import compute_file_hash
+            current_hash = compute_file_hash(version_file, True)
+        else:
+            with open(version_file, "r", encoding="utf-8", newline='') as f:
+                content = f.read()
+            current_hash = generate_sha256(content)
+
+        if current_hash != metadata.get("file_hash"):
             return {"success": False, "error": "Snapshot integrity failed"}
 
         # Create safety backup before overwrite
         if os.path.exists(file_path):
-            with open(file_path, "r", encoding="utf-8") as f:
-                current_content = f.read()
-
+            import shutil
             backup_path = file_path + ".backup"
-            with open(backup_path, "w", encoding="utf-8") as f:
-                f.write(current_content)
+            shutil.copy2(file_path, backup_path)
+            
+            # Optimization: Hide the backup file on Windows so it doesn't clutter the UI
+            try:
+                import subprocess
+                subprocess.run(['attrib', '+h', backup_path], capture_output=True, check=False)
+            except Exception:
+                pass
 
-        # Restore - typically on Windows you might want native line endings,
-        # but for text files IntelliFile manages, keeping them \n for consistency is safer.
-        print(f"[Rollback] Restoring {len(content)} chars to {file_path}")
-        with open(file_path, "w", encoding="utf-8", newline='') as f:
-            f.write(content)
-            f.flush()
-            os.fsync(f.fileno()) # Force write to disk
+        # Restore
+        print(f"[Rollback] Restoring {version_file} to {file_path}")
+        import shutil
+        shutil.copy2(version_file, file_path)
 
-        return {"success": True, "message": "Rollback successful", "restored_length": len(content)}
+        restored_size = os.path.getsize(file_path)
+        return {"success": True, "message": "Rollback successful", "restored_length": restored_size}
     except Exception as e:
         print(f"[Rollback] Error: {str(e)}")
         return {"success": False, "error": str(e)}

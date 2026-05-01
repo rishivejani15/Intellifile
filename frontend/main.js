@@ -8,7 +8,12 @@ const chokidar = require('chokidar');
 const isDev = true;
 
 // Supported file extensions
-const EDITABLE_EXTENSIONS = ['.py', '.js', '.java', '.cpp', '.c', '.go', '.txt', '.md', '.json', '.xml', '.html', '.css', '.ts', '.jsx', '.tsx', '.docx', '.xlsx'];
+const EDITABLE_EXTENSIONS = [
+  '.py', '.js', '.java', '.cpp', '.c', '.go', '.txt', '.md', '.json', '.xml', 
+  '.html', '.htm', '.css', '.scss', '.less', '.ts', '.jsx', '.tsx', '.docx', '.xlsx',
+  '.csv', '.env', '.gitignore', '.yml', '.yaml', '.sql', '.sh', '.bash', '.ps1', '.bat', 
+  '.log', '.ini', '.cfg', '.conf', '.toml', '.vue', '.svelte', '.h', '.hpp', '.cs', '.rs', '.rb', '.php'
+];
 
 // Windows system files and folders to hide from users
 const SYSTEM_FILES_TO_HIDE = [
@@ -29,8 +34,14 @@ const PROTECTED_PATHS = [
 function isSystemFile(filename) {
   const lower = filename.toLowerCase();
   const ext = path.extname(lower);
+  
+  // Explicitly allow important configuration files that start with a dot
+  const ALLOWED_DOTFILES = ['.env', '.gitignore', '.antigravityignore', '.editorconfig'];
+  if (ALLOWED_DOTFILES.includes(lower)) return false;
+
   return SYSTEM_FILES_TO_HIDE.includes(lower) || SYSTEM_FOLDERS_TO_HIDE.includes(lower) ||
-    SYSTEM_FILE_EXTENSIONS.includes(ext) || lower === 'desktop.ini' || lower === 'thumbs.db' || filename.startsWith('.');
+    SYSTEM_FILE_EXTENSIONS.includes(ext) || lower === 'desktop.ini' || lower === 'thumbs.db' || 
+    (filename.startsWith('.') && !ALLOWED_DOTFILES.includes(lower));
 }
 
 let pyProcess;
@@ -362,6 +373,10 @@ function registerIpcHandlers() {
 
   ipcMain.handle("index-folder", async (_, folder) => {
     return sendToPython({ action: "index", folder }, 300000);
+  });
+
+  ipcMain.handle("smart-cleanup", async (_, filePath) => {
+    return sendToPython({ action: "smart_cleanup", file_path: filePath });
   });
 
   ipcMain.handle('get-files-to-merge', async () => {

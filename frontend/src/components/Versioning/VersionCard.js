@@ -3,7 +3,7 @@ import RiskBadge from './RiskBadge';
 import { restoreVersion } from '../../services/versionService';
 import './versioning.css';
 
-const VersionCard = ({ version, filePath, onRefresh, onCompareClick, isSelecting }) => {
+const VersionCard = ({ version, filePath, onRefresh, onCompareClick, isSelecting, isLatest, isBaseline }) => {
     const [restoring, setRestoring] = useState(false);
 
     const handleRollback = async () => {
@@ -60,11 +60,13 @@ const VersionCard = ({ version, filePath, onRefresh, onCompareClick, isSelecting
             </div>
 
             <div className="version-intent-row">
-                <span className="intent-label">{version.intent || 'Update'}</span>
-                <RiskBadge level={version.risk_level} />
+                <span className="intent-label">{isBaseline ? 'Original Version' : (version.intent || 'Update')}</span>
+                <RiskBadge level={isBaseline ? 'Low' : version.risk_level} />
             </div>
 
-            <p className="version-summary">{version.summary}</p>
+            <p className="version-summary">
+                {isBaseline ? 'Original file state captured.' : version.summary}
+            </p>
 
             <div className="version-metrics">
                 <div className="metric">
@@ -80,9 +82,15 @@ const VersionCard = ({ version, filePath, onRefresh, onCompareClick, isSelecting
             </div>
 
             <div className="version-actions">
-                <button className="btn-restore" onClick={handleRollback} disabled={restoring}>
-                    {restoring ? 'Restoring...' : 'Rollback'}
-                </button>
+                {isLatest ? (
+                    <button className="btn-current-state" disabled>
+                        Current State
+                    </button>
+                ) : (
+                    <button className="btn-restore" onClick={handleRollback} disabled={restoring}>
+                        {restoring ? 'Restoring...' : 'Rollback'}
+                    </button>
+                )}
                 <button className="btn-compare" onClick={onCompareClick}>
                     {isSelecting ? 'Cancel' : 'Compare'}
                 </button>

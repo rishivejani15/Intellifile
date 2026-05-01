@@ -19,3 +19,7 @@ export const compareVersions = async (filePath, versionA, versionB) => {
 export const saveFile = async (filePath, content) => {
     return await ipcRenderer.invoke('save-file', filePath, content);
 };
+
+export const runSmartCleanup = async (filePath) => {
+    return await ipcRenderer.invoke('smart-cleanup', filePath);
+};
