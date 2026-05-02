@@ -2,7 +2,7 @@
   max-width: 800px;
   margin: 0 auto;
   padding: 2rem 1rem;
-  color: #e0e0e0;
+  color: var(--text-primary);
 }
 
 .search-page h2 {
@@ -12,8 +12,8 @@
 /* notice */
 .search-notice {
   padding: 0.6rem 1rem;
-  background: #2a2a3e;
-  border-left: 4px solid #6c63ff;
+  background: var(--card-bg);
+  border-left: 4px solid var(--primary-blue);
   border-radius: 6px;
   margin-bottom: 1rem;
 }
@@ -30,7 +30,7 @@
   padding: 0.5rem 1rem;
   border: none;
   border-radius: 6px;
-  background: #6c63ff;
+  background: var(--primary-blue);
   color: #fff;
   cursor: pointer;
   font-size: 0.9rem;
@@ -38,7 +38,7 @@
 }
 
 .index-btn:hover:not(:disabled) {
-  background: #574fd6;
+  background: var(--primary-blue-hover);
 }
 
 .index-btn:disabled {
@@ -62,22 +62,22 @@
   flex: 1;
   padding: 0.6rem 0.8rem;
   border-radius: 6px;
-  border: 1px solid #444;
-  background: #1e1e2e;
-  color: #e0e0e0;
+  border: 1px solid var(--border-color);
+  background: var(--search-bg);
+  color: var(--text-primary);
   font-size: 0.95rem;
 }
 
 .search-bar input:focus {
   outline: none;
-  border-color: #6c63ff;
+  border-color: var(--primary-blue);
 }
 
 .search-bar button {
   padding: 0.6rem 1.2rem;
   border: none;
   border-radius: 6px;
-  background: #6c63ff;
+  background: var(--primary-blue);
   color: #fff;
   cursor: pointer;
   font-size: 0.9rem;
@@ -102,7 +102,7 @@
 }
 
 .no-results {
-  color: #888;
+  color: var(--text-secondary);
   padding: 1rem;
 }
 
@@ -111,20 +111,20 @@
   justify-content: space-between;
   align-items: center;
   padding: 0.75rem 1rem;
-  background: #1e1e2e;
+  background: var(--card-bg);
   border-radius: 6px;
-  border: 1px solid #333;
+  border: 1px solid var(--border-color);
   cursor: pointer;
   transition: border-color 0.2s;
 }
 
 .result-card:hover {
-  border-color: #6c63ff;
+  border-color: var(--primary-blue);
 }
 
 .result-path {
   font-size: 0.9rem;
-  color: #ccc;
+  color: var(--text-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -133,6 +133,6 @@
 
 .result-score {
   font-size: 0.8rem;
-  color: #6c63ff;
+  color: var(--primary-blue);
   white-space: nowrap;
 }

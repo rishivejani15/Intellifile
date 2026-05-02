@@ -1,9 +1,20 @@
 import React from 'react';
-import { parseDiff, Diff, Hunk } from 'react-diff-view';
+import { parseDiff, Diff, Hunk, Header } from 'react-diff-view';
+import { useEffect } from 'react';
 import 'react-diff-view/style/index.css';
 import './versioning.css';
 
 const VersionDiffViewer = ({ diffText, versionA, versionB, onClose }) => {
+     useEffect(() => {
+        const handleKeyDown = (e) => {
+            if (e.key === 'Escape') {
+                onClose();
+            }
+        };
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [onClose]);
+
     if (!diffText) return null;
 
     const files = typeof diffText === 'string' ? parseDiff(diffText) : [];
@@ -39,7 +50,7 @@ const VersionDiffViewer = ({ diffText, versionA, versionB, onClose }) => {
                                         <div className="para-list">
                                             {diffText.para_diff?.map((p, idx) => (
                                                 <div key={idx} className={`para-item ${p.type === 'added' ? 'line-added' : p.type === 'removed' ? 'line-removed' : 'line-equal'}`}>
-                                                    {p.text || <em className="empty-para">(Empty paragraph)</em>}
+                                                    {p.text}
                                                 </div>
                                             ))}
                                         </div>
@@ -80,8 +91,8 @@ const VersionDiffViewer = ({ diffText, versionA, versionB, onClose }) => {
                                                         <tr key={idx}>
                                                             <td>{change.sheet}</td>
                                                             <td className="cell-coord">{change.cell}</td>
-                                                            <td className="val-old">{change.old_value ?? <em className="null-val">empty</em>}</td>
-                                                            <td className="val-new">{change.new_value ?? <em className="null-val">empty</em>}</td>
+                                                            <td className="val-old">{change.old_value}</td>
+                                                            <td className="val-new">{change.new_value}</td>
                                                         </tr>
                                                     ))}
                                                 </tbody>

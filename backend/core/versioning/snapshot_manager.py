@@ -13,8 +13,18 @@ PROJECT_ROOT = os.path.abspath(os.path.join(CURRENT_DIR, "../../../"))
 BASE_VERSION_PATH = os.path.join(PROJECT_ROOT, "backend", "data", "storage", "versions")
 INDEX_VERSION_PATH = os.path.join(PROJECT_ROOT, "backend", "data", "storage", "version_index")
 
+# Clear transient cache on startup to reclaim space
+CACHE_PATH = os.path.join(PROJECT_ROOT, "backend", "data", "storage", "cache")
+if os.path.exists(CACHE_PATH):
+    import shutil
+    try: shutil.rmtree(CACHE_PATH); os.makedirs(CACHE_PATH)
+    except: pass
+
 def get_file_id(file_path: str) -> str:
-    norm_path = os.path.normpath(os.path.abspath(file_path)).lower()
+    # Use realpath to resolve symlinks and absolute paths correctly on Windows
+    norm_path = os.path.normpath(os.path.realpath(file_path)).lower()
+    # Strip trailing slashes/backslashes to prevent double-folders
+    norm_path = norm_path.rstrip(os.sep)
     return generate_sha256(norm_path)
 
 def compute_file_hash(content_or_path: Any, is_binary: bool = False) -> str:
@@ -118,17 +128,30 @@ def create_version(file_path: str, content_or_path: Any, metadata: dict):
     # First version -> full. Every 3 versions -> full. Otherwise -> diff.
     if version_num > 1 and version_num % 3 != 1:
         storage_type = "diff"
-        
-    timestamp = save_snapshot(file_path, content_or_path, metadata)
+
+    timestamp = None
+    if version_num == 1:
+        try:
+            # Use the oldest possible date (minimum of creation and modification)
+            # This handles cases where a file was moved/copied (which resets ctime)
+            ctime = os.path.getctime(file_path)
+            mtime = os.path.getmtime(file_path)
+            oldest_time = min(ctime, mtime)
+            
+            timestamp = datetime.fromtimestamp(oldest_time, timezone.utc).strftime("%Y%m%d%H%M%S%f")
+        except Exception:
+            pass
+
+    actual_timestamp = save_snapshot(file_path, content_or_path, metadata, custom_timestamp=timestamp)
     
     version_entry = {
         "version": version_num,
-        "version_id": timestamp,
+        "version_id": actual_timestamp,
         "parent": parent,
         "storage_type": storage_type,
         "file_hash": metadata.get("file_hash", current_hash),
-        "timestamp": timestamp,
-        "snapshot_path": os.path.join(BASE_VERSION_PATH, get_file_id(file_path), f"{timestamp}{ext}"),
+        "timestamp": actual_timestamp,
+        "snapshot_path": os.path.join(BASE_VERSION_PATH, get_file_id(file_path), f"{actual_timestamp}{ext}"),
         "diff_path": None,
         "summary": metadata.get("summary", ""),
         "intent": metadata.get("intent", ""),
@@ -143,7 +166,7 @@ def create_version(file_path: str, content_or_path: Any, metadata: dict):
 def ensure_directory(path):
     os.makedirs(path, exist_ok=True)
 
-def save_snapshot(file_path: str, content_or_path: Any, metadata: dict):
+def save_snapshot(file_path: str, content_or_path: Any, metadata: dict, custom_timestamp: str = None):
     """
     Stores snapshot + metadata safely. 
     content_or_path: Can be string (text) or path to binary file.
@@ -159,32 +182,63 @@ def save_snapshot(file_path: str, content_or_path: Any, metadata: dict):
     import random
     import string
     suffix = ''.join(random.choices(string.ascii_lowercase + string.digits, k=4))
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S%f") + f"_{suffix}"
+    
+    if custom_timestamp:
+        timestamp = f"{custom_timestamp}_{suffix}"
+    else:
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S%f") + f"_{suffix}"
     ext = os.path.splitext(file_path)[1].lower()
     
     is_binary = ext in [".docx", ".xlsx", ".pdf", ".zip"]
+    
+    # Calculate hash before saving to check for duplicates
+    file_hash = compute_file_hash(content_or_path, is_binary)
+    
+    # Shield: Zero-Copy Deduplication
+    # Check if this exact file state already exists in our history
+    existing_file = None
+    for f in os.listdir(file_dir):
+        if f.endswith(".json") and not f.endswith(".structure.json"):
+            try:
+                with open(os.path.join(file_dir, f), "r", encoding="utf-8") as meta_f:
+                    m = json.load(meta_f)
+                    if m.get("file_hash") == file_hash:
+                        # Found a twin! Reuse the existing snapshot file
+                        existing_ts = m.get("timestamp")
+                        potential_file = os.path.join(file_dir, f"{existing_ts}{ext}")
+                        if os.path.exists(potential_file):
+                            existing_file = potential_file
+                            metadata["reused_snapshot"] = existing_ts
+                            print(f"[Storage] Deduplication hit! Reusing {existing_ts} for {timestamp}")
+                            break
+            except Exception:
+                continue
+
     version_file = os.path.join(file_dir, f"{timestamp}{ext}")
     meta_file = os.path.join(file_dir, f"{timestamp}.json")
     struct_file = os.path.join(file_dir, f"{timestamp}.structure.json")
 
-    if is_binary:
-        import shutil
-        if os.path.exists(content_or_path):
-            shutil.copy2(content_or_path, version_file)
-            # Generate hash of binary file
-            with open(version_file, "rb") as f:
-                file_hash = generate_sha256(f.read().decode('latin-1', errors='ignore')) # Simple hash approach
+    if existing_file:
+        # We don't need to save the main file, it already exists!
+        pass
+    elif is_binary:
+        from core.versioning.chunk_manager import save_file_as_chunks
+        source_path = file_path if os.path.exists(file_path) else content_or_path
+        
+        if isinstance(source_path, str) and os.path.exists(source_path):
+            # Block-Based Deduplication: Split into small pieces
+            chunk_hashes = save_file_as_chunks(source_path)
+            metadata["chunk_hashes"] = chunk_hashes
+            print(f"[Storage] Lego-Block Deduplication: Saved {len(chunk_hashes)} chunks.")
         else:
-            # If content is already in memory (unlikely for binary but possible)
+            # Fallback for memory-based binary (rare)
             with open(version_file, "wb") as f:
                 f.write(content_or_path if isinstance(content_or_path, bytes) else b"")
-            file_hash = generate_sha256(str(content_or_path))
     else:
         # Normalize all line endings to \n for consistent hashing
         content = content_or_path.replace("\r\n", "\n")
         with open(version_file, "w", encoding="utf-8", newline='') as f:
             f.write(content)
-        file_hash = generate_sha256(content)
 
     metadata["file_hash"] = file_hash
     metadata["timestamp"] = timestamp
@@ -267,21 +321,38 @@ def get_version_content(file_path: str, version_id: str):
     # First try to find the extension from metadata (.json)
     meta_path = os.path.join(file_dir, f"{version_id}.json")
     ext = ".txt" # Default fallback
+    actual_id = version_id
     if os.path.exists(meta_path):
         with open(meta_path, "r", encoding="utf-8") as f:
             metadata = json.load(f)
             ext = metadata.get("ext", ".txt")
+            # Shield: Follow Zero-Copy links
+            actual_id = metadata.get("reused_snapshot", version_id)
     
-    version_file = os.path.join(file_dir, f"{version_id}{ext}")
+    version_file = os.path.join(file_dir, f"{actual_id}{ext}")
 
+    # Final fallback: search for ANY file with this actual_id that isn't .json or .structure.json
     if not os.path.exists(version_file):
-        # Final fallback: search for ANY file with this version_id that isn't .json or .structure.json
-        for f in os.listdir(file_dir):
-            if f.startswith(version_id) and not f.endswith(".json"):
-                version_file = os.path.join(file_dir, f)
-                break
-        else:
-            raise FileNotFoundError(f"Version file not found for {version_id}")
+        # Shield: If it's a Chunked file, we need to rebuild it
+        with open(meta_path, "r", encoding="utf-8") as f:
+            metadata = json.load(f)
+            if "chunk_hashes" in metadata:
+                from core.versioning.chunk_manager import rebuild_file_from_chunks
+                # Use a cache directory for transient rebuilds to save permanent space
+                cache_dir = os.path.join(PROJECT_ROOT, "backend", "data", "storage", "cache")
+                os.makedirs(cache_dir, exist_ok=True)
+                version_file = os.path.join(cache_dir, f"{version_id}{ext}")
+                
+                if not os.path.exists(version_file):
+                    print(f"[Storage] Rebuilding {version_id} to cache...")
+                    rebuild_file_from_chunks(metadata["chunk_hashes"], version_file)
+            else:
+                for f_name in os.listdir(file_dir):
+                    if f_name.startswith(actual_id) and not f_name.endswith(".json"):
+                        version_file = os.path.join(file_dir, f_name)
+                        break
+                else:
+                    raise FileNotFoundError(f"Version file not found for {version_id}")
 
     # For binary files, return the path so the engine can parse it
     if ext in [".docx", ".xlsx"]:
@@ -313,6 +384,15 @@ def compare_versions(file_path: str, version_a: str, version_b: str):
         # If we got dicts (structures), process_version handles them.
         # If we got strings (paths), it parses them.
         result = engine.process_version(file_path, path_a, path_b)
+
+        # Optimization: Cleanup cache files immediately after comparison
+        if "storage\\cache" in str(path_a) and os.path.exists(path_a):
+            try: os.remove(path_a)
+            except: pass
+        if "storage\\cache" in str(path_b) and os.path.exists(path_b):
+            try: os.remove(path_b)
+            except: pass
+
         return {
             "version_a": version_a,
             "version_b": version_b,

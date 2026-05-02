@@ -1,63 +1,76 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { searchFiles, indexDevice } from '../../services/searchService';
-import { useNavigation } from '../../hooks/useNavigation';
-import { useFileExplorer } from '../../hooks/useFileExplorer';
-import { useKeyboardShortcuts } from '../../hooks/useKeyboardShortcuts';
-import ExplorerSidebar from '../ExplorerSidebar';
-import ExplorerNavbar from '../ExplorerNavbar';
-import FileList from '../FileList';
-import ContextMenu from '../ContextMenu';
-import PropertiesModal from '../PropertiesModal';
-import SearchResults from '../SearchResults';
-import TabsBar from '../TabsBar';
+import { updateBreadcrumb, sortItems, getParentPath } from './utils/fileUtils';
+import { useFileOperations, useNavigation, useSelection, useKeyboardShortcuts } from './hooks';
+import { Sidebar, Toolbar, TabsBar, Breadcrumb, FileList, ContextMenu, StatusBar } from './components';
+import VersionTimeline from '../Versioning/VersionTimeline';
+import { smartCleanupVersions } from '../../services/versionService';
 import './FileExplorer.css';
 
 const ipcRenderer = window.electron?.ipcRenderer;
 
-function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWithAI }) {
-  // UI State
+function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWithAI, onVersioning, versioningFile, onCloseVersioning }) {
+  // Core state
+  const [currentPath, setCurrentPath] = useState(null);
   const [items, setItems] = useState([]);
+  const [breadcrumb, setBreadcrumb] = useState([]);
   const [loading, setLoading] = useState(false);
   const [viewMode, setViewMode] = useState('icons');
   const [sortBy, setSortBy] = useState('name');
   const [groupBy, setGroupBy] = useState('none');
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedItem, setSelectedItem] = useState(null);
-  const [selectedItems, setSelectedItems] = useState([]);
-  const [lastSelectedIndex, setLastSelectedIndex] = useState(null);
-  const [showProperties, setShowProperties] = useState(false);
-  const [showContextMenu, setShowContextMenu] = useState(false);
-  const [contextMenuPos, setContextMenuPos] = useState({ x: 0, y: 0 });
-  
-  // Search & Indexing State
   const [semanticResults, setSemanticResults] = useState(null);
   const [semanticLoading, setSemanticLoading] = useState(false);
   const [engineReady, setEngineReady] = useState(false);
   const [indexing, setIndexing] = useState(false);
   const [indexedFolder, setIndexedFolder] = useState('');
 
-  // Custom Hooks
-  const navigation = useNavigation(ipcRenderer);
-  const fileOps = useFileExplorer(ipcRenderer);
-  
-  // Destructure navigation
+  // Tab state
+  const [tabs, setTabs] = useState([{ id: 'tab-1', path: null, title: 'Documents' }]);
+  const [activeTabId, setActiveTabId] = useState('tab-1');
+  const [addressPath, setAddressPath] = useState('');
+
+  // Rename state
+  const [renamingItem, setRenamingItem] = useState(null);
+  const [renameValue, setRenameValue] = useState('');
+
+  // History state
+  const [history, setHistory] = useState([]);
+  const [historyIndex, setHistoryIndex] = useState(-1);
+
+  // Context menu state
+  const [showContextMenu, setShowContextMenu] = useState(false);
+  const [contextMenuPos, setContextMenuPos] = useState({ x: 0, y: 0 });
+
+  const inputRef = useRef(null);
+
+  // Derived values
+  const displayItems = useMemo(() => sortItems(items, sortBy), [items, sortBy]);
+
+  // Refresh callback for file operations
+  const handleRefresh = useCallback(() => {
+    if (currentPath) {
+      loadDirectory(currentPath);
+    }
+  }, [currentPath]);
+
+
+
+
+  // Initialize hooks that define preserveSelection before loadDirectory
   const {
-    currentPath, setCurrentPath, breadcrumb,
-    history, historyIndex, tabs, activeTabId, addressPath, setAddressPath,
-    updateBreadcrumb, updateHistory, updateActiveTab,
-    handleBack: navBack, handleForward: navForward, handleUp: navUp,
-    handleNewTab, handleCloseTab, handleSelectTab
-  } = navigation;
+    selectedItem,
+    setSelectedItem,
+    selectedItems,
+    setSelectedItems,
+    handleItemClick,
+    clearSelection,
+    selectAll,
+    preserveSelection,
+    resetSelection,
+  } = useSelection(displayItems, onFileSelect);
 
-  // Destructure file operations
-  const {
-    clipboard, renamingItem, setRenamingItem,
-    renameValue, setRenameValue
-  } = fileOps;
-
-  const displayItems = useMemo(() => items, [items]);
-
-  // Load directory with filtering and sorting
+  // Load directory function (now after useSelection)
   const loadDirectory = useCallback(async (dirPath) => {
     setLoading(true);
     setRenamingItem(null);
@@ -67,55 +80,46 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
       if (!result || result.error) {
         console.error('Error loading directory:', result?.error || 'Unknown error');
         setItems([]);
+        // Auto-navigate to parent folder if current folder is completely missing/deleted
         if (dirPath && dirPath !== 'C:\\') {
-          const parentPath = dirPath.substring(0, dirPath.lastIndexOf('\\'));
+          const parentPath = getParentPath(dirPath);
           if (parentPath && parentPath !== dirPath) {
-            setTimeout(() => loadDirectory(parentPath), 100);
+            setTimeout(() => { loadDirectory(parentPath) }, 100);
           }
         }
       } else {
-        let loadedItems = result.items || [];
-
+        let dirItems = result.items || [];
         // Apply search filter
         if (searchQuery) {
-          loadedItems = loadedItems.filter(item =>
+          dirItems = dirItems.filter(item =>
             item.name.toLowerCase().includes(searchQuery.toLowerCase())
           );
         }
-
-        // Apply sorting
-        loadedItems.sort((a, b) => {
-          let cmp = 0;
-          switch (sortBy) {
-            case 'date':
-              cmp = a.modified - b.modified;
-              break;
-            case 'size':
-              cmp = a.size - b.size;
-              break;
-            case 'type':
-              cmp = a.ext.localeCompare(b.ext);
-              break;
-            default:
-              cmp = a.name.localeCompare(b.name);
-          }
-          return cmp;
-        });
-
-        setItems(loadedItems);
-        const actualPath = loadedItems && loadedItems.length > 0 ?
-          loadedItems[0].path.substring(0, loadedItems[0].path.lastIndexOf('\\')) :
-          dirPath;
-        
+        setItems(dirItems);
+        const actualPath = dirItems.length > 0
+          ? dirItems[0].path.substring(0, dirItems[0].path.lastIndexOf('\\'))
+          : dirPath;
         if (actualPath) {
           setCurrentPath(actualPath);
           setAddressPath(actualPath);
-          updateBreadcrumb(actualPath);
-          setSelectedItem(prev => (prev && loadedItems.some(i => i.path === prev.path)) ? prev : null);
-          setSelectedItems(prev => prev.filter(pItem => loadedItems.some(i => i.path === pItem.path)));
-          setLastSelectedIndex(null);
-          updateHistory(actualPath);
-          updateActiveTab(actualPath);
+          setBreadcrumb(updateBreadcrumb(actualPath));
+          // Preserve selections
+          preserveSelection(dirItems);
+          // Update history
+          setHistory(prev => {
+            const newHistory = prev.slice(0, historyIndex + 1);
+            newHistory.push(actualPath);
+            return newHistory;
+          });
+          setHistoryIndex(prev => prev + 1);
+          // Update active tab
+          setTabs(prev => prev.map(tab => {
+            if (tab.id === activeTabId) {
+              const title = actualPath.split('\\').filter(Boolean).pop() || 'Root';
+              return { ...tab, path: actualPath, title };
+            }
+            return tab;
+          }));
         }
       }
     } catch (error) {
@@ -123,7 +127,22 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
     } finally {
       setLoading(false);
     }
-  }, [updateBreadcrumb, searchQuery, sortBy, updateHistory, updateActiveTab, setCurrentPath, setAddressPath, setRenamingItem]);
+  }, [searchQuery, sortBy, historyIndex, activeTabId, preserveSelection]);
+
+
+
+  // Initialize hooks
+  const {
+    clipboard,
+    handleCopy,
+    handleCut,
+    handlePaste,
+    handleRename: fileOpRename,
+    handleDelete,
+    handleCreateFolder,
+  } = useFileOperations(currentPath, handleRefresh);
+
+  const navigation = useNavigation(history, historyIndex, loadDirectory);
 
   // Initialize with Documents folder
   useEffect(() => {
@@ -132,25 +151,74 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
     }
   }, [currentPath, loadDirectory]);
 
-  // Refresh on window focus
+  // Refresh directory when window gains focus
   useEffect(() => {
     const handleFocus = () => {
-      if (currentPath) loadDirectory(currentPath);
+      if (currentPath) {
+        loadDirectory(currentPath);
+      }
     };
     window.addEventListener('focus', handleFocus);
     return () => window.removeEventListener('focus', handleFocus);
   }, [currentPath, loadDirectory]);
 
-  // Event Handlers
-  const handleAddressSubmit = (e) => {
-    e.preventDefault();
-    if (addressPath) loadDirectory(addressPath);
-  };
+  // Check engine readiness on mount
+  useEffect(() => {
+    const checkEngine = async () => {
+      try {
+        const status = await window.intellifile?.searchStatus();
+        console.log('[FileExplorer] Engine status:', status);
+        if (status && status.ready) {
+          setEngineReady(true);
+          console.log('[FileExplorer] ✅ Engine ready');
+        } else {
+          console.log('[FileExplorer] Engine not ready yet, retrying...');
+          setTimeout(checkEngine, 2000);
+        }
+      } catch (err) {
+        console.error('[FileExplorer] Engine check error:', err);
+        setTimeout(checkEngine, 3000);
+      }
+    };
+    checkEngine();
+  }, []);
 
+  // Keyboard shortcuts
+  useKeyboardShortcuts({
+    selectedItem,
+    selectedItems,
+    clipboard,
+    renamingItem,
+    currentPath,
+    historyIndex,
+    displayItems,
+    onCopy: () => handleCopy(selectedItems.length > 0 ? selectedItems : (selectedItem ? [selectedItem] : [])),
+    onCut: () => handleCut(selectedItems.length > 0 ? selectedItems : (selectedItem ? [selectedItem] : [])),
+    onPaste: handlePaste,
+    onDelete: () => handleDelete(selectedItems.length > 0 ? selectedItems : (selectedItem ? [selectedItem] : [])),
+    onRename: (item) => {
+      setRenamingItem(item);
+      setRenameValue(item.name);
+    },
+    onCreateFolder: handleCreateFolder,
+    onSelectAll: selectAll,
+    onBack: navigation.handleBack,
+    onForward: navigation.handleForward,
+    onUp: () => navigation.handleUp(currentPath),
+    onClearSelection: () => {
+      clearSelection();
+      setRenamingItem(null);
+      setShowContextMenu(false);
+    },
+  });
+
+  // File operation handlers
   const openFileWithDefaultApp = async (filePath) => {
     try {
       const result = await window.electron.ipcRenderer.invoke('open-file', filePath);
-      if (!result.success) console.error('Error opening file:', result.error);
+      if (!result.success) {
+        console.error('Error opening file:', result.error);
+      }
     } catch (err) {
       console.error('Error opening file:', err);
     }
@@ -164,90 +232,14 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
     }
   };
 
-  const handleItemClick = (item, idx, e) => {
-    if (renamingItem) return;
-    const isCtrl = e.ctrlKey || e.metaKey;
-    const isShift = e.shiftKey;
-    let newSelection = [];
-
-    if (isShift && lastSelectedIndex !== null) {
-      const start = Math.min(lastSelectedIndex, idx);
-      const end = Math.max(lastSelectedIndex, idx);
-      newSelection = displayItems.slice(start, end + 1);
-    } else if (isCtrl) {
-      const alreadySelected = selectedItems.find(i => i.path === item.path);
-      newSelection = alreadySelected
-        ? selectedItems.filter(i => i.path !== item.path)
-        : [...selectedItems, item];
-    } else {
-      newSelection = [item];
-    }
-
-    setSelectedItems(newSelection);
-    setSelectedItem(item);
-    setLastSelectedIndex(idx);
-    if (onFileSelect) onFileSelect(item);
+  const handleRename = async (item) => {
+    await fileOpRename(renamingItem, renameValue);
+    setRenamingItem(null);
   };
 
-  const handleBreadcrumbClick = (path) => {
-    loadDirectory(path.replace(/\/$/, ''));
-  };
-
-  const handleBack = () => {
-    const prevPath = navBack();
-    if (prevPath) loadDirectory(prevPath);
-  };
-
-  const handleForward = () => {
-    const nextPath = navForward();
-    if (nextPath) loadDirectory(nextPath);
-  };
-
-  const handleUp = () => {
-    const parentPath = navUp();
-    if (parentPath) loadDirectory(parentPath);
-  };
-
-  const handleCopy = () => {
-    fileOps.handleCopy(selectedItems, selectedItem);
-    setShowContextMenu(false);
-  };
-
-  const handleCut = () => {
-    fileOps.handleCut(selectedItems, selectedItem);
-    setShowContextMenu(false);
-  };
-
-  const handlePaste = async () => {
-    await fileOps.handlePaste(currentPath, () => loadDirectory(currentPath));
-  };
-
-  const handleRename = async () => {
-    const result = await fileOps.handleRename(currentPath, () => loadDirectory(currentPath));
-    if (result) loadDirectory(currentPath);
-  };
-
-  const handleDelete = async () => {
-    await fileOps.handleDelete(selectedItems, selectedItem, currentPath, () => loadDirectory(currentPath));
-    setShowContextMenu(false);
-    loadDirectory(currentPath);
-  };
-
-  const handleCreateFolder = async () => {
-    await fileOps.handleCreateFolder(currentPath, () => loadDirectory(currentPath));
-  };
-
-  const handleDragStart = (e, item) => {
-    fileOps.handleDragStart(e, item, selectedItems);
-  };
-
-  const handleDragOver = (e) => {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = e.ctrlKey ? 'copy' : 'move';
-  };
-
-  const handleDropOnItem = async (e, targetItem) => {
-    await fileOps.handleDropOnItem(e, targetItem, currentPath, () => loadDirectory(currentPath));
+  const handleRenameCancel = () => {
+    setRenamingItem(null);
+    setRenameValue('');
   };
 
   const handleContextMenu = (e, item) => {
@@ -258,41 +250,46 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
     setShowContextMenu(true);
   };
 
-  // Keyboard shortcuts hook
-  useKeyboardShortcuts({
-    selectedItem, selectedItems, clipboard, renamingItem, currentPath, historyIndex, displayItems,
-    handleCopy, handleCut, handlePaste, handleDelete, handleRename, handleCreateFolder,
-    handleBack, handleForward, handleUp,
-    setSelectedItems, setSelectedItem, setRenamingItem, setRenameValue, setShowContextMenu
-  });
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = e.ctrlKey ? 'copy' : 'move';
+  };
 
-  // Engine & Search Handlers
-  useEffect(() => {
-    const checkEngine = async () => {
-      try {
-        const status = await window.intellifile?.searchStatus();
-        if (status && status.ready) {
-          setEngineReady(true);
-          console.log('[FileExplorer] ✅ Engine ready');
+  const handleDropOnItem = async (e, targetItem) => {
+    e.preventDefault();
+    if (targetItem.type !== 'folder') return;
+
+    try {
+      const data = e.dataTransfer.getData('application/json');
+      const paths = JSON.parse(data || '[]');
+      const isCopy = e.ctrlKey;
+
+      for (const sourcePath of paths) {
+        const name = sourcePath.split('\\').pop();
+        const destPath = targetItem.path + '\\' + name;
+        if (isCopy) {
+          await ipcRenderer?.invoke('copy-file', sourcePath, destPath);
         } else {
-          setTimeout(checkEngine, 2000);
+          await ipcRenderer?.invoke('move-file', sourcePath, destPath);
         }
-      } catch (err) {
-        console.error('[FileExplorer] Engine check error:', err);
-        setTimeout(checkEngine, 3000);
       }
-    };
-    checkEngine();
-  }, []);
+      loadDirectory(currentPath);
+    } catch (err) {
+      console.error('Drag/drop error:', err);
+    }
+  };
 
-  const handleSearch = async (query) => {
+  // Search handlers
+  async function handleSearch(query) {
     if (!query || !query.trim()) {
       setSemanticResults(null);
       return;
     }
+    console.log('[FileExplorer] Running semantic search for:', query);
     setSemanticLoading(true);
     try {
       const results = await searchFiles(query);
+      console.log('[FileExplorer] Search results:', results);
       setSemanticResults(results || []);
     } catch (err) {
       console.error('[FileExplorer] Semantic search error:', err);
@@ -300,13 +297,15 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
     } finally {
       setSemanticLoading(false);
     }
-  };
+  }
 
-  const handleIndexDevice = async () => {
+  async function handleIndexDevice() {
+    console.log('[FileExplorer] Index device clicked, engineReady:', engineReady);
     try {
       setIndexing(true);
       setIndexedFolder('');
       const res = await indexDevice();
+      console.log('[FileExplorer] Index result:', res);
       if (res && !res.error) {
         setIndexedFolder('Device Root');
       } else {
@@ -317,9 +316,9 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
     } finally {
       setIndexing(false);
     }
-  };
+  }
 
-  const handleSearchKeyDown = (e) => {
+  function handleSearchKeyDown(e) {
     if (e.key === 'Enter' && searchQuery.trim()) {
       e.preventDefault();
       handleSearch(searchQuery);
@@ -327,163 +326,230 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
       setSemanticResults(null);
       setSearchQuery('');
     }
-  };
+  }
 
-  const handleSearchResultClick = (filePath) => {
+  function handleSearchResultClick(filePath) {
     if (window.electron?.ipcRenderer) {
       window.electron.ipcRenderer.invoke('open-file', filePath);
     }
-  };
-
-  const handleSearchChange = (e, type) => {
-    if (type === 'query') {
-      setSearchQuery(e.target.value);
-      if (!e.target.value) setSemanticResults(null);
-    } else if (type === 'address') {
-      setAddressPath(e.target.value);
-    }
-  };
+  }
 
   // Tab handlers
-  const handleTabSelect = (tab) => {
-    const path = handleSelectTab(tab);
-    if (path) loadDirectory(path);
+  const handleNewTab = () => {
+    const newId = `tab-${Date.now()}`;
+    setTabs(prev => [...prev, { id: newId, path: currentPath, title: 'New Tab' }]);
+    setActiveTabId(newId);
   };
 
-  const handleTabClose = (tabId) => {
-    handleCloseTab(tabId, (path) => {
-      if (path) loadDirectory(path);
+  const handleCloseTab = (tabId) => {
+    setTabs(prev => {
+      if (prev.length === 1) return prev;
+      const filtered = prev.filter(t => t.id !== tabId);
+      if (tabId === activeTabId) {
+        const nextTab = filtered[filtered.length - 1];
+        setActiveTabId(nextTab.id);
+        if (nextTab.path) {
+          loadDirectory(nextTab.path);
+        }
+      }
+      return filtered;
     });
   };
 
+  const handleSelectTab = (tab) => {
+    setActiveTabId(tab.id);
+    if (tab.path) {
+      loadDirectory(tab.path);
+    }
+  };
+
   return (
-    <div className="file-explorer">
-      <ExplorerSidebar drives={drives} onNavigate={loadDirectory} />
+    <div className={`file-explorer ${versioningFile && versioningFile.path ? 'with-versioning' : ''}`}>
+      <Sidebar drives={drives} onNavigate={loadDirectory} />
 
       <div className="explorer-main-area">
         <TabsBar
           tabs={tabs}
           activeTabId={activeTabId}
-          onSelectTab={handleTabSelect}
-          onCloseTab={handleTabClose}
+          onSelectTab={handleSelectTab}
+          onCloseTab={handleCloseTab}
           onNewTab={handleNewTab}
         />
 
-        <ExplorerNavbar
-          breadcrumb={breadcrumb}
-          addressPath={addressPath}
-          historyIndex={historyIndex}
-          history={history}
-          viewMode={viewMode}
-          sortBy={sortBy}
-          groupBy={groupBy}
-          searchQuery={searchQuery}
-          engineReady={engineReady}
-          indexing={indexing}
-          indexedFolder={indexedFolder}
-          semanticLoading={semanticLoading}
-          onAddressSubmit={handleAddressSubmit}
-          onBreadcrumbClick={handleBreadcrumbClick}
-          onBack={handleBack}
-          onForward={handleForward}
-          onUp={handleUp}
-          onViewModeChange={setViewMode}
-          onSortByChange={setSortBy}
-          onGroupByChange={setGroupBy}
-          onCreateFolder={handleCreateFolder}
-          onIndexDevice={handleIndexDevice}
-          onSearchChange={handleSearchChange}
-          onSearchKeyDown={handleSearchKeyDown}
-        />
+        <div className="explorer-navbar">
+          <div className="nav-row">
+            <div className="nav-buttons">
+              <button
+                className="nav-btn back-btn"
+                onClick={navigation.handleBack}
+                disabled={!navigation.canGoBack}
+                title="Back (Alt+←)"
+              >
+                ◀
+              </button>
+              <button
+                className="nav-btn forward-btn"
+                onClick={navigation.handleForward}
+                disabled={!navigation.canGoForward}
+                title="Forward (Alt+→)"
+              >
+                ▶
+              </button>
+              <button
+                className="nav-btn up-btn"
+                onClick={() => navigation.handleUp(currentPath)}
+                disabled={!navigation.canGoUp(currentPath)}
+                title="Up (Alt+↑)"
+              >
+                ⬆️
+              </button>
+            </div>
+
+            <Breadcrumb breadcrumb={breadcrumb} onNavigate={navigation.handleBreadcrumbClick} />
+
+            <form className="address-bar" onSubmit={(e) => navigation.handleAddressSubmit(e, addressPath)}>
+              <input
+                type="text"
+                value={addressPath}
+                onChange={(e) => setAddressPath(e.target.value)}
+                placeholder="Type a path"
+              />
+            </form>
+          </div>
+
+          <Toolbar
+            searchQuery={searchQuery}
+            onSearchChange={setSearchQuery}
+            onSearchKeyDown={handleSearchKeyDown}
+            semanticLoading={semanticLoading}
+            engineReady={engineReady}
+            viewMode={viewMode}
+            onViewModeChange={setViewMode}
+            sortBy={sortBy}
+            onSortChange={setSortBy}
+            groupBy={groupBy}
+            onGroupChange={setGroupBy}
+            onCreateFolder={handleCreateFolder}
+            onIndexDevice={handleIndexDevice}
+            indexing={indexing}
+            indexedFolder={indexedFolder}
+          />
+        </div>
 
         <div className="explorer-content-area">
           <div className="explorer-content">
-            <SearchResults
-              visible={semanticResults !== null}
-              results={semanticResults || []}
-              loading={semanticLoading}
-              onClose={() => {
-                setSemanticResults(null);
-                setSearchQuery('');
-              }}
-              onResultClick={handleSearchResultClick}
+            <FileList
+              items={items}
+              viewMode={viewMode}
+              groupBy={groupBy}
+              loading={loading}
+              semanticResults={semanticResults}
+              selectedItem={selectedItem}
+              selectedItems={selectedItems}
+              renamingItem={renamingItem}
+              renameValue={renameValue}
+              onRenameChange={setRenameValue}
+              onRename={handleRename}
+              onRenameCancel={handleRenameCancel}
+              selectedFiles={selectedFiles}
+              onItemClick={(item, idx, e) => handleItemClick(item, idx, e, renamingItem)}
+              onItemDoubleClick={handleFolderClick}
+              onContextMenu={handleContextMenu}
+              onDropOnItem={handleDropOnItem}
+              onDragOver={handleDragOver}
+              onSearchResultClick={handleSearchResultClick}
+              onCloseSearch={() => { setSemanticResults(null); setSearchQuery(''); }}
             />
-
-            {semanticResults === null && (
-              <FileList
-                items={items}
-                viewMode={viewMode}
-                groupBy={groupBy}
-                loading={loading}
-                renamingItem={renamingItem}
-                renameValue={renameValue}
-                selectedItems={selectedItems}
-                selectedFiles={selectedFiles}
-                onItemClick={handleItemClick}
-                onItemDoubleClick={handleFolderClick}
-                onContextMenu={handleContextMenu}
-                onDragStart={handleDragStart}
-                onDragOver={handleDragOver}
-                onDropOnItem={handleDropOnItem}
-                onRenameValueChange={setRenameValue}
-                onRenameBlur={handleRename}
-                onRenameKeyDown={(e) => {
-                  if (e.key === 'Enter') handleRename();
-                  if (e.key === 'Escape') setRenamingItem(null);
-                }}
-              />
-            )}
-          </div>
-
-          <div className="explorer-statusbar">
-            <span>{items.length} items</span>
-            <span>{selectedItems.length} selected</span>
-            {selectedItem && (
-              <span>{selectedItem.type === 'file' ? `${formatFileSize(selectedItem.size)}` : 'Folder'}</span>
-            )}
-            {clipboard && <span>📋 {clipboard.operation === 'cut' ? 'Cut' : 'Copied'}: {clipboard.items.length} item(s)</span>}
           </div>
         </div>
+
+        <StatusBar
+          items={items}
+          selectedItems={selectedItems}
+          selectedItem={selectedItem}
+          clipboard={clipboard}
+        />
       </div>
 
+      {versioningFile && versioningFile.path && (
+        <aside className="versioning-panel">
+          <header className="panel-header">
+            <div className="header-title-group">
+              <h3>Version History</h3>
+            </div>
+            <div className="header-actions">
+              <button 
+                className="panel-refresh-btn" 
+                onClick={() => {
+                  // This is a hacky way to trigger a refresh if we don't want to pass a prop
+                  // But the key prop will handle initial load perfectly
+                  const event = new CustomEvent('refresh-version-timeline');
+                  window.dispatchEvent(event);
+                }}
+                title="Refresh history"
+              >
+                🔄
+              </button>
+              <button
+                className="panel-refresh-btn"
+                onClick={async () => {
+                  if (!versioningFile?.path) return;
+                  try {
+                    const result = await smartCleanupVersions(versioningFile.path);
+                    if (!result?.success) {
+                      alert('Cleanup failed: ' + (result?.error || 'Unknown error'));
+                      return;
+                    }
+
+                    const deleted = Number(result?.deleted_versions || 0);
+                    const freedMb = Number(result?.freed_mb || 0);
+                    if (deleted > 0) {
+                      alert(`Cleanup complete: removed ${deleted} version(s), freed ${freedMb.toFixed(2)} MB.`);
+                    } else {
+                      alert('Cleanup complete: 0 versions removed. Recent versions may be retained by policy.');
+                    }
+
+                    const event = new CustomEvent('refresh-version-timeline');
+                    window.dispatchEvent(event);
+                  } catch (err) {
+                    alert('Cleanup failed: ' + (err?.message || 'Unknown error'));
+                  }
+                }}
+                title="Smart cleanup history"
+              >
+                🧹
+              </button>
+              <button className="close-panel-btn" onClick={onCloseVersioning} title="Close">
+                ×
+              </button>
+            </div>
+          </header>
+          <div className="panel-content">
+            <VersionTimeline 
+              key={versioningFile.path} 
+              filePath={versioningFile.path} 
+            />
+          </div>
+        </aside>
+      )}
+
       <ContextMenu
-        visible={showContextMenu}
+        show={showContextMenu}
         position={contextMenuPos}
         selectedItem={selectedItem}
-        clipboard={clipboard}
-        onOpen={() => selectedItem && openFileWithDefaultApp(selectedItem.path)}
-        onCut={handleCut}
-        onCopy={handleCopy}
-        onPaste={handlePaste}
-        onRename={() => {
-          setRenamingItem(selectedItem);
-          setRenameValue(selectedItem?.name || '');
-        }}
-        onDelete={handleDelete}
-        onProperties={() => setShowProperties(true)}
-        onChatWithAI={() => {
-          setShowContextMenu(false);
-          onChatWithAI(selectedItem);
-        }}
         onClose={() => setShowContextMenu(false)}
-      />
-
-      <PropertiesModal
-        visible={showProperties}
-        selectedItem={selectedItem}
-        onClose={() => setShowProperties(false)}
+        onOpen={() => openFileWithDefaultApp(selectedItem?.path)}
+        onCut={() => handleCut(selectedItems.length > 0 ? selectedItems : (selectedItem ? [selectedItem] : []))}
+        onCopy={() => handleCopy(selectedItems.length > 0 ? selectedItems : (selectedItem ? [selectedItem] : []))}
+        onPaste={handlePaste}
+        onRename={() => { setRenamingItem(selectedItem); setRenameValue(selectedItem?.name); }}
+        onDelete={() => handleDelete(selectedItems.length > 0 ? selectedItems : (selectedItem ? [selectedItem] : []))}
+        onVersioning={onVersioning}
+        onChatWithAI={onChatWithAI}
+        hasClipboard={!!clipboard}
       />
     </div>
   );
-}
-
-// Utility function for file size (moved here temporarily, should use fileUtils)
-function formatFileSize(bytes) {
-  if (bytes === 0) return '0 B';
-  const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
 }
 
 export default FileExplorer;

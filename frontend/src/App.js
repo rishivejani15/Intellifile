@@ -1,13 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import './App.css';
 import FileExplorer from './components/FileExplorer/FileExplorer';
-import VersionTimeline from './components/Versioning/VersionTimeline';
 import ChatSidebar from './components/ChatSidebar';
+import SyncManager from './components/Sync/SyncManager';
 
 const ipcRenderer = window.electron?.ipcRenderer;
+
 function App() {
+  const [activeTab, setActiveTab] = useState('explorer');
   const [drives, setDrives] = useState([]);
   const [selectedFile, setSelectedFile] = useState(null);
+  const [versioningFile, setVersioningFile] = useState(null);
   const [showChatSidebar, setShowChatSidebar] = useState(false);
   const [selectedFileForChat, setSelectedFileForChat] = useState(null);
 
@@ -19,9 +22,7 @@ function App() {
     async function fetchDrives() {
       if (ipcRenderer) {
         const result = await ipcRenderer.invoke('get-drives-info');
-        console.log('Drives fetched:', result);
         if (result.success) {
-          console.log('Setting drives:', result.drives);
           setDrives(result.drives);
         }
       }
@@ -30,8 +31,14 @@ function App() {
   }, []);
 
   const handleFileSelect = (file) => {
-    console.log('File selected:', file);
     setSelectedFile(file);
+    setVersioningFile(null);
+  };
+
+  const handleVersioning = (file) => {
+    setSelectedFile(file);
+    setVersioningFile(file);
+    setActiveTab('explorer');
   };
 
   const handleOpenFile = () => {
@@ -45,6 +52,11 @@ function App() {
     setShowChatSidebar(true);
   };
 
+  // Debug: log versioningFile state
+  useEffect(() => {
+    console.log('[App] versioningFile:', versioningFile);
+  }, [versioningFile]);
+
   const closeChatSidebar = () => {
     setShowChatSidebar(false);
     setSelectedFileForChat(null);
@@ -53,23 +65,36 @@ function App() {
   return (
     <div className="App">
       <header className="App-header">
-        <h1>IntelliFile</h1>
+        <div className="tab-nav">
+          <button 
+            className={`tab-btn ${activeTab === 'explorer' ? 'active' : ''}`}
+            onClick={() => setActiveTab('explorer')}
+          >
+            Explorer
+          </button>
+          <button 
+            className={`tab-btn ${activeTab === 'sync' ? 'active' : ''}`}
+            onClick={() => setActiveTab('sync')}
+          >
+            Sync
+          </button>
+        </div>
       </header>
 
-      <div className="container">
-        <div className="main-content">
-          <div className="explorer-view">
-            <div className="explorer-main">
-              <div className="explorer-controls" style={{ padding: '10px', background: '#252526', borderBottom: '1px solid #333' }}>
+      <div className="app-container">
+        <main className="app-main">
+          {activeTab === 'explorer' ? (
+            <div className="explorer-wrapper">
+              <div className="explorer-toolbar">
                 <button
+                  className="toolbar-btn primary"
                   onClick={handleOpenFile}
                   disabled={!selectedFile}
-                  style={{ padding: '6px 12px', background: '#0e639c', color: 'white', border: 'none', borderRadius: '4px', cursor: selectedFile ? 'pointer' : 'not-allowed' }}
                 >
                   Open in External Editor
                 </button>
-                <span style={{ marginLeft: '12px', color: '#888', fontSize: '0.8rem' }}>
-                  {selectedFile ? 'Saving in external editor will trigger AI versioning automatically.' : 'Select a file to edit.'}
+                <span className="toolbar-hint">
+                  {selectedFile ? 'Saving will trigger AI versioning.' : 'Select a file.'}
                 </span>
               </div>
               <FileExplorer
@@ -77,21 +102,15 @@ function App() {
                 selectedFiles={{}}
                 drives={drives}
                 onChatWithAI={handleChatWithAI}
+                onVersioning={handleVersioning}
+                versioningFile={versioningFile}
+                onCloseVersioning={() => setVersioningFile(null)}
               />
             </div>
-            {selectedFile && selectedFile.editable && (
-              <VersionTimeline filePath={selectedFile.path} />
-            )}
-            {selectedFile && !selectedFile.editable && (
-              <div className="no-versioning-placeholder" style={{ padding: '20px', color: '#888', background: '#1e1e1e', height: '100%', borderLeft: '1px solid #333' }}>
-                <h3>File Properties</h3>
-                <p><strong>Name:</strong> {selectedFile.name}</p>
-                <p><strong>Type:</strong> {selectedFile.ext || 'Folder'}</p>
-                <p><em>AI Versioning is not yet available for this file type.</em></p>
-              </div>
-            )}
-          </div>
-        </div>
+          ) : (
+            <SyncManager />
+          )}
+        </main>
       </div>
 
       {showChatSidebar && selectedFileForChat && (

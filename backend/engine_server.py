@@ -142,10 +142,22 @@ while True:
 
         elif action == "restore_version":
             try:
-                from core.versioning.rollback_manager import restore_version
+                import importlib
+                import core.versioning.rollback_manager as rollback_manager
+                rollback_manager = importlib.reload(rollback_manager)
                 file_path = request.get("file_path")
                 version_id = request.get("version_id")
-                result = restore_version(file_path, version_id)
+                result = rollback_manager.restore_version(file_path, version_id)
+                result["_id"] = req_id
+                print(json.dumps(result), flush=True)
+            except Exception as e:
+                print(json.dumps({"_id": req_id, "error": str(e)}), flush=True)
+
+        elif action == "smart_cleanup":
+            try:
+                from core.versioning.cleanup_manager import run_smart_cleanup
+                file_path = request.get("file_path")
+                result = run_smart_cleanup(file_path)
                 result["_id"] = req_id
                 print(json.dumps(result), flush=True)
             except Exception as e:

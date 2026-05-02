@@ -10,7 +10,7 @@
     "build": "react-scripts build",
     "electron-start": "wait-on http://localhost:3000 && electron .",
     "electron-dev": "electron .",
-    "backend": "cd .. && python -m uvicorn backend.chat.backend.main:app --host 127.0.0.1 --port 8000",
+    "backend": "cd.. && cd backend && python app.py",
     "dev": "concurrently \"npm run backend\" \"npm start\""
   },
   "dependencies": {
@@ -19,11 +19,13 @@
     "react": "^18.2.0",
     "react-diff-view": "^3.3.2",
     "react-dom": "^18.2.0",
-    "react-scripts": "^5.0.1"
+    "react-scripts": "^5.0.1",
+    "wrtc": "^0.4.7",
+    "ws": "^8.20.0"
   },
   "devDependencies": {
     "concurrently": "^8.0.0",
-    "electron": "^41.3.0",
+    "electron": "^41.4.0",
     "wait-on": "^7.0.0"
   },
   "eslintConfig": {

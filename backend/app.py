@@ -6,7 +6,6 @@ import os
 import threading
 import time
 
-# Import backend chat functions
 from chat.backend.llm import ingest_file, chat
 
 class IntelliFileApp:
@@ -25,6 +24,9 @@ class IntelliFileApp:
     def start_backend(self):
         backend_path = os.path.join(os.getcwd(), "backend")
         python_exe = sys.executable
+        if not os.path.isdir(backend_path):
+            print(f"[ERROR] Backend path does not exist: {backend_path}")
+            return
         self.backend_process = subprocess.Popen(
             [
                 python_exe,
@@ -99,7 +101,9 @@ class IntelliFileApp:
         self.root.destroy()
 
 if __name__ == "__main__":
-    root = tk.Tk()
-    app = IntelliFileApp(root)
-    root.protocol("WM_DELETE_WINDOW", app.on_closing)
-    root.mainloop()
+    # Tkinter GUI disabled - using Electron frontend instead
+    pass
+    # root = tk.Tk()
+    # app = IntelliFileApp(root)
+    # root.protocol("WM_DELETE_WINDOW", app.on_closing)
+    # root.mainloop()

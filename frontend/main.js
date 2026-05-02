@@ -1,6 +1,7 @@
 const { app, BrowserWindow, Menu, ipcMain, shell, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 const { spawn } = require('child_process');
 const axios = require('axios');
 
@@ -24,7 +25,12 @@ console.log('[Python] Using executable:', PYTHON_EXECUTABLE);
 const isDev = true;
 
 // Supported file extensions
-const EDITABLE_EXTENSIONS = ['.py', '.js', '.java', '.cpp', '.c', '.go', '.txt', '.md', '.json', '.xml', '.html', '.css', '.ts', '.jsx', '.tsx'];
+const EDITABLE_EXTENSIONS = [
+  '.py', '.js', '.java', '.cpp', '.c', '.go', '.txt', '.md', '.json', '.xml', 
+  '.html', '.htm', '.css', '.scss', '.less', '.ts', '.jsx', '.tsx', '.docx', '.xlsx',
+  '.csv', '.env', '.gitignore', '.yml', '.yaml', '.sql', '.sh', '.bash', '.ps1', '.bat', 
+  '.log', '.ini', '.cfg', '.conf', '.toml', '.vue', '.svelte', '.h', '.hpp', '.cs', '.rs', '.rb', '.php'
+];
 
 // Windows system files and folders to hide from users
 const SYSTEM_FILES_TO_HIDE = [
@@ -84,17 +90,21 @@ const PROTECTED_PATHS = [
 function isSystemFile(filename) {
   const lower = filename.toLowerCase();
   const ext = path.extname(lower);
-
+  // Explicitly allow important configuration files that start with a dot
+  const ALLOWED_DOTFILES = ['.env', '.gitignore', '.antigravityignore', '.editorconfig'];
+  if (ALLOWED_DOTFILES.includes(lower)) return false;
   return SYSTEM_FILES_TO_HIDE.includes(lower) ||
     SYSTEM_FOLDERS_TO_HIDE.includes(lower) ||
-    SYSTEM_FILE_EXTENSIONS.includes(ext) ||
-    lower === 'desktop.ini' ||
-    lower === 'thumbs.db' ||
-    filename.startsWith('.');
+    SYSTEM_FILE_EXTENSIONS.includes(ext) || lower === 'desktop.ini' || lower === 'thumbs.db' || 
+    (filename.startsWith('.') && !ALLOWED_DOTFILES.includes(lower));
 }
 
 let pyProcess;
+
 let chatBackendProcess;
+
+let syncServerProcess;
+
 let pyReady = false;
 let pyBuffer = '';
 let pendingRequests = new Map();  // requestId -> { resolve, timeout }
@@ -284,26 +294,28 @@ function startPython() {
   });
 }
 
-function startChatBackend() {
-  const scriptPath = path.join(__dirname, '../backend/chat/backend/main.py');
-  console.log('[ChatBackend] Starting API from:', scriptPath);
 
   chatBackendProcess = spawn(PYTHON_EXECUTABLE, ['-m', 'uvicorn', 'backend.chat.backend.main:app', '--host', '127.0.0.1', '--port', '8000'], {
     cwd: path.join(__dirname, '..'),
     stdio: ['ignore', 'pipe', 'pipe']
   });
 
-  chatBackendProcess.stdout.on('data', (data) => {
-    console.log('[ChatBackend stdout]', data.toString().trim());
-  });
-
-  chatBackendProcess.stderr.on('data', (data) => {
-    console.error('[ChatBackend stderr]', data.toString().trim());
-  });
-
-  chatBackendProcess.on('close', (code) => {
-    console.log('[ChatBackend] Process exited with code:', code);
-    chatBackendProcess = null;
+// Helper: check whether a TCP port is open on localhost
+function isPortOpen(port, host = '127.0.0.1', timeout = 500) {
+  return new Promise((resolve) => {
+    const net = require('net');
+    const socket = new net.Socket();
+    let called = false;
+    const onDone = (isOpen) => {
+      if (called) return;
+      called = true;
+      try { socket.destroy(); } catch (e) {}
+      resolve(isOpen);
+    };
+    socket.setTimeout(timeout);
+    socket.once('error', () => onDone(false));
+    socket.once('timeout', () => onDone(false));
+    socket.connect(port, host, () => onDone(true));
   });
 }
 
@@ -390,85 +402,82 @@ ipcMain.handle('ingest-file', async (_event, filePath) => {
   }
 });
 
-ipcMain.handle('versions-list', async (_event, filePath) => {
-  try {
-    const response = await axios.get(`${CHAT_BACKEND_URL}/versions`, {
-      params: { file_path: filePath }
-    });
-    return response.data;
-  } catch (err) {
-    return { ok: false, versions: [], error: err.message || 'Failed to load versions.' };
-  }
+// Versioning via Python engine
+ipcMain.handle('get-versions', async (_event, filePath) => {
+  return readLiveVersionHistory(filePath);
 });
 
-// Backward-compatible channel for versionService.js
-ipcMain.handle('get-versions', async (_event, filePath) => {
-  try {
-    const response = await axios.get(`${CHAT_BACKEND_URL}/versions`, {
-      params: { file_path: filePath }
-    });
-    return { success: true, data: response.data?.versions || [] };
-  } catch (err) {
-    return { success: false, error: err.message || 'Failed to load versions.', data: [] };
-  }
+ipcMain.handle('versions-list', async (_event, filePath) => {
+  const result = readLiveVersionHistory(filePath);
+  return result.success ? { ok: true, versions: result.data || [] } : { ok: false, versions: [], error: result.error };
+});
+
+ipcMain.handle('compare-versions', async (_event, payload) => {
+  return sendToPython({
+    action: 'compare_versions',
+    file_path: payload.filePath || payload.file_path,
+    version_a: payload.versionA || payload.version_a,
+    version_b: payload.versionB || payload.version_b,
+  });
 });
 
 ipcMain.handle('versions-compare', async (_event, payload) => {
-  try {
-    const response = await axios.post(`${CHAT_BACKEND_URL}/versions/compare`, payload);
-    return response.data;
-  } catch (err) {
-    return { ok: false, error: err.message || 'Failed to compare versions.' };
-  }
+  return sendToPython({
+    action: 'compare_versions',
+    file_path: payload.file_path,
+    version_a: payload.version_a,
+    version_b: payload.version_b,
+  });
 });
 
-// Backward-compatible channel for versionService.js and VersionTimeline.js
-ipcMain.handle('compare-versions', async (_event, payload) => {
-  try {
-    const body = {
-      file_path: payload.filePath || payload.file_path,
-      version_a: payload.versionA || payload.version_a,
-      version_b: payload.versionB || payload.version_b,
-    };
-    const response = await axios.post(`${CHAT_BACKEND_URL}/versions/compare`, body);
-    return { success: true, data: response.data };
-  } catch (err) {
-    return { success: false, error: err.message || 'Failed to compare versions.' };
+ipcMain.handle('restore-version', async (_event, payload) => {
+  const result = await sendToPython({
+    action: 'restore_version',
+    file_path: payload.filePath || payload.file_path,
+    version_id: payload.versionId || payload.version_id,
+  });
+
+  if (result && result.success && win && !win.isDestroyed()) {
+    win.webContents.send('version-updated', {
+      filePath: payload.filePath || payload.file_path,
+      versionId: payload.versionId || payload.version_id,
+      summary: 'Version restored',
+      riskLevel: 'Low',
+    });
   }
+
+  return result;
+});
+
+ipcMain.handle('smart-cleanup', async (_event, filePath) => {
+  return sendToPython({
+    action: 'smart_cleanup',
+    file_path: filePath,
+  });
+});
+
+ipcMain.handle('smart-cleanup-versions', async (_event, filePath) => {
+  return sendToPython({
+    action: 'smart_cleanup',
+    file_path: filePath,
+  });
 });
 
 ipcMain.handle('versions-restore', async (_event, payload) => {
-  try {
-    const response = await axios.post(`${CHAT_BACKEND_URL}/versions/restore`, payload);
-    return response.data;
-  } catch (err) {
-    return { success: false, error: err.message || 'Failed to restore version.' };
-  }
+  return sendToPython({
+    action: 'restore_version',
+    file_path: payload.file_path,
+    version_id: payload.version_id,
+  });
 });
 
-// Backward-compatible channel for versionService.js
-ipcMain.handle('restore-version', async (_event, payload) => {
-  try {
-    const body = {
-      file_path: payload.filePath || payload.file_path,
-      version_id: payload.versionId || payload.version_id,
-    };
-    const response = await axios.post(`${CHAT_BACKEND_URL}/versions/restore`, body);
-    return response.data;
-  } catch (err) {
-    return { success: false, error: err.message || 'Failed to restore version.' };
-  }
-});
-
-// Save snapshot without rollback by ingesting path-based file.
 ipcMain.handle('save-version', async (_event, payload) => {
-  try {
-    const filePath = payload.filePath || payload.file_path;
-    const response = await axios.post(`${CHAT_BACKEND_URL}/upload_path`, { file_path: filePath });
-    return { success: true, data: response.data };
-  } catch (err) {
-    return { success: false, error: err.message || 'Failed to save version.' };
-  }
+  return sendToPython({
+    action: 'save_version',
+    file_path: payload.filePath || payload.file_path,
+    old_content: payload.oldContent || payload.old_content || '',
+    new_content: payload.newContent || payload.new_content || '',
+  });
 });
 
 // Legacy chat call expected by ChatSidebar.jsx
@@ -495,6 +504,94 @@ ipcMain.handle('clear-faiss', async () => {
 
 function isProtectedPath(filePath) {
   return PROTECTED_PATHS.some(pattern => pattern.test(filePath));
+}
+
+// ── File Version Watching with Debounce ──────────────────────────────────────
+
+async function startWatchingFile(filePath) {
+  if (fileWatchers.has(filePath)) return; // Already watching this file
+
+  const chokidar = require('chokidar');
+  
+  const watcher = chokidar.watch(filePath, {
+    persistent: true,
+    ignoreInitial: true,
+    awaitWriteFinish: { stabilityThreshold: 800, pollInterval: 100 }
+  });
+
+  fileWatchers.set(filePath, watcher);
+
+  watcher.on('change', (p) => {
+    console.log(`[Watcher] Raw Change detected: ${p}`);
+    const normP = p.toLowerCase().replace(/\//g, '\\');
+    
+    if (debounceTimers.has(normP)) {
+      clearTimeout(debounceTimers.get(normP));
+    }
+    
+    debounceTimers.set(normP, setTimeout(async () => {
+      debounceTimers.delete(normP);
+      console.log(`[Watcher] Processing debounced change for: ${p}`);
+      
+      const extP = path.extname(p).toLowerCase();
+      const isBinaryP = ['.docx', '.xlsx'].includes(extP);
+
+      try {
+        if (!fs.existsSync(p)) return; // Handle rapid temp file deletions
+        let currentVal = isBinaryP ? fs.statSync(p).mtimeMs.toString() : fs.readFileSync(p, 'utf-8');
+        let lastVal = fileContents.get(normP) || '';
+
+        if (!isBinaryP && currentVal.trim() === lastVal.trim()) return;
+        if (isBinaryP && currentVal === lastVal) return;
+
+        console.log(`[Watcher] Change verified. Triggering version save...`);
+        // For binary files, pass path as "content" to let engine parse it
+         const result = await sendToPython({ action: "save_version", file_path: p, old_content: old, new_content: c });
+      
+      // TRIGGER INSTANT UI UPDATE
+      if (result && result.success && win) {
+        win.webContents.send('version-updated', { 
+            filePath: p, 
+            versionId: result.data.version_id,
+            summary: result.data.summary,
+            riskLevel: result.data.risk_level
+        });
+      }
+
+        if (result && result.success) {
+          fileContents.set(normP, currentVal);
+          if (win) {
+            // Sync with VersionTimeline.js which expects 'version-updated' and { filePath }
+            win.webContents.send('version-updated', {
+              filePath: p,
+              versionId: result.data.version_id,
+              summary: result.data.summary,
+              riskLevel: result.data.risk_level
+            });
+          }
+        }
+      } catch (err) {
+        console.error(`[Watcher] Update error: ${err.message}`);
+      }
+    }, 500)); // 2.5-second debounce window to outlast MS Word's save process
+  });
+
+  watcher.on('unlink', (p) => stopWatchingFile(p));
+}
+
+function stopWatchingFile(filePath) {
+  const watcher = fileWatchers.get(filePath);
+  if (watcher) {
+    watcher.close();
+    fileWatchers.delete(filePath);
+    const normP = filePath.toLowerCase().replace(/\//g, '\\');
+    fileContents.delete(normP);
+    const timer = debounceTimers.get(normP);
+    if (timer) {
+      clearTimeout(timer);
+      debounceTimers.delete(normP);
+    }
+  }
 }
 
 // Calculate folder size recursively
@@ -941,6 +1038,9 @@ function createWindow() {
     }
   });
 
+  // Set win for version watching
+  win = mainWindow;
+
   const startUrl = isDev
     ? 'http://localhost:3000'
     : `file://${path.join(__dirname, '../build/index.html')}`;
@@ -951,7 +1051,10 @@ function createWindow() {
     mainWindow.webContents.openDevTools();
   }
 
-  mainWindow.on('closed', () => (mainWindow = null));
+  mainWindow.on('closed', () => {
+    mainWindow = null;
+    win = null;
+  });
 
 }
 

@@ -2,6 +2,7 @@ from utils.file_hash import generate_sha256
 from datetime import datetime, timezone
 import os
 import json
+from core.versioning.snapshot_manager import list_versions
 
 class VersionEngine:
     def __init__(self):
@@ -23,7 +24,16 @@ class VersionEngine:
 
     def detect_format(self, file_path):
         ext = os.path.splitext(file_path)[1].lower()
-        if ext in [".txt", ".py", ".js", ".json", ".md", ".html", ".css"]:
+        
+        TEXT_EXTENSIONS = {
+            ".txt", ".md", ".json", ".csv", ".py", ".js", ".jsx", ".ts", ".tsx", 
+            ".html", ".htm", ".css", ".scss", ".less", ".java", ".c", ".cpp", ".h", 
+            ".hpp", ".cs", ".go", ".rs", ".rb", ".php", ".sh", ".bash", ".yml", 
+            ".yaml", ".xml", ".ini", ".cfg", ".conf", ".sql", ".bat", ".ps1", 
+            ".log", ".env", ".gitignore", ".toml", ".vue", ".svelte"
+        }
+        
+        if ext in TEXT_EXTENSIONS:
             return "text"
         elif ext == ".docx":
             return "word"
@@ -68,7 +78,40 @@ class VersionEngine:
             
             added_count = len([p for p in diff.get('para_diff', []) if p.get('type') == 'added'])
             removed_count = len([p for p in diff.get('para_diff', []) if p.get('type') == 'removed'])
-            summary = f"Word doc updated: {added_count} added, {removed_count} removed paragraphs."
+            modified_count = len([p for p in diff.get('para_diff', []) if p.get('type') == 'modified'])
+            
+            w_added = sum([p.get('words_added', 0) for p in diff.get('para_diff', [])])
+            w_removed = sum([p.get('words_removed', 0) for p in diff.get('para_diff', [])])
+            
+            is_initial = len(list_versions(file_path)) <= 1 # If 0 or 1 (just saved), it's baseline
+            
+            summary_parts = []
+            if added_count > 0: 
+                label = "paragraph" if added_count == 1 else "paragraphs"
+                summary_parts.append(f"{added_count} {label} added")
+            if removed_count > 0: 
+                label = "paragraph" if removed_count == 1 else "paragraphs"
+                summary_parts.append(f"{removed_count} {label} removed")
+            if modified_count > 0: 
+                label = "paragraph" if modified_count == 1 else "paragraphs"
+                summary_parts.append(f"{modified_count} {label} modified")
+            
+            # Show word detail ONLY if it's not the initial version
+            detail = ""
+            if not is_initial:
+                w_added_label = "word" if w_added == 1 else "words"
+                w_removed_label = "word" if w_removed == 1 else "words"
+                detail_parts = []
+                if w_added > 0: detail_parts.append(f"{w_added} {w_added_label} added")
+                if w_removed > 0: detail_parts.append(f"{w_removed} {w_removed_label} removed")
+                detail = f" ({', '.join(detail_parts)})" if detail_parts else ""
+            
+            summary = f"Word doc updated: {', '.join(summary_parts)}{detail}."
+            
+            # Shield 3: Hidden Macros Detection
+            if diff.get("has_macros"):
+                macro_note = " (MACRO-ENABLED)" if not diff.get("macro_changed") else " (MACROS MODIFIED/ADDED)"
+                summary += macro_note
         elif format_type == "excel":
             from core.versioning.excel_diff_engine import compare_excel_structures
             from parsers.excel_parser import extract_excel_structure
@@ -113,6 +156,11 @@ class VersionEngine:
                 prefix = f"Sheet '{diff['added_sheets'][0]}' added"
             
             summary = f"{prefix} ({diff.get('changed_cells_count', 0)} cells changed)."
+            
+            # Shield 3: Hidden Macros Detection
+            if diff.get("has_macros"):
+                macro_note = " (MACRO-ENABLED)" if not diff.get("macro_changed") else " (MACROS MODIFIED/ADDED)"
+                summary += macro_note
         else:
             diff = "Binary file change detected."
             semantic_data = {}
@@ -125,11 +173,13 @@ class VersionEngine:
 
         risk = semantic_results.get("severity", "Low") if format_type != "binary" else "Low"
         
-        # Calculate true stability instead of hardcoding 0.9
+        # Calculate true semantic stability using the IWSD risk score
+        current_risk = semantic_results.get("risk_score", 0.0)
+        
         if format_type == "text":
-            stability = calculate_stability(old_content, new_content)
+            stability = calculate_stability(old_content, new_content, risk_score=current_risk)
         elif format_type in ["word", "excel"]:
-            stability = calculate_stability(old_str, new_str)
+            stability = calculate_stability(old_str, new_str, risk_score=current_risk)
         else:
             stability = 0.9
 
@@ -190,6 +240,20 @@ class VersionEngine:
         if format_type in ["word", "excel"] and result.get("raw_structure"):
             metadata["structured_data"] = result["raw_structure"]
 
-        version_id = save_snapshot(file_path, new_content, metadata)
+        # Detection of first version to use original timestamp for a historically accurate timeline
+        custom_timestamp = None
+        if not list_versions(file_path):
+            try:
+                # Use the oldest possible date (minimum of creation and modification)
+                # This handles cases where a file was moved/copied (which resets ctime)
+                ctime = os.path.getctime(file_path)
+                mtime = os.path.getmtime(file_path)
+                oldest_time = min(ctime, mtime)
+                
+                custom_timestamp = datetime.fromtimestamp(oldest_time, timezone.utc).strftime("%Y%m%d%H%M%S%f")
+            except Exception:
+                pass
+
+        version_id = save_snapshot(file_path, new_content, metadata, custom_timestamp=custom_timestamp)
         metadata["version_id"] = version_id
         return metadata

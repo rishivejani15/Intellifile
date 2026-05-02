@@ -6,33 +6,11 @@ function ChatSidebar({ file, onClose }) {
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [ingesting, setIngesting] = useState(false);
-  const [chatLocked, setChatLocked] = useState(false);
-  const [chatLockReason, setChatLockReason] = useState('');
   const messagesEndRef = useRef(null);
   const lastIngestedPath = useRef(null);
 
   useEffect(() => {
-    const checkChatStatus = async () => {
-      try {
-        const status = await window.intellifile.chatStatus();
-        const locked = !(status && status.enabled);
-        setChatLocked(locked);
-        setChatLockReason(status?.reason || 'Chat is currently unavailable.');
-      } catch (error) {
-        setChatLocked(true);
-        setChatLockReason('Unable to verify chat availability.');
-      }
-    };
-
-    checkChatStatus();
-  }, []);
-
-  useEffect(() => {
     const ingestFile = async () => {
-      if (chatLocked) {
-        setMessages([{ role: 'ai', content: chatLockReason || 'Chat is currently locked.' }]);
-        return;
-      }
       if (lastIngestedPath.current === file.path) return;
 
       setIngesting(true);
@@ -64,7 +42,7 @@ function ChatSidebar({ file, onClose }) {
     if (file?.path) {
       ingestFile();
     }
-  }, [file?.path, file?.name, chatLocked, chatLockReason]);
+  }, [file?.path]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -73,7 +51,7 @@ function ChatSidebar({ file, onClose }) {
   useEffect(scrollToBottom, [messages]);
 
   const sendMessage = async () => {
-    if (!input.trim() || loading || chatLocked) return;
+    if (!input.trim() || loading) return;
 
     const userMessage = { role: 'user', content: input };
     setMessages(prev => [...prev, userMessage]);
@@ -135,7 +113,7 @@ function ChatSidebar({ file, onClose }) {
       <div className="chat-messages">
         {messages.length === 0 && !ingesting && (
           <div className="welcome-message">
-            {chatLocked ? (chatLockReason || 'Chat is currently unavailable.') : 'Ingesting file... Please wait.'}
+            Ingesting file... Please wait.
           </div>
         )}
         {ingesting && (
@@ -160,10 +138,10 @@ function ChatSidebar({ file, onClose }) {
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyPress={handleKeyPress}
-          placeholder={chatLocked ? (chatLockReason || 'Chat is locked') : 'Type your message...'}
-          disabled={loading || chatLocked}
+          placeholder="Type your message..."
+          disabled={loading}
         />
-        <button onClick={sendMessage} disabled={!input.trim() || loading || chatLocked}>
+        <button onClick={sendMessage} disabled={!input.trim() || loading}>
           Send
         </button>
       </div>

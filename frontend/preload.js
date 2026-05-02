@@ -31,9 +31,6 @@ contextBridge.exposeInMainWorld('intellifile', {
   chatAsk: (query) => {
     return ipcRenderer.invoke('chat-ask', query);
   },
-  chatStatus: () => {
-    return ipcRenderer.invoke('chat-status');
-  },
   startChatStream: (query) => {
     return ipcRenderer.send('chat-stream-start', query);
   },
@@ -64,6 +61,60 @@ contextBridge.exposeInMainWorld('intellifile', {
   restoreVersion: (payload) => {
     return ipcRenderer.invoke('versions-restore', payload);
   },
+  // Sync — local file management
+  getSyncFiles: () => {
+    return ipcRenderer.invoke('get-sync-files');
+  },
+  selectFilesForSync: () => {
+    return ipcRenderer.invoke('select-files-for-sync');
+  },
+  removeSyncFile: (fileName) => {
+    return ipcRenderer.invoke('remove-sync-file', fileName);
+  },
+
+  // Sync — remote engine (signaling + WebRTC relay)
+  syncConnect: (opts) => {
+    return ipcRenderer.invoke('sync-connect', opts);
+  },
+  syncDisconnect: () => {
+    return ipcRenderer.invoke('sync-disconnect');
+  },
+  syncApprove: (filepath) => {
+    return ipcRenderer.invoke('sync-approve', filepath);
+  },
+  syncReject: (filepath) => {
+    return ipcRenderer.invoke('sync-reject', filepath);
+  },
+  syncApproveAll: () => {
+    return ipcRenderer.invoke('sync-approve-all');
+  },
+  syncRejectAll: () => {
+    return ipcRenderer.invoke('sync-reject-all');
+  },
+  syncGetPending: () => {
+    return ipcRenderer.invoke('sync-get-pending');
+  },
+  onSyncStatus: (callback) => {
+    const handler = (_event, data) => callback(data);
+    ipcRenderer.on('sync-status', handler);
+    return () => ipcRenderer.removeListener('sync-status', handler);
+  },
+  onSyncLog: (callback) => {
+    const handler = (_event, msg) => callback(msg);
+    ipcRenderer.on('sync-log', handler);
+    return () => ipcRenderer.removeListener('sync-log', handler);
+  },
+  onSyncFiles: (callback) => {
+    const handler = (_event, files) => callback(files);
+    ipcRenderer.on('sync-files', handler);
+    return () => ipcRenderer.removeListener('sync-files', handler);
+  },
+  onSyncPending: (callback) => {
+    const handler = (_event, changes) => callback(changes);
+    ipcRenderer.on('sync-pending', handler);
+    return () => ipcRenderer.removeListener('sync-pending', handler);
+  },
+
   // Compatibility aliases for existing UI components.
   ingestFile: (filePath) => {
     return ipcRenderer.invoke('ingest-file', filePath);
