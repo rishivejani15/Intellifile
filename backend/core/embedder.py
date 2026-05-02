@@ -22,7 +22,7 @@ def build_faiss():
     embeddings = MODEL.encode(
         texts,
         normalize_embeddings=True,
-        batch_size=64,
+        batch_size=256,
         show_progress_bar=True,
     ).astype("float32")
 

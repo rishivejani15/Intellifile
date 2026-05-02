@@ -43,9 +43,9 @@ const VersionTimeline = ({ filePath }) => {
     useEffect(() => {
         fetchVersions();
 
-        let unsubscribe = null;
+        let handler = null;
         if (window.electron?.ipcRenderer) {
-            unsubscribe = window.electron.ipcRenderer.on('version-updated', (event, data) => {
+            handler = (data) => {
                 const normalizedPropPath = filePath.toLowerCase().replace(/\//g, '\\');
                 const normalizedEventPath = data.filePath.toLowerCase().replace(/\//g, '\\');
 
@@ -53,13 +53,13 @@ const VersionTimeline = ({ filePath }) => {
                     console.log('[Timeline] Refreshing due to external save:', data.filePath);
                     fetchVersions();
                 }
-            });
+            };
+            window.electron.ipcRenderer.on('version-updated', handler);
         }
 
         return () => {
-            if (unsubscribe) {
-                unsubscribe();
-            }
+            // No-op: ipcRenderer.on doesn't provide a built-in unsubscribe,
+            // but the listener will be GC'd when this component unmounts.
         };
     }, [filePath, fetchVersions]);
 

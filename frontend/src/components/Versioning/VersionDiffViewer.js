@@ -1,5 +1,5 @@
 import React from 'react';
-import { parseDiff, Diff, Hunk, Header } from 'react-diff-view';
+import { parseDiff, Diff, Hunk } from 'react-diff-view';
 import 'react-diff-view/style/index.css';
 import './versioning.css';
 
