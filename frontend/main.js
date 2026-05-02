@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, ipcMain, shell, dialog } = require('electron');
+const { app, BrowserWindow, Menu, ipcMain, shell, dialog, clipboard, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
@@ -81,7 +81,8 @@ const PROTECTED_PATHS = [
   /^[A-Z]:\\Config\.Msi/i
 ];
 
-function isSystemFile(filename) {
+function isSystemFile(filename, showHidden = false) {
+  if (showHidden) return false;
   const lower = filename.toLowerCase();
   const ext = path.extname(lower);
 
@@ -99,6 +100,8 @@ let pyReady = false;
 let pyBuffer = '';
 let pendingRequests = new Map();  // requestId -> { resolve, timeout }
 let requestCounter = 0;
+let autoIndexRequested = false;
+let indexInProgress = false;
 let fileWatchers = new Map();
 let fileContents = new Map();
 let debounceTimers = new Map();
@@ -220,9 +223,15 @@ function startPython() {
   const scriptPath = path.join(__dirname, "../backend/engine_server.py");
   console.log('[Python] Starting engine from:', scriptPath);
 
+  const pythonEnv = { ...process.env };
+  if (!pythonEnv.IF_INDEX_SCOPE) {
+    pythonEnv.IF_INDEX_SCOPE = 'all';
+  }
+
   pyProcess = spawn(PYTHON_EXECUTABLE, [scriptPath], {
     cwd: path.join(__dirname, '..'),
-    stdio: ['pipe', 'pipe', 'pipe']
+    stdio: ['pipe', 'pipe', 'pipe'],
+    env: pythonEnv,
   });
 
   pyProcess.stdout.on("data", (data) => {
@@ -233,6 +242,7 @@ function startPython() {
     if (!pyReady && text.includes('IntelliFile Python Engine Ready')) {
       pyReady = true;
       console.log('[Python] ✅ Engine is ready — pyReady = true');
+      triggerAutoIndex();
     }
 
     // Buffer stdout and resolve pending requests when we get complete JSON lines
@@ -284,6 +294,22 @@ function startPython() {
   });
 }
 
+function triggerAutoIndex() {
+  if (autoIndexRequested || indexInProgress) return;
+  autoIndexRequested = true;
+  indexInProgress = true;
+  console.log('[Index] Auto-indexing started on app launch');
+  sendToPython({ action: "index" }, 1800000).then((res) => {
+    indexInProgress = false;
+    if (res && res.error) {
+      console.warn('[Index] Auto-indexing failed:', res.error);
+    } else {
+      console.log('[Index] Auto-indexing completed');
+    }
+    notifyIndexComplete(res);
+  });
+}
+
 function startChatBackend() {
   const scriptPath = path.join(__dirname, '../backend/chat/backend/main.py');
   console.log('[ChatBackend] Starting API from:', scriptPath);
@@ -307,9 +333,203 @@ function startChatBackend() {
   });
 }
 
+// ── NLP Date Parser for search queries ──────────────────
+function parseDateFromQuery(rawQuery) {
+  const MONTHS = {
+    january: 0, jan: 0, february: 1, feb: 1, march: 2, mar: 2,
+    april: 3, apr: 3, may: 4, june: 5, jun: 5, july: 6, jul: 6,
+    august: 7, aug: 7, september: 8, sep: 8, sept: 8,
+    october: 9, oct: 9, november: 10, nov: 10, december: 11, dec: 11,
+  };
+
+  let query = rawQuery;
+  let dateFrom = null;
+  let dateTo = null;
+
+  // Helper: build start/end of day timestamps
+  const startOfDay = (y, m, d) => new Date(y, m, d, 0, 0, 0).getTime() / 1000;
+  const endOfDay = (y, m, d) => new Date(y, m, d, 23, 59, 59).getTime() / 1000;
+  const endOfMonth = (y, m) => new Date(y, m + 1, 0, 23, 59, 59).getTime() / 1000;
+  const startOfMonth = (y, m) => new Date(y, m, 1, 0, 0, 0).getTime() / 1000;
+
+  const monthPattern = Object.keys(MONTHS).join('|');
+
+  // Pattern: "between <month> <year> and <month> <year>"
+  const betweenRe = new RegExp(
+    `between\\s+(${monthPattern})\\s*(\\d{4})\\s*and\\s+(${monthPattern})\\s*(\\d{4})`,
+    'i'
+  );
+  let match = query.match(betweenRe);
+  if (match) {
+    const m1 = MONTHS[match[1].toLowerCase()];
+    const y1 = parseInt(match[2]);
+    const m2 = MONTHS[match[3].toLowerCase()];
+    const y2 = parseInt(match[4]);
+    dateFrom = startOfMonth(y1, m1);
+    dateTo = endOfMonth(y2, m2);
+    query = query.replace(match[0], '').trim();
+  }
+
+  // Pattern: "from/on/dated <day>th? <month> <year>" or "<month> <day>, <year>"
+  if (!dateFrom && !dateTo) {
+    // "from 19th june 2025" / "on 19 june 2025" / "dated 5th march 2025"
+    const fromDayRe = new RegExp(
+      `(?:from|on|dated|created|of)\\s+(\\d{1,2})(?:st|nd|rd|th)?\\s+(${monthPattern})\\s+(\\d{4})`,
+      'i'
+    );
+    match = query.match(fromDayRe);
+    if (match) {
+      const day = parseInt(match[1]);
+      const month = MONTHS[match[2].toLowerCase()];
+      const year = parseInt(match[3]);
+      dateFrom = startOfDay(year, month, day);
+      dateTo = endOfDay(year, month, day);
+      query = query.replace(match[0], '').trim();
+    }
+  }
+
+  // Pattern: "<month> <day>, <year>" (e.g., "june 19, 2025")
+  if (!dateFrom && !dateTo) {
+    const mDayYearRe = new RegExp(
+      `(${monthPattern})\\s+(\\d{1,2})(?:st|nd|rd|th)?,?\\s+(\\d{4})`,
+      'i'
+    );
+    match = query.match(mDayYearRe);
+    if (match) {
+      const month = MONTHS[match[1].toLowerCase()];
+      const day = parseInt(match[2]);
+      const year = parseInt(match[3]);
+      dateFrom = startOfDay(year, month, day);
+      dateTo = endOfDay(year, month, day);
+      query = query.replace(match[0], '').trim();
+    }
+  }
+
+  // Pattern: "before <month> <year>" or "before <day> <month> <year>"
+  if (!dateFrom && !dateTo) {
+    const beforeMonthRe = new RegExp(
+      `before\\s+(?:(\\d{1,2})(?:st|nd|rd|th)?\\s+)?(${monthPattern})\\s+(\\d{4})`,
+      'i'
+    );
+    match = query.match(beforeMonthRe);
+    if (match) {
+      const month = MONTHS[match[2].toLowerCase()];
+      const year = parseInt(match[3]);
+      if (match[1]) {
+        dateTo = endOfDay(year, month, parseInt(match[1]));
+      } else {
+        dateTo = endOfMonth(year, month);
+      }
+      query = query.replace(match[0], '').trim();
+    }
+  }
+
+  // Pattern: "after <month> <year>" or "after <day> <month> <year>"
+  if (!dateFrom && !dateTo) {
+    const afterMonthRe = new RegExp(
+      `after\\s+(?:(\\d{1,2})(?:st|nd|rd|th)?\\s+)?(${monthPattern})\\s+(\\d{4})`,
+      'i'
+    );
+    match = query.match(afterMonthRe);
+    if (match) {
+      const month = MONTHS[match[2].toLowerCase()];
+      const year = parseInt(match[3]);
+      if (match[1]) {
+        dateFrom = startOfDay(year, month, parseInt(match[1]));
+      } else {
+        dateFrom = startOfMonth(year, month);
+      }
+      query = query.replace(match[0], '').trim();
+    }
+  }
+
+  // Pattern: "<month> <year>" (whole month, no day)
+  if (!dateFrom && !dateTo) {
+    const monthYearRe = new RegExp(
+      `(?:from|in|during)?\\s*(${monthPattern})\\s+(\\d{4})`,
+      'i'
+    );
+    match = query.match(monthYearRe);
+    if (match) {
+      const month = MONTHS[match[1].toLowerCase()];
+      const year = parseInt(match[2]);
+      dateFrom = startOfMonth(year, month);
+      dateTo = endOfMonth(year, month);
+      query = query.replace(match[0], '').trim();
+    }
+  }
+
+  // Pattern: "from/in/during <year>" or just "<year>"
+  if (!dateFrom && !dateTo) {
+    const yearOnlyRe = new RegExp(
+      `(?:from|in|during|year|of)?\\s*\\b(19\\d{2}|20\\d{2})\\b`,
+      'i'
+    );
+    match = query.match(yearOnlyRe);
+    if (match) {
+      const year = parseInt(match[1]);
+      dateFrom = startOfDay(year, 0, 1);
+      dateTo = endOfDay(year, 11, 31);
+      query = query.replace(match[0], '').trim();
+    }
+  }
+
+  // Relative dates: "yesterday", "last week", "last month", "today"
+  if (!dateFrom && !dateTo) {
+    const now = new Date();
+    if (/\byesterday\b/i.test(query)) {
+      const d = new Date(now);
+      d.setDate(d.getDate() - 1);
+      dateFrom = startOfDay(d.getFullYear(), d.getMonth(), d.getDate());
+      dateTo = endOfDay(d.getFullYear(), d.getMonth(), d.getDate());
+      query = query.replace(/\byesterday\b/i, '').trim();
+    } else if (/\btoday\b/i.test(query)) {
+      dateFrom = startOfDay(now.getFullYear(), now.getMonth(), now.getDate());
+      dateTo = endOfDay(now.getFullYear(), now.getMonth(), now.getDate());
+      query = query.replace(/\btoday\b/i, '').trim();
+    } else if (/\blast\s+week\b/i.test(query)) {
+      const d = new Date(now);
+      d.setDate(d.getDate() - 7);
+      dateFrom = startOfDay(d.getFullYear(), d.getMonth(), d.getDate());
+      dateTo = endOfDay(now.getFullYear(), now.getMonth(), now.getDate());
+      query = query.replace(/\blast\s+week\b/i, '').trim();
+    } else if (/\blast\s+month\b/i.test(query)) {
+      const d = new Date(now);
+      d.setMonth(d.getMonth() - 1);
+      dateFrom = startOfDay(d.getFullYear(), d.getMonth(), d.getDate());
+      dateTo = endOfDay(now.getFullYear(), now.getMonth(), now.getDate());
+      query = query.replace(/\blast\s+month\b/i, '').trim();
+    } else if (/\bthis\s+month\b/i.test(query)) {
+      dateFrom = startOfMonth(now.getFullYear(), now.getMonth());
+      dateTo = endOfDay(now.getFullYear(), now.getMonth(), now.getDate());
+      query = query.replace(/\bthis\s+month\b/i, '').trim();
+    } else if (/\bthis\s+year\b/i.test(query)) {
+      dateFrom = startOfDay(now.getFullYear(), 0, 1);
+      dateTo = endOfDay(now.getFullYear(), now.getMonth(), now.getDate());
+      query = query.replace(/\bthis\s+year\b/i, '').trim();
+    }
+  }
+
+  // Clean up filler words left behind
+  query = query.replace(/\b(containing|with|about|files?|from|created)\b/gi, ' ').replace(/\s+/g, ' ').trim();
+
+  return {
+    cleanQuery: query || rawQuery,  // Fallback to original if cleaning empties it
+    dateFrom: dateFrom ? Math.floor(dateFrom) : null,
+    dateTo: dateTo ? Math.floor(dateTo) : null,
+  };
+}
+
 ipcMain.handle("search", async (_, query) => {
   console.log('[IPC] search called, pyReady:', pyReady, 'query:', query);
-  return sendToPython({ action: "search", query });
+  const { cleanQuery, dateFrom, dateTo } = parseDateFromQuery(query);
+  console.log('[IPC] parsed date filter:', { cleanQuery, dateFrom, dateTo });
+  return sendToPython({
+    action: "search",
+    query: cleanQuery,
+    date_from: dateFrom,
+    date_to: dateTo,
+  });
 });
 
 ipcMain.handle("search-status", async () => {
@@ -318,7 +538,14 @@ ipcMain.handle("search-status", async () => {
 });
 
 ipcMain.handle("index-device", async () => {
-  return sendToPython({ action: "index" }, 1800000);  // 30-min timeout for full device
+  if (indexInProgress) {
+    return { status: 'running' };
+  }
+  indexInProgress = true;
+  const result = await sendToPython({ action: "index" }, 1800000);
+  indexInProgress = false;
+  notifyIndexComplete(result);
+  return result;
 });
 
 ipcMain.handle('chat-ask', async (_event, query) => {
@@ -530,6 +757,12 @@ function calculateFolderSize(folderPath) {
 let mainWindow;
 let ipcHandlersRegistered = false;
 
+function notifyIndexComplete(payload) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('index-complete', payload || {});
+  }
+}
+
 // Always-available handler for opening files with the OS default app
 ipcMain.handle('open-file', async (event, filePath) => {
   try {
@@ -554,7 +787,8 @@ function registerIpcHandlers() {
   ipcHandlersRegistered = true;
 
   // IPC Handlers for file operations
-  ipcMain.handle('list-directory', async (event, dirPath) => {
+  ipcMain.handle('list-directory', async (event, dirPath, options = {}) => {
+    const showHidden = options?.showHidden || false;
     try {
       console.log('[list-directory] called with:', dirPath);
       let resolvedPath = dirPath;
@@ -610,7 +844,7 @@ function registerIpcHandlers() {
 
       // Process items in parallel using Promise.all for better performance
       const itemPromises = fileList
-        .filter(item => !isSystemFile(item))
+        .filter(item => !isSystemFile(item, showHidden))
         .map(async item => {
           try {
             const fullPath = path.join(resolvedPath, item);
@@ -679,8 +913,17 @@ function registerIpcHandlers() {
 
   ipcMain.handle('read-file', async (event, filePath) => {
     try {
+      const stats = fs.statSync(filePath);
+      // Limit to 50KB for preview
+      if (stats.size > 50 * 1024) {
+        const fd = fs.openSync(filePath, 'r');
+        const buffer = Buffer.alloc(50 * 1024);
+        fs.readSync(fd, buffer, 0, 50 * 1024, 0);
+        fs.closeSync(fd);
+        return { success: true, content: buffer.toString('utf-8') + '\n... (truncated)' };
+      }
       const content = fs.readFileSync(filePath, 'utf-8');
-      return { content, success: true };
+      return { success: true, content };
     } catch (err) {
       return { content: null, success: false, error: err.message };
     }
@@ -838,6 +1081,157 @@ function registerIpcHandlers() {
   });
 
   ipcMain.handle('get-drives-info', getDrivesInfo);
+
+
+  // ── New File Creation ──
+  ipcMain.handle('create-file', async (event, filePath) => {
+    try {
+      if (fs.existsSync(filePath)) {
+        const dir = path.dirname(filePath);
+        const ext = path.extname(filePath);
+        const name = path.basename(filePath, ext);
+        let counter = 1;
+        let newPath = filePath;
+        while (fs.existsSync(newPath)) {
+          newPath = path.join(dir, `${name} (${counter})${ext}`);
+          counter++;
+        }
+        filePath = newPath;
+      }
+      fs.writeFileSync(filePath, '', 'utf-8');
+      return { success: true, path: filePath };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  // ── Open With (native dialog) ──
+  ipcMain.handle('open-with', async (event, filePath) => {
+    try {
+      if (process.platform === 'win32') {
+        const { exec } = require('child_process');
+        exec(`rundll32 shell32.dll,OpenAs_RunDLL "${filePath}"`);
+        return { success: true };
+      } else {
+        await shell.openPath(filePath);
+        return { success: true };
+      }
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  // ── Get File Details (extended metadata) ──
+  ipcMain.handle('get-file-details', async (event, filePath) => {
+    try {
+      const stats = fs.statSync(filePath);
+      const details = {
+        name: path.basename(filePath),
+        path: filePath,
+        ext: path.extname(filePath).toLowerCase(),
+        size: stats.size,
+        isDirectory: stats.isDirectory(),
+        created: stats.birthtimeMs,
+        modified: stats.mtimeMs,
+        accessed: stats.atimeMs,
+        isReadOnly: false,
+        isHidden: false,
+        itemCount: 0
+      };
+
+      // Check attributes on Windows
+      if (process.platform === 'win32') {
+        try {
+          const { execSync } = require('child_process');
+          const escapedPath = filePath.replace(/'/g, "''");
+          const output = execSync(
+            `powershell -NoProfile -Command "(Get-Item -LiteralPath '${escapedPath}' -Force).Attributes"`,
+            { timeout: 3000, encoding: 'utf-8' }
+          ).trim();
+          details.isReadOnly = output.includes('ReadOnly');
+          details.isHidden = output.includes('Hidden');
+          details.attributes = output;
+        } catch (e) {
+          // Non-critical, ignore
+        }
+      }
+
+      // Get item count for directories
+      if (stats.isDirectory()) {
+        try {
+          const children = fs.readdirSync(filePath);
+          details.itemCount = children.length;
+          // Calculate folder size asynchronously-safe
+          details.size = calculateFolderSize(filePath);
+        } catch (e) {
+          details.itemCount = 0;
+        }
+      }
+
+      return { success: true, details };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  // ── Open Terminal Here ──
+  ipcMain.handle('open-terminal-here', async (event, dirPath) => {
+    try {
+      const { exec } = require('child_process');
+      if (process.platform === 'win32') {
+        exec(`start powershell -NoExit -Command "Set-Location '${dirPath.replace(/'/g, "''")}'"`);
+      } else if (process.platform === 'darwin') {
+        exec(`open -a Terminal "${dirPath}"`);
+      } else {
+        exec(`x-terminal-emulator --working-directory="${dirPath}"`);
+      }
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  // ── Open in VS Code ──
+  ipcMain.handle('open-in-vscode', async (event, targetPath) => {
+    try {
+      const { exec } = require('child_process');
+      exec(`code "${targetPath}"`);
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  // ── Copy Path to Clipboard ──
+  ipcMain.handle('copy-to-clipboard', async (event, text) => {
+    try {
+      clipboard.writeText(text);
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  // ── Image Thumbnail ──
+  ipcMain.handle('get-thumbnail', async (event, filePath) => {
+    try {
+      const ext = path.extname(filePath).toLowerCase();
+      const imageExts = ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp', '.ico', '.svg'];
+      if (!imageExts.includes(ext)) {
+        return { success: false, error: 'Not an image file' };
+      }
+      // Read image and resize for thumbnail
+      const image = nativeImage.createFromPath(filePath);
+      if (image.isEmpty()) {
+        return { success: false, error: 'Could not load image' };
+      }
+      const thumbnail = image.resize({ width: 120, height: 120, quality: 'good' });
+      const dataUrl = thumbnail.toDataURL();
+      return { success: true, dataUrl };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
 
 }
 

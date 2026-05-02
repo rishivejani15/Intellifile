@@ -18,6 +18,8 @@ export const useKeyboardShortcuts = ({
   handleBack,
   handleForward,
   handleUp,
+  handleRefresh,
+  handleUndo,
   setSelectedItems,
   setSelectedItem,
   setRenamingItem,
@@ -25,7 +27,17 @@ export const useKeyboardShortcuts = ({
   setShowContextMenu,
 }) => {
   useEffect(() => {
+    const isEditableTarget = (target) => {
+      if (!target) return false;
+      if (target.isContentEditable) return true;
+      const tag = (target.tagName || '').toLowerCase();
+      return tag === 'input' || tag === 'textarea' || tag === 'select';
+    };
+
     const handleKeyDown = (e) => {
+      if (isEditableTarget(e.target)) {
+        return;
+      }
       if (e.ctrlKey && e.key === 'c') {
         handleCopy();
         e.preventDefault();
@@ -34,6 +46,9 @@ export const useKeyboardShortcuts = ({
         e.preventDefault();
       } else if (e.ctrlKey && e.key === 'v') {
         handlePaste();
+        e.preventDefault();
+      } else if (e.ctrlKey && e.key === 'z') {
+        handleUndo?.();
         e.preventDefault();
       } else if (e.key === 'Delete') {
         handleDelete();
@@ -59,6 +74,9 @@ export const useKeyboardShortcuts = ({
         e.preventDefault();
       } else if (e.altKey && e.key === 'ArrowUp') {
         handleUp();
+        e.preventDefault();
+      } else if (e.key === 'F5') {
+        handleRefresh?.();
         e.preventDefault();
       } else if (e.key === 'Escape') {
         setSelectedItems([]);

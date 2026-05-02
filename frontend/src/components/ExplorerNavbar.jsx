@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import './FileExplorer/FileExplorer.css';
 
 function ExplorerNavbar({
@@ -8,25 +8,46 @@ function ExplorerNavbar({
   history,
   viewMode,
   sortBy,
+  sortDirection,
   groupBy,
   searchQuery,
+  showHidden,
   engineReady,
   indexing,
-  indexedFolder,
+  indexPhase,
+  indexDetail,
+  indexPct,
+  indexMessage,
   semanticLoading,
   onAddressSubmit,
   onBreadcrumbClick,
   onBack,
   onForward,
   onUp,
+  onRefresh,
   onViewModeChange,
   onSortByChange,
+  onSortDirectionChange,
   onGroupByChange,
+  onShowHiddenChange,
   onCreateFolder,
-  onIndexDevice,
+  onCreateFile,
   onSearchChange,
   onSearchKeyDown,
 }) {
+  const [showNewDropdown, setShowNewDropdown] = useState(false);
+  const newDropdownRef = useRef(null);
+
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (newDropdownRef.current && !newDropdownRef.current.contains(e.target)) {
+        setShowNewDropdown(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
   return (
     <div className="explorer-navbar">
       <div className="nav-row">
@@ -53,6 +74,13 @@ function ExplorerNavbar({
             title="Up (Alt+↑)"
           >
             ⬆️
+          </button>
+          <button
+            className="nav-btn refresh-btn"
+            onClick={onRefresh}
+            title="Refresh (F5)"
+          >
+            🔄
           </button>
         </div>
 
@@ -87,12 +115,17 @@ function ExplorerNavbar({
         <div className="search-box">
           <input
             type="text"
-            placeholder={engineReady ? "🔍 Search (Enter for AI search)" : "🔍 Search (engine loading...)"}
+            placeholder={engineReady ? '🔍 Search (try "bills from june 2025")' : "🔍 Search (engine loading...)"}
             value={searchQuery}
             onChange={(e) => onSearchChange?.(e, 'query')}
             onKeyDown={onSearchKeyDown}
           />
           {semanticLoading && <span className="search-spinner">⏳</span>}
+          {searchQuery && /\b(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec|\d{4}|yesterday|today|last\s+week|last\s+month|this\s+month|this\s+year)\b/i.test(searchQuery) && (
+            <div className="date-filter-badge">
+              📅 Date filter active
+            </div>
+          )}
         </div>
 
         <div className="view-controls">
@@ -126,6 +159,13 @@ function ExplorerNavbar({
             <option value="size">Sort by Size</option>
             <option value="type">Sort by Type</option>
           </select>
+          <button
+            className="sort-direction-btn"
+            onClick={() => onSortDirectionChange?.(sortDirection === 'asc' ? 'desc' : 'asc')}
+            title={`Sort ${sortDirection === 'asc' ? 'Ascending' : 'Descending'} — Click to toggle`}
+          >
+            {sortDirection === 'asc' ? '▲' : '▼'}
+          </button>
         </div>
 
         <div className="group-controls">
@@ -137,23 +177,62 @@ function ExplorerNavbar({
         </div>
 
         <div className="action-buttons">
+          {/* New Dropdown */}
+          <div className="new-dropdown-wrapper" ref={newDropdownRef}>
+            <button
+              className="action-btn new-btn"
+              onClick={() => setShowNewDropdown(!showNewDropdown)}
+              title="Create new file or folder"
+            >
+              ➕ New ▾
+            </button>
+            {showNewDropdown && (
+              <div className="new-dropdown">
+                <div className="new-dropdown-item" onClick={() => { onCreateFolder?.(); setShowNewDropdown(false); }}>
+                  📁 Folder
+                </div>
+                <div className="new-dropdown-divider"></div>
+                <div className="new-dropdown-item" onClick={() => { onCreateFile?.('New Text Document.txt'); setShowNewDropdown(false); }}>
+                  📄 Text Document
+                </div>
+                <div className="new-dropdown-item" onClick={() => { onCreateFile?.('New Document.md'); setShowNewDropdown(false); }}>
+                  📝 Markdown
+                </div>
+                <div className="new-dropdown-item" onClick={() => { onCreateFile?.('New Document.json'); setShowNewDropdown(false); }}>
+                  {'{ }'} JSON
+                </div>
+                <div className="new-dropdown-item" onClick={() => { onCreateFile?.('New Script.py'); setShowNewDropdown(false); }}>
+                  🐍 Python
+                </div>
+                <div className="new-dropdown-item" onClick={() => { onCreateFile?.('New Script.js'); setShowNewDropdown(false); }}>
+                  ⚡ JavaScript
+                </div>
+                <div className="new-dropdown-item" onClick={() => { onCreateFile?.('New Page.html'); setShowNewDropdown(false); }}>
+                  🌐 HTML
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Hidden Toggle */}
           <button
-            className="action-btn"
-            onClick={onCreateFolder}
-            title="Create folder (Ctrl+N)"
+            className={`action-btn hidden-toggle ${showHidden ? 'active' : ''}`}
+            onClick={() => onShowHiddenChange?.(!showHidden)}
+            title={showHidden ? 'Hide hidden files' : 'Show hidden files'}
           >
-            ➕ New Folder
+            {showHidden ? '👁️' : '👁️‍🗨️'}
           </button>
-          <button
-            className="action-btn index-btn"
-            onClick={onIndexDevice}
-            disabled={indexing}
-            title={indexing ? 'Indexing in progress...' : engineReady ? 'Index your device for AI search' : 'Engine loading... click to try anyway'}
-          >
-            {indexing ? '⏳ Indexing…' : '🧠 Index Device'}
-          </button>
-          {indexedFolder && (
-            <span className="indexed-label" title={indexedFolder}>✅ Indexed</span>
+
+          {(indexing || indexMessage) && (
+            <div className={`index-status ${indexing ? 'running' : 'done'}`} title={indexDetail || indexMessage}>
+              <span className="index-dot" />
+              <span className="index-text">
+                {indexing ? `Indexing${indexPhase ? ` (${indexPhase})` : ''}` : (indexMessage || 'Index updated')}
+              </span>
+              {indexing && typeof indexPct === 'number' && (
+                <span className="index-pct">{indexPct}%</span>
+              )}
+            </div>
           )}
         </div>
       </div>

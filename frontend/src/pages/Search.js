@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect } from 'react';
-import { searchFiles, indexDevice, getSearchStatus } from '../services/searchService';
+import { searchFiles, getSearchStatus, onIndexProgress, onIndexComplete } from '../services/searchService';
 import './Search.css';
 
 const ipcRenderer = window.electron?.ipcRenderer;
@@ -9,7 +9,10 @@ export default function Search() {
   const [results, setResults] = useState([]);
   const [searching, setSearching] = useState(false);
   const [indexing, setIndexing] = useState(false);
-  const [indexedFolder, setIndexedFolder] = useState('');
+  const [indexPhase, setIndexPhase] = useState('');
+  const [indexDetail, setIndexDetail] = useState('');
+  const [indexPct, setIndexPct] = useState(null);
+  const [indexMessage, setIndexMessage] = useState('');
   const [ready, setReady] = useState(false);
   const [error, setError] = useState('');
 
@@ -30,23 +33,35 @@ export default function Search() {
     return () => clearInterval(interval);
   }, []);
 
-  // ── Index the device ────────────────────────
-  const handleIndex = useCallback(async () => {
-    try {
+  // ── Indexing status ────────────────────────
+  useEffect(() => {
+    const unsubscribeProgress = onIndexProgress((payload) => {
+      if (!payload || payload.type !== 'progress') return;
       setIndexing(true);
-      setError('');
-      const res = await indexDevice();
-
-      if (res.error) {
-        setError(res.error);
-      } else {
-        setIndexedFolder('Device Root');
+      setIndexPhase(payload.phase || '');
+      setIndexDetail(payload.detail || '');
+      setIndexPct(typeof payload.pct === 'number' ? payload.pct : null);
+      if (payload.detail) {
+        setIndexMessage('');
       }
-    } catch (err) {
-      setError(err.message);
-    } finally {
+    });
+
+    const unsubscribeComplete = onIndexComplete((payload) => {
       setIndexing(false);
-    }
+      setIndexPhase('');
+      setIndexDetail('');
+      setIndexPct(null);
+      if (payload && payload.error) {
+        setIndexMessage(`Indexing failed: ${payload.error}`);
+      } else {
+        setIndexMessage('Index updated');
+      }
+    });
+
+    return () => {
+      unsubscribeProgress();
+      unsubscribeComplete();
+    };
   }, []);
 
   // ── Search ────────────────────────────────
@@ -73,6 +88,18 @@ export default function Search() {
     }
   }, []);
 
+  // ── Format Unix timestamp ─────────────────
+  const formatDate = (timestamp) => {
+    if (!timestamp) return null;
+    const d = new Date(timestamp * 1000);
+    return d.toLocaleDateString('en-US', {
+      year: 'numeric', month: 'short', day: 'numeric'
+    });
+  };
+
+  // Detect if query has a date component (for UI badge)
+  const hasDateFilter = /\b(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec|\d{4}|yesterday|today|last\s+week|last\s+month|this\s+month|this\s+year)\b/i.test(query);
+
   return (
     <div className="search-page">
       <h2>Semantic Search</h2>
@@ -83,28 +110,23 @@ export default function Search() {
         </div>
       )}
 
-      {/* Device selector */}
-      <div className="index-section">
-        <button
-          className="index-btn"
-          onClick={handleIndex}
-          disabled={indexing || !ready}
-        >
-          {indexing ? 'Indexing…' : '💻 Index Device'}
-        </button>
-
-        {indexedFolder && (
-          <span className="indexed-label">
-            ✅ Indexed: <strong>{indexedFolder}</strong>
+      {(indexing || indexMessage) && (
+        <div className={`index-status ${indexing ? 'running' : 'done'}`} title={indexDetail || indexMessage}>
+          <span className="index-dot" />
+          <span className="index-text">
+            {indexing ? `Indexing${indexPhase ? ` (${indexPhase})` : ''}` : (indexMessage || 'Index updated')}
           </span>
-        )}
-      </div>
+          {indexing && typeof indexPct === 'number' && (
+            <span className="index-pct">{indexPct}%</span>
+          )}
+        </div>
+      )}
 
       {/* Search bar */}
       <form className="search-bar" onSubmit={handleSearch}>
         <input
           type="text"
-          placeholder="Search files semantically…"
+          placeholder='Search files… try "bills from june 2025" or "report last week"'
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           disabled={!ready}
@@ -113,6 +135,12 @@ export default function Search() {
           {searching ? 'Searching…' : 'Search'}
         </button>
       </form>
+
+      {hasDateFilter && query.trim() && (
+        <div className="date-filter-badge">
+          📅 Date filter detected — results will be filtered by file creation date
+        </div>
+      )}
 
       {error && <div className="search-error">{error}</div>}
 
@@ -130,8 +158,15 @@ export default function Search() {
             title={r.path}
           >
             <div className="result-path">{r.path}</div>
-            <div className="result-score">
-              Score: {(r.score * 100).toFixed(1)}%
+            <div className="result-meta">
+              <span className="result-score">
+                Score: {(r.score * 100).toFixed(1)}%
+              </span>
+              {r.created_time && (
+                <span className="result-date">
+                  📅 Created: {formatDate(r.created_time)}
+                </span>
+              )}
             </div>
           </div>
         ))}

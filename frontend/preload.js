@@ -28,6 +28,11 @@ contextBridge.exposeInMainWorld('intellifile', {
     ipcRenderer.on('index-progress', handler);
     return () => ipcRenderer.removeListener('index-progress', handler);
   },
+  onIndexComplete: (callback) => {
+    const handler = (_event, data) => callback(data);
+    ipcRenderer.on('index-complete', handler);
+    return () => ipcRenderer.removeListener('index-complete', handler);
+  },
   chatAsk: (query) => {
     return ipcRenderer.invoke('chat-ask', query);
   },
@@ -73,5 +78,28 @@ contextBridge.exposeInMainWorld('intellifile', {
   },
   clearFaiss: () => {
     return ipcRenderer.invoke('clear-faiss');
+  },
+
+  // ── New File Explorer APIs ──
+  createFile: (filePath) => {
+    return ipcRenderer.invoke('create-file', filePath);
+  },
+  openWith: (filePath) => {
+    return ipcRenderer.invoke('open-with', filePath);
+  },
+  getFileDetails: (filePath) => {
+    return ipcRenderer.invoke('get-file-details', filePath);
+  },
+  openTerminalHere: (dirPath) => {
+    return ipcRenderer.invoke('open-terminal-here', dirPath);
+  },
+  openInVSCode: (targetPath) => {
+    return ipcRenderer.invoke('open-in-vscode', targetPath);
+  },
+  copyToClipboard: (text) => {
+    return ipcRenderer.invoke('copy-to-clipboard', text);
+  },
+  getThumbnail: (filePath) => {
+    return ipcRenderer.invoke('get-thumbnail', filePath);
   },
 });

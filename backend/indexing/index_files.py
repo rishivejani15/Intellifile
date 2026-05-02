@@ -9,8 +9,15 @@ from core.db import init_db, get_connection, rebuild_fts
 
 
 # ── Parallel text extraction ────────────────────────────
-_EXTRACT_WORKERS = min(16, (os.cpu_count() or 4) * 2)
+_EXTRACT_WORKERS = min(8, (os.cpu_count() or 4))
 _BATCH_SIZE = 500          # files per commit batch
+_BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def _init_worker():
+    """Initializer for ProcessPoolExecutor children — ensures imports work."""
+    if _BACKEND_DIR not in sys.path:
+        sys.path.insert(0, _BACKEND_DIR)
 
 
 def _extract_one(path):
@@ -31,9 +38,9 @@ def _extract_one(path):
         return (path, None)
 
 
-def index_files_incremental(progress_cb=None):
+def index_files_incremental(root_folder=None, progress_cb=None):
     """
-    Scan the entire device fast, extract text in parallel, chunk, and store
+    Scan the device (or a specified root), extract text in parallel, chunk, and store
     in SQLite.  Returns a list of chunk IDs that were added or modified
     (to be passed to update_faiss).
 
@@ -47,11 +54,25 @@ def index_files_incremental(progress_cb=None):
     init_db()
     t0 = time.perf_counter()
 
-    _progress("scan", "Scanning drives…")
+    roots = root_folder
+    if isinstance(root_folder, str) and not root_folder.strip():
+        roots = None
 
-    files = {}  # path -> mtime
-    for path, mtime in fast_scan_device(max_workers=8):
-        files[path] = mtime
+    roots_label = "default-roots"
+    if roots is None:
+        roots_label = "default-roots"
+    elif isinstance(roots, (list, tuple)):
+        roots_label = ", ".join(roots) if roots else "(none)"
+    else:
+        roots_label = str(roots)
+
+    _progress("scan", f"Scanning ({roots_label})…")
+    print(f"Index scan roots: {roots_label}", flush=True)
+
+    files = {}  # path -> (mtime, ctime)
+
+    for path, mtime, ctime in fast_scan_device(max_workers=8, roots=roots):
+        files[path] = (mtime, ctime)
 
     total_scanned = len(files)
     scan_secs = time.perf_counter() - t0
@@ -65,44 +86,74 @@ def index_files_incremental(progress_cb=None):
 
     # Load the entire DB state into memory for instant O(1) lookups
     cur.execute("SELECT path, modified_time, id FROM files")
-    db_states = {row[0]: (row[2], row[1]) for row in cur.fetchall()}
+    db_states = {row[0]: (row[2], row[1]) for row in cur.fetchall()}  # path -> (file_id, mtime)
 
     # ── Determine which files actually need work ────────
     files_to_process = []      # (path, mtime, file_id_or_None)
+    new_files_data = []        # (path, filename, mtime, ctime) for bulk insert
+    modified_fids = []         # file_ids that changed
+    modified_updates = []      # (mtime, file_id) for bulk update
+    unchanged_files = 0
 
-    for path, modified_time in files.items():
+    _progress("diff", f"Comparing {len(files)} files against database…", pct=0)
+
+    for path, (modified_time, created_time) in files.items():
         if path in db_states:
             file_id, old_mtime = db_states[path]
             if old_mtime == modified_time:
+                unchanged_files += 1
                 continue
-            # modified → mark old chunks as affected, delete them
-            cur.execute("SELECT id FROM chunks WHERE file_id=?", (file_id,))
-            affected_chunk_ids.extend(r[0] for r in cur.fetchall())
-            cur.execute("DELETE FROM chunks WHERE file_id=?", (file_id,))
-            cur.execute("UPDATE files SET modified_time=? WHERE id=?",
-                        (modified_time, file_id))
+            modified_fids.append(file_id)
+            modified_updates.append((modified_time, file_id))
             files_to_process.append((path, modified_time, file_id))
         else:
-            # new file — insert the file row now so we have its ID
             filename = os.path.basename(path)
-            cur.execute(
-                "INSERT INTO files(path, filename, modified_time) VALUES (?, ?, ?)",
-                (path, filename, modified_time),
-            )
-            files_to_process.append((path, modified_time, cur.lastrowid))
+            new_files_data.append((path, filename, modified_time, created_time))
 
+    # Bulk-delete old chunks for modified files
+    if modified_fids:
+        for i in range(0, len(modified_fids), 500):
+            batch = modified_fids[i:i + 500]
+            ph = ",".join("?" * len(batch))
+            cur.execute(f"SELECT id FROM chunks WHERE file_id IN ({ph})", batch)
+            affected_chunk_ids.extend(r[0] for r in cur.fetchall())
+            cur.execute(f"DELETE FROM chunks WHERE file_id IN ({ph})", batch)
+        cur.executemany("UPDATE files SET modified_time=? WHERE id=?", modified_updates)
+
+    # Bulk-insert new file rows
+    if new_files_data:
+        cur.executemany(
+            "INSERT INTO files(path, filename, modified_time, created_time) VALUES (?, ?, ?, ?)",
+            new_files_data,
+        )
+        # Retrieve assigned IDs for new files
+        new_paths = [d[0] for d in new_files_data]
+        for i in range(0, len(new_paths), 500):
+            batch = new_paths[i:i + 500]
+            ph = ",".join("?" * len(batch))
+            cur.execute(f"SELECT path, id FROM files WHERE path IN ({ph})", batch)
+            path_to_id = {r[0]: r[1] for r in cur.fetchall()}
+            for p, _, mt, _ in new_files_data[i:i + 500]:
+                files_to_process.append((p, mt, path_to_id[p]))
+
+    new_files = len(new_files_data)
+    modified_files = len(modified_fids)
     conn.commit()  # commit file-row inserts/updates before extraction
 
     t_extract = time.perf_counter()
     _progress("extract", f"Extracting text from {len(files_to_process)} files…", pct=0)
     print(f"Files to extract: {len(files_to_process)}", flush=True)
 
-    # ── Extract text in parallel using a thread pool ────
+    # ── Extract text in parallel (ThreadPool) ───────────────
+    # ThreadPool is safe on low-RAM systems — no extra process overhead
     path_to_fid = {p: fid for p, _, fid in files_to_process}
     paths = [p for p, _, _ in files_to_process]
     total_to_extract = len(paths)
 
     processed = 0
+    sys.stderr.write(f"[engine] Extracting with ThreadPool ({_EXTRACT_WORKERS} workers)\n")
+    sys.stderr.flush()
+
     with concurrent.futures.ThreadPoolExecutor(max_workers=_EXTRACT_WORKERS) as pool:
         batch_data = []  # accumulate (file_id, idx, chunk_text)
 
@@ -161,6 +212,13 @@ def index_files_incremental(progress_cb=None):
             affected_chunk_ids.extend(r[0] for r in cur.fetchall())
             cur.execute(f"DELETE FROM chunks WHERE file_id IN ({placeholders})", batch)
             cur.execute(f"DELETE FROM files WHERE id IN ({placeholders})", batch)
+
+    deleted_files = len(deleted_fids)
+    print(
+        f"Index delta: {new_files} new, {modified_files} modified, "
+        f"{deleted_files} deleted, {unchanged_files} unchanged",
+        flush=True,
+    )
 
     conn.commit()
     conn.close()

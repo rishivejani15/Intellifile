@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { searchFiles, indexDevice } from '../../services/searchService';
+import { searchFiles, onIndexProgress, onIndexComplete } from '../../services/searchService';
 import { useNavigation } from '../../hooks/useNavigation';
 import { useFileExplorer } from '../../hooks/useFileExplorer';
 import { useKeyboardShortcuts } from '../../hooks/useKeyboardShortcuts';
@@ -8,6 +8,7 @@ import ExplorerNavbar from '../ExplorerNavbar';
 import FileList from '../FileList';
 import ContextMenu from '../ContextMenu';
 import PropertiesModal from '../PropertiesModal';
+import PreviewPanel from '../PreviewPanel';
 import SearchResults from '../SearchResults';
 import TabsBar from '../TabsBar';
 import './FileExplorer.css';
@@ -20,26 +21,33 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
   const [loading, setLoading] = useState(false);
   const [viewMode, setViewMode] = useState('icons');
   const [sortBy, setSortBy] = useState('name');
+  const [sortDirection, setSortDirection] = useState('asc');
   const [groupBy, setGroupBy] = useState('none');
+  const [showHidden, setShowHidden] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedItem, setSelectedItem] = useState(null);
   const [selectedItems, setSelectedItems] = useState([]);
   const [lastSelectedIndex, setLastSelectedIndex] = useState(null);
   const [showProperties, setShowProperties] = useState(false);
+  const [showPreview, setShowPreview] = useState(false);
   const [showContextMenu, setShowContextMenu] = useState(false);
   const [contextMenuPos, setContextMenuPos] = useState({ x: 0, y: 0 });
-  
+  const [isEmptySpaceContext, setIsEmptySpaceContext] = useState(false);
+
   // Search & Indexing State
   const [semanticResults, setSemanticResults] = useState(null);
   const [semanticLoading, setSemanticLoading] = useState(false);
   const [engineReady, setEngineReady] = useState(false);
   const [indexing, setIndexing] = useState(false);
-  const [indexedFolder, setIndexedFolder] = useState('');
+  const [indexPhase, setIndexPhase] = useState('');
+  const [indexDetail, setIndexDetail] = useState('');
+  const [indexPct, setIndexPct] = useState(null);
+  const [indexMessage, setIndexMessage] = useState('');
 
   // Custom Hooks
   const navigation = useNavigation(ipcRenderer);
   const fileOps = useFileExplorer(ipcRenderer);
-  
+
   // Destructure navigation
   const {
     currentPath, setCurrentPath, breadcrumb,
@@ -63,7 +71,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
     setRenamingItem(null);
     setShowContextMenu(false);
     try {
-      const result = await ipcRenderer?.invoke('list-directory', dirPath);
+      const result = await ipcRenderer?.invoke('list-directory', dirPath, { showHidden });
       if (!result || result.error) {
         console.error('Error loading directory:', result?.error || 'Unknown error');
         setItems([]);
@@ -85,6 +93,10 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
 
         // Apply sorting
         loadedItems.sort((a, b) => {
+          // Folders always first
+          if (a.type === 'folder' && b.type !== 'folder') return -1;
+          if (a.type !== 'folder' && b.type === 'folder') return 1;
+
           let cmp = 0;
           switch (sortBy) {
             case 'date':
@@ -99,14 +111,14 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
             default:
               cmp = a.name.localeCompare(b.name);
           }
-          return cmp;
+          return sortDirection === 'desc' ? -cmp : cmp;
         });
 
         setItems(loadedItems);
         const actualPath = loadedItems && loadedItems.length > 0 ?
           loadedItems[0].path.substring(0, loadedItems[0].path.lastIndexOf('\\')) :
           dirPath;
-        
+
         if (actualPath) {
           setCurrentPath(actualPath);
           setAddressPath(actualPath);
@@ -123,7 +135,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
     } finally {
       setLoading(false);
     }
-  }, [updateBreadcrumb, searchQuery, sortBy, updateHistory, updateActiveTab, setCurrentPath, setAddressPath, setRenamingItem]);
+  }, [updateBreadcrumb, searchQuery, sortBy, sortDirection, showHidden, updateHistory, updateActiveTab, setCurrentPath, setAddressPath, setRenamingItem]);
 
   // Initialize with Documents folder
   useEffect(() => {
@@ -208,6 +220,10 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
     if (parentPath) loadDirectory(parentPath);
   };
 
+  const handleRefresh = () => {
+    if (currentPath) loadDirectory(currentPath);
+  };
+
   const handleCopy = () => {
     fileOps.handleCopy(selectedItems, selectedItem);
     setShowContextMenu(false);
@@ -237,6 +253,47 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
     await fileOps.handleCreateFolder(currentPath, () => loadDirectory(currentPath));
   };
 
+  const handleCreateFile = async (fileName) => {
+    await fileOps.handleCreateFile(currentPath, fileName, () => loadDirectory(currentPath));
+  };
+
+  const handleUndo = async () => {
+    await fileOps.handleUndo(() => loadDirectory(currentPath));
+  };
+
+  const handleOpenWith = async () => {
+    if (selectedItem && selectedItem.type === 'file') {
+      await ipcRenderer?.invoke('open-with', selectedItem.path);
+    }
+  };
+
+  const handleCopyPath = async () => {
+    const item = selectedItem;
+    if (item) {
+      await ipcRenderer?.invoke('copy-to-clipboard', item.path);
+    }
+  };
+
+  const handleOpenTerminal = async () => {
+    const targetPath = selectedItem?.type === 'folder' ? selectedItem.path : currentPath;
+    if (targetPath) {
+      await ipcRenderer?.invoke('open-terminal-here', targetPath);
+    }
+  };
+
+  const handleOpenInVSCode = async () => {
+    const targetPath = selectedItem?.type === 'folder' ? selectedItem.path : currentPath;
+    if (targetPath) {
+      await ipcRenderer?.invoke('open-in-vscode', targetPath);
+    }
+  };
+
+  const handlePinToFavorites = () => {
+    if (selectedItem?.type === 'folder' && window.__intellifile_addFavorite) {
+      window.__intellifile_addFavorite(selectedItem.path, selectedItem.name);
+    }
+  };
+
   const handleDragStart = (e, item) => {
     fileOps.handleDragStart(e, item, selectedItems);
   };
@@ -255,6 +312,14 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
     setSelectedItem(item);
     setSelectedItems([item]);
     setContextMenuPos({ x: e.clientX, y: e.clientY });
+    setIsEmptySpaceContext(false);
+    setShowContextMenu(true);
+  };
+
+  const handleEmptySpaceContextMenu = (e) => {
+    e.preventDefault();
+    setContextMenuPos({ x: e.clientX, y: e.clientY });
+    setIsEmptySpaceContext(true);
     setShowContextMenu(true);
   };
 
@@ -263,6 +328,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
     selectedItem, selectedItems, clipboard, renamingItem, currentPath, historyIndex, displayItems,
     handleCopy, handleCut, handlePaste, handleDelete, handleRename, handleCreateFolder,
     handleBack, handleForward, handleUp,
+    handleRefresh, handleUndo,
     setSelectedItems, setSelectedItem, setRenamingItem, setRenameValue, setShowContextMenu
   });
 
@@ -285,6 +351,36 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
     checkEngine();
   }, []);
 
+  useEffect(() => {
+    const unsubscribeProgress = onIndexProgress((payload) => {
+      if (!payload || payload.type !== 'progress') return;
+      setIndexing(true);
+      setIndexPhase(payload.phase || '');
+      setIndexDetail(payload.detail || '');
+      setIndexPct(typeof payload.pct === 'number' ? payload.pct : null);
+      if (payload.detail) {
+        setIndexMessage('');
+      }
+    });
+
+    const unsubscribeComplete = onIndexComplete((payload) => {
+      setIndexing(false);
+      setIndexPhase('');
+      setIndexDetail('');
+      setIndexPct(null);
+      if (payload && payload.error) {
+        setIndexMessage(`Indexing failed: ${payload.error}`);
+      } else {
+        setIndexMessage('Index updated');
+      }
+    });
+
+    return () => {
+      unsubscribeProgress();
+      unsubscribeComplete();
+    };
+  }, []);
+
   const handleSearch = async (query) => {
     if (!query || !query.trim()) {
       setSemanticResults(null);
@@ -299,23 +395,6 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
       setSemanticResults([]);
     } finally {
       setSemanticLoading(false);
-    }
-  };
-
-  const handleIndexDevice = async () => {
-    try {
-      setIndexing(true);
-      setIndexedFolder('');
-      const res = await indexDevice();
-      if (res && !res.error) {
-        setIndexedFolder('Device Root');
-      } else {
-        console.error('[FileExplorer] Indexing error:', res?.error);
-      }
-    } catch (err) {
-      console.error('[FileExplorer] Index device error:', err);
-    } finally {
-      setIndexing(false);
     }
   };
 
@@ -358,7 +437,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
 
   return (
     <div className="file-explorer">
-      <ExplorerSidebar drives={drives} onNavigate={loadDirectory} />
+      <ExplorerSidebar drives={drives} onNavigate={loadDirectory} currentPath={currentPath} />
 
       <div className="explorer-main-area">
         <TabsBar
@@ -376,22 +455,30 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
           history={history}
           viewMode={viewMode}
           sortBy={sortBy}
+          sortDirection={sortDirection}
           groupBy={groupBy}
+          showHidden={showHidden}
           searchQuery={searchQuery}
           engineReady={engineReady}
           indexing={indexing}
-          indexedFolder={indexedFolder}
+          indexPhase={indexPhase}
+          indexDetail={indexDetail}
+          indexPct={indexPct}
+          indexMessage={indexMessage}
           semanticLoading={semanticLoading}
           onAddressSubmit={handleAddressSubmit}
           onBreadcrumbClick={handleBreadcrumbClick}
           onBack={handleBack}
           onForward={handleForward}
           onUp={handleUp}
+          onRefresh={handleRefresh}
           onViewModeChange={setViewMode}
           onSortByChange={setSortBy}
+          onSortDirectionChange={setSortDirection}
           onGroupByChange={setGroupBy}
+          onShowHiddenChange={setShowHidden}
           onCreateFolder={handleCreateFolder}
-          onIndexDevice={handleIndexDevice}
+          onCreateFile={handleCreateFile}
           onSearchChange={handleSearchChange}
           onSearchKeyDown={handleSearchKeyDown}
         />
@@ -419,9 +506,11 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
                 renameValue={renameValue}
                 selectedItems={selectedItems}
                 selectedFiles={selectedFiles}
+                clipboard={clipboard}
                 onItemClick={handleItemClick}
                 onItemDoubleClick={handleFolderClick}
                 onContextMenu={handleContextMenu}
+                onEmptySpaceContextMenu={handleEmptySpaceContextMenu}
                 onDragStart={handleDragStart}
                 onDragOver={handleDragOver}
                 onDropOnItem={handleDropOnItem}
@@ -435,6 +524,15 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
             )}
           </div>
 
+          {/* Preview Panel */}
+          {showPreview && (
+            <PreviewPanel
+              selectedItem={selectedItem}
+              visible={showPreview}
+              onClose={() => setShowPreview(false)}
+            />
+          )}
+
           <div className="explorer-statusbar">
             <span>{items.length} items</span>
             <span>{selectedItems.length} selected</span>
@@ -442,6 +540,15 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
               <span>{selectedItem.type === 'file' ? `${formatFileSize(selectedItem.size)}` : 'Folder'}</span>
             )}
             {clipboard && <span>📋 {clipboard.operation === 'cut' ? 'Cut' : 'Copied'}: {clipboard.items.length} item(s)</span>}
+            <div className="statusbar-actions">
+              <button
+                className={`statusbar-btn ${showPreview ? 'active' : ''}`}
+                onClick={() => setShowPreview(!showPreview)}
+                title="Toggle preview panel"
+              >
+                👁️ Preview
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -451,7 +558,10 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
         position={contextMenuPos}
         selectedItem={selectedItem}
         clipboard={clipboard}
-        onOpen={() => selectedItem && openFileWithDefaultApp(selectedItem.path)}
+        isEmptySpace={isEmptySpaceContext}
+        currentPath={currentPath}
+        onOpen={() => selectedItem && (selectedItem.type === 'folder' ? loadDirectory(selectedItem.path) : openFileWithDefaultApp(selectedItem.path))}
+        onOpenWith={handleOpenWith}
         onCut={handleCut}
         onCopy={handleCopy}
         onPaste={handlePaste}
@@ -465,6 +575,13 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
           setShowContextMenu(false);
           onChatWithAI(selectedItem);
         }}
+        onCopyPath={handleCopyPath}
+        onOpenTerminal={handleOpenTerminal}
+        onOpenInVSCode={handleOpenInVSCode}
+        onPinToFavorites={handlePinToFavorites}
+        onCreateFile={handleCreateFile}
+        onCreateFolder={handleCreateFolder}
+        onRefresh={handleRefresh}
         onClose={() => setShowContextMenu(false)}
       />
 

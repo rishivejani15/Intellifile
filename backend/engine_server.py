@@ -1,6 +1,7 @@
 import json
 import sys
 import os
+import threading
 
 # Ensure backend/ is on sys.path
 _BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -8,6 +9,17 @@ if _BACKEND_DIR not in sys.path:
     sys.path.insert(0, _BACKEND_DIR)
 
 sys.stderr.write("[engine] Starting resilient process...\n")
+sys.stderr.flush()
+
+# Ensure data directory and SQLite DB exist on startup (never crash if missing)
+_DATA_DIR = os.path.join(_BACKEND_DIR, "data")
+os.makedirs(_DATA_DIR, exist_ok=True)
+try:
+    from core.db import init_db
+    init_db()
+    sys.stderr.write("[engine] SQLite database ready\n")
+except Exception as e:
+    sys.stderr.write(f"[engine] DB init warning (non-fatal): {e}\n")
 sys.stderr.flush()
 
 # Global engine instances (lazy loaded)
@@ -28,6 +40,20 @@ def get_version_engine():
 
 print("IntelliFile Python Engine Ready", flush=True)
 
+def _warm_faiss_index():
+    try:
+        from core.faiss_manager import load_index
+        idx = load_index()
+        if idx is None:
+            sys.stderr.write("[engine] FAISS index not found; warmup skipped\n")
+        else:
+            sys.stderr.write("[engine] FAISS index warmed\n")
+    except Exception as e:
+        sys.stderr.write(f"[engine] FAISS warmup skipped: {e}\n")
+    sys.stderr.flush()
+
+threading.Thread(target=_warm_faiss_index, daemon=True).start()
+
 while True:
     try:
         line = sys.stdin.readline()
@@ -42,10 +68,19 @@ while True:
             try:
                 from core.search import semantic_search
                 query = request.get("query", "").strip()
-                results = semantic_search(query)
+                date_from = request.get("date_from")  # Unix timestamp or None
+                date_to = request.get("date_to")      # Unix timestamp or None
+                results = semantic_search(query, date_from=date_from, date_to=date_to)
                 response = {
                     "_id": req_id,
-                    "results": [{"path": p, "score": round(float(s), 3)} for p, s in results]
+                    "results": [
+                        {
+                            "path": r["path"],
+                            "score": round(float(r["score"]), 3),
+                            "created_time": r.get("created_time"),
+                        }
+                        for r in results
+                    ]
                 }
                 print(json.dumps(response), flush=True)
             except Exception as e:
@@ -53,16 +88,40 @@ while True:
 
         elif action == "index":
             try:
-                folder = request.get("folder", "").strip()
+                folder = request.get("folder")
                 from indexing.index_files import index_files_incremental
                 from indexing.update_faiss import update_faiss
                 from core.faiss_manager import load_index, invalidate_cache
-                
-                affected = index_files_incremental(folder)
-                update_faiss(affected)
+
+                root_label = folder or "default"
+                sys.stderr.write(f"[engine] Indexing started (root={root_label})\n")
+                sys.stderr.flush()
+
+                import time as _time
+                _t_total = _time.perf_counter()
+
+                def emit_progress(phase, detail="", pct=None):
+                    payload = {
+                        "_id": req_id,
+                        "type": "progress",
+                        "phase": phase,
+                        "detail": detail,
+                    }
+                    if pct is not None:
+                        payload["pct"] = pct
+                    print(json.dumps(payload), flush=True)
+
+                affected = index_files_incremental(folder, progress_cb=emit_progress)
+                update_faiss(affected, progress_cb=emit_progress)
                 invalidate_cache()
                 load_index(force_reload=True)
-                print(json.dumps({"_id": req_id, "status": "indexed", "folder": folder}), flush=True)
+
+                total_secs = round(_time.perf_counter() - _t_total, 1)
+                sys.stderr.write(f"[engine] Indexing completed in {total_secs}s (chunks={len(affected)})\n")
+                sys.stderr.flush()
+
+                emit_progress("done", f"Indexing complete — {len(affected)} chunks in {total_secs}s", pct=100)
+                print(json.dumps({"_id": req_id, "status": "indexed", "folder": folder or "", "total_secs": total_secs, "chunks": len(affected)}), flush=True)
             except Exception as e:
                 print(json.dumps({"_id": req_id, "error": f"Indexing failed: {e}"}), flush=True)
 

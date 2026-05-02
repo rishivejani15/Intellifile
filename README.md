@@ -1,4 +1,4 @@
-﻿# 🧠 IntelliFile
+# 🧠 IntelliFile
 
 **IntelliFile** is an AI-powered, privacy-first desktop search engine and conversational document intelligence system. 
 
@@ -55,7 +55,7 @@ Indexing an entire hard drive and executing 3-Billion-Parameter models locally n
 - **GGUF Quantization (`q4_k_m`, `q5_k_m` format):** Shrinks model VRAM footprints by 70%. A standard 6GB+ FP16 model fits into leaner ~2.5GB sizes on disk and RAM while maintaining 98% perplexity parity.
 
 ### 2. Deep-Engine Indexing Acceleration
-- **Pytorch to ONNX Backend Parsing:** The `Sentence-Transformers` models natively fall back to `onnxruntime`. Compiling embedder graph operators to ONNX creates up to a 3x–5x CPU processing structural speed boost compared to raw PyTorch evaluation graphs.
+- **ONNX Runtime + CUDA GPU:** The embedding model is compiled to ONNX and executed via ONNX Runtime with CUDA GPU acceleration, achieving **~5,700 embeddings/sec** — a 56% speedup over raw PyTorch inference.
 - **FAISS vs Heavy DB Servers:** Rather than installing bloated Vector databases (like Milvus, Qdrant, or Postgres pgvector plugin), vector computations are housed dynamically via C++ Map integrations natively inside FAISS. 
 - **Indexed File Caps & Exclusions:** Deep outlier files (like a 40,000 line debug log) throttle indexing pipelines. Our core explicitly intercepts arbitrary limits (text length caps, chunk caps in `extractor.py`) and systematically ignores known bottleneck temp directories (`node_modules`, `.git`, system caches).
 - **Parallel Extraction Worker Pools:** Local indexing handles document parses across independent background CPU pools to prevent synchronous I/O blocking.
@@ -75,43 +75,200 @@ Indexing an entire hard drive and executing 3-Billion-Parameter models locally n
 - **Python 3.11+:** Multi-threaded ingestion application runtime.
 - **Llama-cpp Python:** Sub-system binding bringing quantization capability.
 - **Sentence-Transformers:** Integrated context embedding module. 
+- **ONNX Runtime + CUDA:** GPU-accelerated embedding inference.
 - **FAISS:** N-Dimensional similarity search backbone.
 - **SQLite3 / FTS5:** Local associative metadata structuring and highly polished Keyword Indexing.
 
 ---
 
-## 🚀 Getting Started
+## 🚀 Getting Started (First-Time Setup)
 
 ### 1. System Prerequisites
-- **Python 3.11+**
-- **Node.js 18+**
-- **C++ Build Tools/Visual Studio Redistributable** (Mandatory for compiling Local Models on Windows).
 
-### 2. Setup the Data Backend Engine
+| Requirement | Version | Notes |
+|---|---|---|
+| **Python** | 3.11+ | [python.org/downloads](https://www.python.org/downloads/) |
+| **Node.js** | 18+ | [nodejs.org](https://nodejs.org/) |
+| **Git** | Any | [git-scm.com](https://git-scm.com/) |
+| **NVIDIA GPU** | Optional | Recommended for fast embeddings + LLM inference |
+| **C++ Build Tools** | VS 2019+ | Required for `llama-cpp-python` compilation ([Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)) |
+
+### 2. Clone the Repository
+
 ```bash
+git clone https://github.com/rishivejani15/Intellifile.git
+cd Intellifile
+```
+
+### 3. Setup the Python Backend
+
+```powershell
 cd backend
+
+# Create virtual environment
 python -m venv .venv
-# On Windows powershell:
-.venv\Scripts\activate  
 
-# Install Requirements
+# Activate it (PowerShell)
+.venv\Scripts\Activate.ps1
+# Or (CMD)
+.venv\Scripts\activate.bat
+```
+
+#### Install PyTorch (with CUDA GPU support)
+
+> **Important:** PyTorch must be installed **before** the other requirements. Use `cu124` for NVIDIA GPUs:
+
+```powershell
+pip install torch==2.6.0+cu124 torchvision==0.21.0+cu124 --index-url https://download.pytorch.org/whl/cu124
+```
+
+<details>
+<summary>🖥️ No NVIDIA GPU? Use CPU-only PyTorch instead</summary>
+
+```powershell
+pip install torch torchvision
+```
+
+</details>
+
+#### Install remaining dependencies
+
+```powershell
+# Base dependencies (works on all systems — uses ONNX CPU)
 pip install -r requirements.txt
-pip install onnxruntime optimum
-```
-*Note: Make sure to install `llama-cpp-python` with the correct hardware accelerated flags based on your environment (`cuBLAS / CUDA`).*
 
-### 3. Prepare Sub-Models
-Create a `backend/models` folder.
-* Download `qwen2.5-3b-instruct-q5_k_m.gguf` (Or the faster 1.5b Q4 variant) and place it inside the `models` directory.
-```bash
-python backend/setup_offline.py
+# NVIDIA GPU users: upgrade to CUDA-accelerated ONNX Runtime
+pip install -r requirements-gpu.txt
 ```
 
-### 4. Build & Launch Frontend App
-```bash
-cd frontend
+> The base `requirements.txt` uses `onnxruntime` (CPU). On systems with an NVIDIA GPU, `requirements-gpu.txt` replaces it with `onnxruntime-gpu` for ~56% faster embeddings. The fallback chain is: **ONNX+CUDA → ONNX+CPU → PyTorch** — it always works.
+
+#### Install `llama-cpp-python` (for Chat with File)
+
+For **NVIDIA GPU** acceleration (recommended):
+```powershell
+$env:CMAKE_ARGS="-DGGML_CUDA=on"
+pip install llama-cpp-python --no-cache-dir
+```
+
+<details>
+<summary>🖥️ CPU-only fallback</summary>
+
+```powershell
+pip install llama-cpp-python
+```
+
+</details>
+
+### 4. Download AI Models
+
+#### Embedding Model (auto-downloaded)
+
+Run the offline setup script to download and cache the embedding model + export ONNX:
+
+```powershell
+python setup_offline.py
+```
+
+This downloads `BAAI/bge-small-en-v1.5` (~130 MB) and exports the ONNX-optimized version.
+
+#### Chat Model (manual download)
+
+Download **one** of these GGUF models and place it in the `backend/models/` folder:
+
+| Model | Size | Speed | Download |
+|---|---|---|---|
+| **Qwen 2.5 1.5B Q4** (faster) | ~1.1 GB | ⚡ Fast | [qwen2.5-1.5b-instruct-q4_k_m.gguf](https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf) |
+| **Qwen 2.5 3B Q5** (smarter) | ~2.3 GB | 🧠 Balanced | [qwen2.5-3b-instruct-q5_k_m.gguf](https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/main/qwen2.5-3b-instruct-q5_k_m.gguf) |
+
+```powershell
+# Example: download the 1.5B model directly via curl
+curl -L -o models/qwen2.5-1.5b-instruct-q4_k_m.gguf https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf
+```
+
+> **Note:** Chat with File works without the GGUF model — search and file browsing still function. The chat feature will simply show as disabled.
+
+### 5. Setup the Frontend
+
+```powershell
+cd ../frontend
 npm install
+```
+
+### 6. Launch IntelliFile 🚀
+
+From the `frontend/` directory:
+
+```powershell
 npm start
 ```
 
-Click **Index Device** to construct your initial baseline embeddings database, then begin securely searching and chatting natively offline!
+This single command:
+1. Starts the React dev server on `http://localhost:3000`
+2. Launches Electron which auto-spawns both Python backend processes:
+   - **Engine Server** — search, indexing, versioning (IPC via stdin/stdout)
+   - **Chat API** — FastAPI server on port 8000 for document Q&A
+
+The app will auto-index your device on first launch. You can then search, browse files, and chat with documents!
+
+---
+
+## 📁 Project Structure
+
+```
+Intellifile/
+├── frontend/                  # Electron + React UI
+│   ├── main.js                # Electron main process (spawns Python backends)
+│   ├── preload.js             # IPC bridge
+│   ├── src/                   # React components
+│   └── package.json
+├── backend/                   # Python core engine
+│   ├── engine_server.py       # Search/Index/Version engine (stdin/stdout JSON)
+│   ├── setup_offline.py       # One-time model download + ONNX export
+│   ├── requirements.txt
+│   ├── core/
+│   │   ├── model.py           # Embedding model singleton (ONNX+CUDA → PyTorch)
+│   │   ├── search.py          # Hybrid search (FAISS + BM25 + path)
+│   │   ├── faiss_manager.py   # FAISS index management
+│   │   └── versioning/        # File version tracking & diffing
+│   ├── chat/backend/
+│   │   ├── main.py            # FastAPI chat server
+│   │   ├── llm.py             # Qwen LLM inference (llama-cpp)
+│   │   └── chat_store.py      # Isolated RAG document store
+│   ├── indexing/              # File crawling & incremental indexing
+│   ├── parsers/               # PDF, DOCX, XLSX, PPTX extractors
+│   ├── models/                # Cached models (gitignored)
+│   └── data/                  # FAISS index + SQLite DB (gitignored)
+└── README.md
+```
+
+---
+
+## ⚙️ Quick Reference
+
+| Command | Purpose |
+|---|---|
+| `cd frontend && npm start` | Launch the full app (frontend + auto-starts backend) |
+| `python backend/setup_offline.py` | Download & cache AI models for offline use |
+| `cd backend && python engine_server.py` | Run search engine standalone (for debugging) |
+
+---
+
+## 🔧 Troubleshooting
+
+### ONNX+CUDA fails, falls back to PyTorch
+Ensure PyTorch version matches ONNX Runtime expectations:
+```powershell
+# Check versions
+python -c "import torch; print(torch.__version__); import onnxruntime; print(onnxruntime.__version__)"
+```
+- `onnxruntime-gpu >= 1.25` requires `torch >= 2.6` (for `torch.int4` support)
+- Use `pip install torch==2.6.0+cu124 --index-url https://download.pytorch.org/whl/cu124`
+
+### `llama-cpp-python` fails to install
+- Install [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) with **"Desktop development with C++"** workload
+- For CUDA: ensure `CUDA Toolkit 12.x` is installed and `CMAKE_ARGS="-DGGML_CUDA=on"` is set
+
+### Chat shows as "disabled"
+- Verify a `.gguf` model file exists in `backend/models/`
+- Check the console for `llama_cpp` import errors

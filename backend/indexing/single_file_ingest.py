@@ -21,6 +21,7 @@ def ingest_single_file(file_path: str) -> Dict[str, object]:
         raise FileNotFoundError(f"File not found: {abs_path}")
 
     modified_time = int(os.path.getmtime(abs_path))
+    created_time = int(os.stat(abs_path).st_ctime)
     filename = os.path.basename(abs_path)
 
     conn = get_connection()
@@ -54,8 +55,8 @@ def ingest_single_file(file_path: str) -> Dict[str, object]:
         )
     else:
         cur.execute(
-            "INSERT INTO files(path, filename, modified_time) VALUES (?, ?, ?)",
-            (abs_path, filename, modified_time),
+            "INSERT INTO files(path, filename, modified_time, created_time) VALUES (?, ?, ?, ?)",
+            (abs_path, filename, modified_time, created_time),
         )
         file_id = cur.lastrowid
 
@@ -112,7 +113,7 @@ def reset_canonical_index_store() -> Dict[str, object]:
 
     import faiss
 
-    dim = MODEL.get_sentence_embedding_dimension()
+    dim = MODEL.get_embedding_dimension()
     empty_index = faiss.IndexIDMap(faiss.IndexFlatIP(dim))
     save_index(empty_index)
     invalidate_cache()
