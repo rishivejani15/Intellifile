@@ -295,10 +295,32 @@ function startPython() {
 }
 
 
-  chatBackendProcess = spawn(PYTHON_EXECUTABLE, ['-m', 'uvicorn', 'backend.chat.backend.main:app', '--host', '127.0.0.1', '--port', '8000'], {
-    cwd: path.join(__dirname, '..'),
-    stdio: ['ignore', 'pipe', 'pipe']
-  });
+// Start the chat backend (uvicorn) when requested. Encapsulated so callers
+// can start it and handle errors; avoids calling an undefined function.
+function startChatBackend() {
+  try {
+    if (chatBackendProcess && !chatBackendProcess.killed) {
+      console.log('[ChatBackend] already running');
+      return;
+    }
+
+    chatBackendProcess = spawn(PYTHON_EXECUTABLE, ['-m', 'uvicorn', 'backend.chat.backend.main:app', '--host', '127.0.0.1', '--port', '8000'], {
+      cwd: path.join(__dirname, '..'),
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+
+    chatBackendProcess.stdout.on('data', (d) => console.log('[ChatBackend stdout]', d.toString().trim()));
+    chatBackendProcess.stderr.on('data', (d) => console.error('[ChatBackend stderr]', d.toString().trim()));
+    chatBackendProcess.on('close', (code) => {
+      console.log('[ChatBackend] exited with code:', code);
+      chatBackendProcess = null;
+    });
+    console.log('[ChatBackend] spawn initiated');
+  } catch (err) {
+    console.error('[ChatBackend] failed to start:', err && err.message ? err.message : err);
+    chatBackendProcess = null;
+  }
+}
 
 // Helper: check whether a TCP port is open on localhost
 function isPortOpen(port, host = '127.0.0.1', timeout = 500) {
