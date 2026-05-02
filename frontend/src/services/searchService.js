@@ -30,3 +30,14 @@ export function onIndexProgress(callback) {
     }
     return () => {};
 }
+
+/**
+ * Subscribe to indexing completion events.
+ * Returns an unsubscribe function.
+ */
+export function onIndexComplete(callback) {
+    if (window.intellifile?.onIndexComplete) {
+        return window.intellifile.onIndexComplete(callback);
+    }
+    return () => {};
+}

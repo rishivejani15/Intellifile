@@ -1,6 +1,6 @@
 import faiss
 import os
-
+import sys
 # Resolve data directory relative to this file's location
 _BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 INDEX_PATH = os.path.join(_BACKEND_DIR, 'data', 'vectors.faiss')
@@ -17,7 +17,19 @@ def load_index(dim=None, force_reload=False):
         return _cached_index
 
     if os.path.exists(INDEX_PATH):
-        _cached_index = faiss.read_index(INDEX_PATH)
+        try:
+            _cached_index = faiss.read_index(INDEX_PATH)
+        except Exception as e:
+            _cached_index = None
+            corrupt_path = INDEX_PATH + ".corrupt"
+            try:
+                if os.path.exists(corrupt_path):
+                    os.remove(corrupt_path)
+                os.replace(INDEX_PATH, corrupt_path)
+                print(f"[faiss] Corrupt index moved to {corrupt_path}: {e}", file=sys.stderr)
+            except Exception as move_err:
+                print(f"[faiss] Corrupt index could not be moved: {move_err}", file=sys.stderr)
+            return None
     elif dim is not None:
         base = faiss.IndexFlatIP(dim)          # Inner-Product (cosine with normalized vecs)
         _cached_index = faiss.IndexIDMap(base)

@@ -18,37 +18,63 @@
   margin-bottom: 1rem;
 }
 
-/* index section */
-.index-section {
-  display: flex;
+/* index status */
+.index-status {
+  display: inline-flex;
   align-items: center;
-  gap: 1rem;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid #3c3a66;
+  background: #27253e;
+  color: #d4d1ff;
+  font-size: 0.85rem;
   margin-bottom: 1rem;
 }
 
-.index-btn {
-  padding: 0.5rem 1rem;
-  border: none;
-  border-radius: 6px;
+.index-status.running {
+  border-color: #5d4bb1;
+  background: #2f2a52;
+  color: #e2ddff;
+}
+
+.index-status.done {
+  border-color: #2f6f3a;
+  background: #1f3a2a;
+  color: #b8f0c5;
+}
+
+.index-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
   background: var(--primary-blue);
-  color: #fff;
-  cursor: pointer;
-  font-size: 0.9rem;
-  transition: background 0.2s;
+  
 }
 
-.index-btn:hover:not(:disabled) {
-  background: var(--primary-blue-hover);
+.index-status.running .index-dot {
+  animation: index-pulse 1.6s ease-in-out infinite;
 }
 
-.index-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
+.index-status.done .index-dot {
+  background: #22c55e;
 }
 
-.indexed-label {
-  font-size: 0.85rem;
-  color: #a0e8a0;
+.index-text {
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.index-pct {
+  font-variant-numeric: tabular-nums;
+  color: #bdb8ff;
+}
+
+@keyframes index-pulse {
+  0% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.35); opacity: 0.6; }
+  100% { transform: scale(1); opacity: 1; }
 }
 
 /* search bar */
@@ -108,8 +134,8 @@
 
 .result-card {
   display: flex;
-  justify-content: space-between;
-  align-items: center;
+  flex-direction: column;
+  gap: 4px;
   padding: 0.75rem 1rem;
   background: var(--card-bg);
   border-radius: 6px;
@@ -128,11 +154,42 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 70%;
+
+}
+
+.result-meta {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  font-size: 0.8rem;
 }
 
 .result-score {
-  font-size: 0.8rem;
   color: var(--primary-blue);
   white-space: nowrap;
+}
+
+.result-date {
+  color: #888;
+  white-space: nowrap;
+}
+
+/* Date filter badge */
+.date-filter-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  border: 1px solid #3d5a8a;
+  background: #1e2d45;
+  color: #8bb8e8;
+  font-size: 0.82rem;
+  margin-bottom: 1rem;
+  animation: badge-fade-in 0.3s ease;
+}
+
+@keyframes badge-fade-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
 }

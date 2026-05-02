@@ -54,12 +54,16 @@ export const getParentPath = (filePath) => {
  * Sort items based on criteria
  * @param {Array} items - Items to sort
  * @param {string} sortBy - Sort criteria (name, date, size, type)
+ * @param {string} sortDirection - Sort direction (asc, desc)
  * @returns {Array} Sorted items
  */
-export const sortItems = (items, sortBy) => {
+export const sortItems = (items, sortBy, sortDirection = 'asc') => {
   if (!items) return [];
   
   return [...items].sort((a, b) => {
+    if (a.type === 'folder' && b.type !== 'folder') return -1;
+    if (a.type !== 'folder' && b.type === 'folder') return 1;
+
     let compareValue = 0;
     switch (sortBy) {
       case 'date':
@@ -74,7 +78,8 @@ export const sortItems = (items, sortBy) => {
       default:
         compareValue = a.name.localeCompare(b.name);
     }
-    return compareValue;
+
+    return sortDirection === 'desc' ? -compareValue : compareValue;
   });
 };
 

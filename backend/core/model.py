@@ -30,24 +30,41 @@ _local_cached = any(
 )
 
 # ── Try ONNX Runtime backend (3-5x faster on CPU) ────────
+
+_onnx_dir = os.path.join(_MODELS_DIR, "onnx-export", _cache_name)
+_onnx_ready = os.path.isdir(_onnx_dir) and any(
+    f.endswith(".onnx")
+    for root, _, files in os.walk(_onnx_dir)
+    for f in files
+)
+
 _model_kwargs = dict(
-    model_name_or_path=MODEL_NAME,
     cache_folder=_MODELS_DIR,
     local_files_only=_local_cached,
 )
 
 MODEL = None
-try:
-    import onnxruntime  # noqa: F401
-    MODEL = SentenceTransformer(backend="onnx", model_kwargs={"provider": "CPUExecutionProvider"}, **_model_kwargs)
-    sys.stderr.write("[model] Loaded with ONNX Runtime backend (fast)\n")
-except Exception:
-    pass
+_backend_name = "unknown"
+
+if _onnx_ready:
+    try:
+        import onnxruntime  # noqa: F401
+        MODEL = SentenceTransformer(
+            _onnx_dir,
+            backend="onnx",
+            model_kwargs={"provider": "CPUExecutionProvider"},
+            device="cpu",
+        )
+        _backend_name = "ONNX Runtime + CPU"
+    except Exception as e:
+        sys.stderr.write(f"[model] ONNX load failed: {e}\n")
+        MODEL = None
 
 if MODEL is None:
-    MODEL = SentenceTransformer(**_model_kwargs)
-    sys.stderr.write("[model] Loaded with PyTorch backend\n")
+    MODEL = SentenceTransformer(model_name_or_path=MODEL_NAME, **_model_kwargs)
+    _backend_name = "PyTorch"
 
+sys.stderr.write(f"[model] Loaded with {_backend_name} backend\n")
 sys.stderr.flush()
 
 # BGE models benefit from a query instruction prefix

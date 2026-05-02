@@ -6,6 +6,7 @@ _BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _DB_PATH = os.path.join(_BACKEND_DIR, 'data', 'files.db')
 
 def get_connection():
+    os.makedirs(os.path.dirname(_DB_PATH), exist_ok=True)
     conn = sqlite3.connect(_DB_PATH, timeout=30.0)
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=NORMAL")
@@ -22,7 +23,8 @@ def init_db():
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     path TEXT UNIQUE,
                     filename TEXT,
-                    modified_time INTEGER
+                    modified_time INTEGER,
+                    created_time INTEGER
                 );
                 ''')
     cur.execute('''
@@ -35,10 +37,15 @@ def init_db():
                 )
                 ''')
 
+    try:
+        cur.execute("ALTER TABLE files ADD COLUMN created_time INTEGER")
+    except Exception:
+        pass 
     # Indexes for fast lookups during incremental indexing
     cur.execute('CREATE INDEX IF NOT EXISTS idx_files_path ON files(path)')
     cur.execute('CREATE INDEX IF NOT EXISTS idx_chunks_file_id ON chunks(file_id)')
-
+    cur.execute('CREATE INDEX IF NOT EXISTS idx_files_created ON files(created_time)')
+    
     # FTS5 full-text search index (content-synced with chunks table)
     try:
         cur.execute('''

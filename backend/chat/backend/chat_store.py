@@ -100,7 +100,7 @@ def reset_chat_store() -> Dict[str, object]:
     conn.commit()
     conn.close()
 
-    dim = MODEL.get_sentence_embedding_dimension()
+    dim = MODEL.get_embedding_dimension()
     empty_index = faiss.IndexIDMap(faiss.IndexFlatIP(dim))
     save_chat_index(empty_index)
     invalidate_chat_cache()

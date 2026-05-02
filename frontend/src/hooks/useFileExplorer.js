@@ -1,11 +1,17 @@
-// Hook for file operations: copy, cut, paste, delete, rename, create folder
-import { useState, useCallback } from 'react';
+// Hook for file operations: copy, cut, paste, delete, rename, create folder, create file, undo
+import { useState, useCallback, useRef } from 'react';
 
 export const useFileExplorer = (ipcRenderer) => {
   const [clipboard, setClipboard] = useState(null);
   const [renamingItem, setRenamingItem] = useState(null);
   const [renameValue, setRenameValue] = useState('');
+  const undoStack = useRef([]);
 
+  const pushUndo = useCallback((action) => {
+    undoStack.current.push(action);
+    if (undoStack.current.length > 30) undoStack.current.shift();
+  }, []);
+  
   const handleCopy = useCallback((selectedItems, selectedItem) => {
     const itemsToCopy = selectedItems.length > 0 ? selectedItems : (selectedItem ? [selectedItem] : []);
     if (itemsToCopy.length > 0) {
@@ -49,7 +55,8 @@ export const useFileExplorer = (ipcRenderer) => {
             if (!result.success) {
               console.error('Move error:', result.error);
               alert('Error moving: ' + result.error);
-            }
+            }else {
+              pushUndo({ type: 'move', from: item.path, to: destPath });}
           }
         }
 
@@ -61,7 +68,7 @@ export const useFileExplorer = (ipcRenderer) => {
         console.error('Paste error:', err);
       }
     }
-  }, [clipboard, ipcRenderer]);
+  }, [clipboard, ipcRenderer, pushUndo]);
 
   const handleRename = useCallback(async (currentPath, onRenameComplete) => {
     if (renamingItem && renameValue && renameValue !== renamingItem.name) {
@@ -75,6 +82,7 @@ export const useFileExplorer = (ipcRenderer) => {
         const newPath = currentPath + '\\' + renameValue;
         const result = await ipcRenderer?.invoke('rename-file', renamingItem.path, newPath);
         if (result.success) {
+           pushUndo({ type: 'rename', from: newPath, to: renamingItem.path, oldName: renamingItem.name });
           onRenameComplete?.();
           return true;
         } else {
@@ -87,7 +95,7 @@ export const useFileExplorer = (ipcRenderer) => {
     }
     setRenamingItem(null);
     return false;
-  }, [renamingItem, renameValue, ipcRenderer]);
+  },  [renamingItem, renameValue, ipcRenderer, pushUndo]);
 
   const handleDelete = useCallback(async (selectedItems, selectedItem, currentPath, onDeleteComplete) => {
     const itemsToDelete = selectedItems.length > 0 ? selectedItems : (selectedItem ? [selectedItem] : []);
@@ -99,6 +107,13 @@ export const useFileExplorer = (ipcRenderer) => {
     }
 
     if (itemsToDelete.length > 0) {
+       // Confirmation dialog
+      const names = itemsToDelete.map(i => i.name).join(', ');
+      const msg = itemsToDelete.length === 1
+        ? `Are you sure you want to move "${names}" to the Recycle Bin?`
+        : `Are you sure you want to move ${itemsToDelete.length} items to the Recycle Bin?\n\n${names}`;
+      
+      if (!window.confirm(msg)) return false;
       try {
         for (const item of itemsToDelete) {
           const result = await ipcRenderer?.invoke('delete-file', item.path);
@@ -114,6 +129,42 @@ export const useFileExplorer = (ipcRenderer) => {
       }
     }
     return false;
+  }, [ipcRenderer]);
+
+  const handleCreateFile = useCallback(async (currentPath, fileName, onCreateComplete) => {
+    if (currentPath && fileName) {
+      try {
+        const newPath = currentPath + '\\' + fileName;
+        const result = await ipcRenderer?.invoke('create-file', newPath);
+        if (result.success) {
+          onCreateComplete?.();
+          return true;
+        } else {
+          alert('Error creating file: ' + result.error);
+        }
+      } catch (err) {
+        console.error('Create file error:', err);
+      }
+    }
+    return false;
+  }, [ipcRenderer]);
+
+  const handleUndo = useCallback(async (onUndoComplete) => {
+    if (undoStack.current.length === 0) return false;
+    const action = undoStack.current.pop();
+
+    try {
+      if (action.type === 'rename') {
+        await ipcRenderer?.invoke('rename-file', action.from, action.to);
+      } else if (action.type === 'move') {
+        await ipcRenderer?.invoke('move-file', action.to, action.from);
+      }
+      onUndoComplete?.();
+      return true;
+    } catch (err) {
+      console.error('Undo error:', err);
+      return false;
+    }
   }, [ipcRenderer]);
 
   const handleCreateFolder = useCallback(async (currentPath, onCreateComplete) => {
@@ -155,13 +206,14 @@ export const useFileExplorer = (ipcRenderer) => {
           await ipcRenderer?.invoke('copy-file', sourcePath, destPath);
         } else {
           await ipcRenderer?.invoke('move-file', sourcePath, destPath);
+           pushUndo({ type: 'move', from: sourcePath, to: destPath });
         }
       }
       onDropComplete?.();
     } catch (err) {
       console.error('Drag/drop error:', err);
     }
-  }, [ipcRenderer]);
+  },  [ipcRenderer, pushUndo]);
 
   return {
     clipboard,
@@ -176,6 +228,8 @@ export const useFileExplorer = (ipcRenderer) => {
     handleRename,
     handleDelete,
     handleCreateFolder,
+    handleCreateFile,
+    handleUndo,
     handleDragStart,
     handleDropOnItem,
   };

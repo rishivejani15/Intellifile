@@ -19,6 +19,11 @@ function SearchResults({ visible, results, loading, onClose, onResultClick }) {
           {results.map((result, idx) => {
             const fileName = result.path.split('\\').pop() || result.path.split('/').pop();
             const scorePercent = Math.round(result.score * 100);
+             const createdDate = result.created_time
+              ? new Date(result.created_time * 1000).toLocaleDateString('en-US', {
+                  year: 'numeric', month: 'short', day: 'numeric'
+                })
+              : null;
             return (
               <div
                 key={result.path + idx}
@@ -29,7 +34,12 @@ function SearchResults({ visible, results, loading, onClose, onResultClick }) {
                 <div className="file-icon">📄</div>
                 <div className="file-info">
                   <div className="file-name">{fileName}</div>
-                  <div className="file-meta">{result.path}</div>
+                  <div className="file-meta">
+                    {result.path}
+                    {createdDate && (
+                      <span className="result-created-date"> · 📅 {createdDate}</span>
+                    )}
+                  </div>
                 </div>
                 <div className="search-score">
                   <div className="score-bar">
