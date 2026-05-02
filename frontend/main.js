@@ -805,6 +805,71 @@ function registerIpcHandlers() {
     }
   });
 
+  // ── Sync: local file staging for cross-device sync
+  ipcMain.handle('get-sync-files', async () => {
+    try {
+      const syncDir = path.join(__dirname, '..', 'sync', 'intellifil_files');
+      if (!fs.existsSync(syncDir)) fs.mkdirSync(syncDir, { recursive: true });
+      const items = fs.readdirSync(syncDir).map(name => {
+        try {
+          const full = path.join(syncDir, name);
+          const st = fs.statSync(full);
+          return { name, path: full, size: st.size, modified: st.mtimeMs };
+        } catch (e) { return null; }
+      }).filter(Boolean);
+      return { success: true, items };
+    } catch (err) {
+      console.error('[Sync] get-sync-files error:', err && err.message ? err.message : err);
+      return { success: false, items: [], error: err && err.message ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle('select-files-for-sync', async () => {
+    try {
+      const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
+        properties: ['openFile', 'multiSelections']
+      });
+      if (canceled || !filePaths || filePaths.length === 0) return { success: false, added: 0 };
+      const syncDir = path.join(__dirname, '..', 'sync', 'intellifil_files');
+      if (!fs.existsSync(syncDir)) fs.mkdirSync(syncDir, { recursive: true });
+      let added = 0;
+      for (const src of filePaths) {
+        const name = path.basename(src);
+        let dest = path.join(syncDir, name);
+        if (fs.existsSync(dest)) {
+          const ext = path.extname(name);
+          const base = path.basename(name, ext);
+          let i = 1;
+          while (fs.existsSync(dest)) {
+            dest = path.join(syncDir, `${base} (${i})${ext}`);
+            i++;
+          }
+        }
+        fs.copyFileSync(src, dest);
+        added++;
+      }
+      // notify renderer
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('sync-files');
+      return { success: true, added };
+    } catch (err) {
+      console.error('[Sync] select-files-for-sync error:', err && err.message ? err.message : err);
+      return { success: false, added: 0, error: err && err.message ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle('remove-sync-file', async (_event, fileName) => {
+    try {
+      const syncDir = path.join(__dirname, '..', 'sync', 'intellifil_files');
+      const target = path.join(syncDir, fileName);
+      if (fs.existsSync(target)) fs.unlinkSync(target);
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('sync-files');
+      return { success: true };
+    } catch (err) {
+      console.error('[Sync] remove-sync-file error:', err && err.message ? err.message : err);
+      return { success: false, error: err && err.message ? err.message : String(err) };
+    }
+  });
+
   ipcMain.handle('read-file-base64', async (event, filePath) => {
     try {
       const buffer = fs.readFileSync(filePath);
