@@ -74,7 +74,11 @@ def semantic_search(query, top_k=20, min_similarity=0.15, date_from=None, date_t
     """
     Hybrid search: FAISS semantic + FTS5 keyword + filename match,
     combined via Reciprocal Rank Fusion.
-    Returns list of (file_path, score) sorted by relevance.
+
+    Optional date_from/date_to (Unix timestamps) filter results by
+    file creation date.
+
+    Returns list of dicts: {path, score, created_time} sorted by relevance.
     """
     fetch_k = top_k * 5  # over-fetch for better fusion
 
@@ -104,7 +108,7 @@ def semantic_search(query, top_k=20, min_similarity=0.15, date_from=None, date_t
     if not chunk_rrf and not filename_boost:
         return []
 
-    # ── Map chunk IDs → file paths ──────────────────────
+    # ── Map chunk IDs → file paths + created_time ────────
     all_ids = list(chunk_rrf.keys())
     conn = get_connection()
     cur = conn.cursor()
@@ -118,7 +122,6 @@ def semantic_search(query, top_k=20, min_similarity=0.15, date_from=None, date_t
         all_ids,
     )
     rows = cur.fetchall()
-
 
     # ── Also load created_time for filename-matched files ──
     file_created = {}
@@ -142,16 +145,18 @@ def semantic_search(query, top_k=20, min_similarity=0.15, date_from=None, date_t
     for cid, path, ctime in rows:
         rrf = chunk_rrf.get(cid, 0)
         cos = chunk_cosine.get(cid, 0)
-
+        
+        # If FTS5 hit without semantic hit, cos is 0. Give it a baseline 50% score.
         if cos == 0:
             cos = 0.5
-
+            
         if path not in file_best_rrf or rrf > file_best_rrf[path]:
             file_best_rrf[path] = rrf
         if path not in file_best_cosine or cos > file_best_cosine[path]:
             file_best_cosine[path] = cos
         if ctime is not None:
             file_created[path] = ctime
+
     # Add filename-match boost to RRF scores
     for path, boost in filename_boost.items():
         file_best_rrf[path] = file_best_rrf.get(path, 0) + boost
@@ -159,7 +164,6 @@ def semantic_search(query, top_k=20, min_similarity=0.15, date_from=None, date_t
         if path not in file_best_cosine:
             file_best_cosine[path] = 0.5
 
-    # Sort by RRF rank, but return actual cosine similarity as the score
     # Sort by RRF rank
     ranked = sorted(file_best_rrf.items(), key=lambda x: x[1], reverse=True)
 

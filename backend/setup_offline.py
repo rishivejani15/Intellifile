@@ -2,7 +2,7 @@
 IntelliFile Offline Setup Script
 ================================
 Run this script ONCE while connected to the internet to download
-and cache the AI model for offline semantic search.
+and cache all AI models for offline use (embeddings + chat).
 
 Usage:
     python backend/setup_offline.py
@@ -10,7 +10,6 @@ Usage:
 
 import os
 import sys
-
 import urllib.request
 import shutil
 
@@ -60,13 +59,13 @@ def _download_file(url: str, dest: str) -> None:
             os.remove(tmp)
         raise
 
+
 def main():
     print("=" * 60)
     print("  IntelliFile — Offline Model Setup")
     print("=" * 60)
     print()
 
-    # Step 1: Download and cache sentence-transformers model
     _BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
     _MODELS_DIR = os.path.join(_BACKEND_DIR, "models")
     os.makedirs(_MODELS_DIR, exist_ok=True)
@@ -78,10 +77,7 @@ def main():
 
     try:
         from sentence_transformers import SentenceTransformer
-        _BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
-        _MODELS_DIR = os.path.join(_BACKEND_DIR, 'models')
-        os.makedirs(_MODELS_DIR, exist_ok=True)
-        
+
         # Download strictly into models folder
         model = SentenceTransformer(model_name, cache_folder=_MODELS_DIR)
 
@@ -111,14 +107,16 @@ def main():
                 print(f"      ✓ ONNX model exported → {onnx_dir}")
             except Exception as onnx_err:
                 print(f"      ⚠ ONNX export failed (will use PyTorch fallback): {onnx_err}")
+
     except Exception as e:
         print(f"      ✗ Failed to load embedding model: {e}")
         sys.exit(1)
 
-    # Step 2: Verify FAISS index and SQLite database exist
+    # ── Step 2: Qwen chat model (GGUF) ───────────────────────────────
     print()
     print("[2/3] Setting up Qwen chat model (GGUF)...")
 
+    # Priority: 1.5B first (fast), then 3B (higher quality)
     primary = "qwen2.5-1.5b-instruct-q4_k_m.gguf"
     fallback = "qwen2.5-3b-instruct-q5_k_m.gguf"
 

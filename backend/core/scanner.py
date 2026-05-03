@@ -1,7 +1,7 @@
 import os
 import concurrent.futures
 
-# Document & media file extensions supported for indexing
+# ONLY human-readable document formats — no code, no system files
 SUPPORTED_EXT = (
     ".pdf",
     ".docx",
@@ -10,6 +10,7 @@ SUPPORTED_EXT = (
     ".csv",
     ".xlsx", ".xls",
 )
+
 # Skip code files for any programming language
 CODE_EXT = (
     ".py", ".pyi", ".ipynb",
@@ -105,7 +106,7 @@ IGNORE_DIRS = {
     # App-specific
     "steam", "steamapps", "origin", "epicgames", "epic games", "steam library",
     "nvidia", "amd", "logs", "temp", "tmp",
-     # Games / caches / code folders
+    # Games / caches / code folders
     "game", "games", "gamecache", "game cache", "shadercache",
     "cache", "caches",
     "code", "codes",
@@ -227,7 +228,7 @@ def _scan_directory(folder):
 
 def fast_scan_device(max_workers=8, roots=None):
     """
-    Scans all available drives concurrently.
+    Scans default roots (user folders) or all drives if configured.
     Yields (filepath, mtime) tuples.
     """
     resolved_roots = _normalize_roots(roots)
@@ -281,9 +282,8 @@ def fast_scan_device(max_workers=8, roots=None):
 
     if not top_level_dirs:
         return
-    
-    worker_count = min(max_workers, max(1, len(top_level_dirs)))
 
+    worker_count = min(max_workers, max(1, len(top_level_dirs)))
     # Process all top-level directories in a ThreadPool
     with concurrent.futures.ThreadPoolExecutor(max_workers=worker_count) as executor:
         # Submit all top-level directories to the executor

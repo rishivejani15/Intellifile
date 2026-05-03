@@ -16,3 +16,4 @@ requests
 uvicorn
 pydantic-settings
 pydantic
+sentence-transformers[onnx] 

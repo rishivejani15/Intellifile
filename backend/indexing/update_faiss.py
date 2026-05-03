@@ -5,8 +5,8 @@ from core.model import MODEL
 from core.db import get_connection
 from core.faiss_manager import load_index, save_index
 
-_ENCODE_BATCH = 128       # chunks per outer loop iteration
-_ENCODE_MINI  = 16        # internal batch_size for MODEL.encode() — small = better CPU cache
+_ENCODE_BATCH = 512        # chunks per outer loop iteration (caps peak RAM)
+_ENCODE_MINI  = 32         # internal batch_size for MODEL.encode() — small to avoid OOM
 _SQL_BATCH    = 5000       # rows per SQL IN (…) query
 
 
@@ -23,11 +23,10 @@ def update_faiss(chunk_ids, progress_cb=None):
     if not chunk_ids:
         print("No FAISS update needed.")
         return
-    
+
     chunk_ids = list(set(chunk_ids))
     ids_np = np.array(chunk_ids, dtype="int64")
 
-    # ── Fetch chunk texts in batches to avoid SQL variable limits ──
     # ── Load / create FAISS index ─────────────────────────
     index = load_index(force_reload=True)
     if index is None:
@@ -36,9 +35,11 @@ def update_faiss(chunk_ids, progress_cb=None):
         index = faiss.IndexIDMap(base)
     else:
         index.remove_ids(ids_np)
+
     conn = get_connection()
     cur = conn.cursor()
-     # ── Fetch chunk texts in batches to avoid SQL variable limits ──
+
+    # ── Fetch chunk texts in batches to avoid SQL variable limits ──
     rows = []
     for i in range(0, len(chunk_ids), _SQL_BATCH):
         batch = chunk_ids[i:i + _SQL_BATCH]
@@ -48,7 +49,6 @@ def update_faiss(chunk_ids, progress_cb=None):
             batch,
         )
         rows.extend(cur.fetchall())
-    
 
     if not rows:
         save_index(index)
@@ -67,10 +67,6 @@ def update_faiss(chunk_ids, progress_cb=None):
     for i in range(0, total, _ENCODE_BATCH):
         batch_texts = texts[i:i + _ENCODE_BATCH]
         batch_ids   = ids_exist[i:i + _ENCODE_BATCH]
-
-        start = i + 1
-        end = min(i + _ENCODE_BATCH, total)
-        print(f"  … encoding chunks {start}-{end}/{total}", flush=True)
 
         embs = MODEL.encode(
             batch_texts,

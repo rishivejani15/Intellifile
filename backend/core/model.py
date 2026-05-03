@@ -30,7 +30,6 @@ _local_cached = any(
 )
 
 # ── Try ONNX Runtime backend (3-5x faster on CPU) ────────
-
 _onnx_dir = os.path.join(_MODELS_DIR, "onnx-export", _cache_name)
 _onnx_ready = os.path.isdir(_onnx_dir) and any(
     f.endswith(".onnx")
@@ -65,6 +64,7 @@ if MODEL is None:
     _backend_name = "PyTorch"
 
 sys.stderr.write(f"[model] Loaded with {_backend_name} backend\n")
+
 sys.stderr.flush()
 
 # BGE models benefit from a query instruction prefix

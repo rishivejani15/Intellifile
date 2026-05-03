@@ -19,6 +19,7 @@ def _init_worker():
     if _BACKEND_DIR not in sys.path:
         sys.path.insert(0, _BACKEND_DIR)
 
+
 def _extract_one(path):
     """Extract + chunk a single file. Returns (path, chunks) or (path, None)."""
     try:
@@ -37,9 +38,9 @@ def _extract_one(path):
         return (path, None)
 
 
-def index_files_incremental(root_folder=None,progress_cb=None):
+def index_files_incremental(root_folder=None, progress_cb=None):
     """
-    Scan the entire device fast, extract text in parallel, chunk, and store
+    Scan the device (or a specified root), extract text in parallel, chunk, and store
     in SQLite.  Returns a list of chunk IDs that were added or modified
     (to be passed to update_faiss).
 
@@ -95,18 +96,17 @@ def index_files_incremental(root_folder=None,progress_cb=None):
     unchanged_files = 0
 
     _progress("diff", f"Comparing {len(files)} files against database…", pct=0)
+
     for path, (modified_time, created_time) in files.items():
         if path in db_states:
             file_id, old_mtime = db_states[path]
             if old_mtime == modified_time:
                 unchanged_files += 1
                 continue
-            # modified → mark old chunks as affected, delete them
             modified_fids.append(file_id)
             modified_updates.append((modified_time, file_id))
             files_to_process.append((path, modified_time, file_id))
         else:
-            # new file — insert the file row now so we have its ID
             filename = os.path.basename(path)
             new_files_data.append((path, filename, modified_time, created_time))
 
@@ -144,7 +144,8 @@ def index_files_incremental(root_folder=None,progress_cb=None):
     _progress("extract", f"Extracting text from {len(files_to_process)} files…", pct=0)
     print(f"Files to extract: {len(files_to_process)}", flush=True)
 
-    # ── Extract text in parallel using a thread pool ────
+    # ── Extract text in parallel (ThreadPool) ───────────────
+    # ThreadPool is safe on low-RAM systems — no extra process overhead
     path_to_fid = {p: fid for p, _, fid in files_to_process}
     paths = [p for p, _, _ in files_to_process]
     total_to_extract = len(paths)
@@ -211,12 +212,14 @@ def index_files_incremental(root_folder=None,progress_cb=None):
             affected_chunk_ids.extend(r[0] for r in cur.fetchall())
             cur.execute(f"DELETE FROM chunks WHERE file_id IN ({placeholders})", batch)
             cur.execute(f"DELETE FROM files WHERE id IN ({placeholders})", batch)
+
     deleted_files = len(deleted_fids)
     print(
         f"Index delta: {new_files} new, {modified_files} modified, "
         f"{deleted_files} deleted, {unchanged_files} unchanged",
         flush=True,
     )
+
     conn.commit()
     conn.close()
 

@@ -1,6 +1,7 @@
 import faiss
 import os
 import sys
+
 # Resolve data directory relative to this file's location
 _BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 INDEX_PATH = os.path.join(_BACKEND_DIR, 'data', 'vectors.faiss')

@@ -37,15 +37,17 @@ def init_db():
                 )
                 ''')
 
+    # Safe migration: add created_time if upgrading from older schema
     try:
         cur.execute("ALTER TABLE files ADD COLUMN created_time INTEGER")
     except Exception:
-        pass 
+        pass  # Column already exists
+
     # Indexes for fast lookups during incremental indexing
     cur.execute('CREATE INDEX IF NOT EXISTS idx_files_path ON files(path)')
     cur.execute('CREATE INDEX IF NOT EXISTS idx_chunks_file_id ON chunks(file_id)')
     cur.execute('CREATE INDEX IF NOT EXISTS idx_files_created ON files(created_time)')
-    
+
     # FTS5 full-text search index (content-synced with chunks table)
     try:
         cur.execute('''
