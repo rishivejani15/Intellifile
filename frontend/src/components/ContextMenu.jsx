@@ -9,7 +9,6 @@ function ContextMenu({
   isEmptySpace,
   currentPath,
   onOpen,
-  onOpenWith,
   onCut,
   onCopy,
   onPaste,
@@ -21,6 +20,7 @@ function ContextMenu({
   onOpenTerminal,
   onOpenInVSCode,
   onPinToFavorites,
+  isPinnedToFavorites,
   onCreateFile,
   onCreateFolder,
   onRefresh,
@@ -29,6 +29,35 @@ function ContextMenu({
 }) {
   const contextMenuRef = useRef(null);
   const [showNewSubmenu, setShowNewSubmenu] = useState(false);
+  const [menuPosition, setMenuPosition] = useState(position);
+
+  useEffect(() => {
+    setMenuPosition(position);
+  }, [position]);
+
+  useEffect(() => {
+    if (!visible || !contextMenuRef.current) return;
+
+    const MARGIN = 8;
+    const menuEl = contextMenuRef.current;
+    const { innerWidth, innerHeight } = window;
+    const rect = menuEl.getBoundingClientRect();
+
+    let nextX = position.x;
+    let nextY = position.y;
+
+    if (nextX + rect.width > innerWidth - MARGIN) {
+      nextX = Math.max(MARGIN, innerWidth - rect.width - MARGIN);
+    }
+
+    if (nextY + rect.height > innerHeight - MARGIN) {
+      nextY = Math.max(MARGIN, innerHeight - rect.height - MARGIN);
+    }
+
+    if (nextX !== menuPosition.x || nextY !== menuPosition.y) {
+      setMenuPosition({ x: nextX, y: nextY });
+    }
+  }, [visible, position, menuPosition.x, menuPosition.y]);
 
   useEffect(() => {
     if (!visible) return;
@@ -54,7 +83,7 @@ function ContextMenu({
       <div
         ref={contextMenuRef}
         className="context-menu"
-        style={{ top: position.y, left: position.x }}
+        style={{ top: menuPosition.y, left: menuPosition.x }}
       >
         <div
           className="context-menu-item has-submenu"
@@ -118,16 +147,11 @@ if (!selectedItem) return null;
     <div
       ref={contextMenuRef}
       className="context-menu"
-      style={{ top: position.y, left: position.x }}
+      style={{ top: menuPosition.y, left: menuPosition.x }}
     >
       <div className="context-menu-item" onClick={() => { onOpen(); onClose(); }}>
         Open
       </div>
-      {selectedItem.type !== 'folder' && selectedItem.type !== 'drive' && (
-        <div className="context-menu-item" onClick={() => { onOpenWith?.(); onClose(); }}>
-          📂 Open With...
-        </div>
-      )}
       <div className="context-menu-divider"></div>
 
       {/* New submenu */}
@@ -195,7 +219,7 @@ if (!selectedItem) return null;
       {selectedItem.type === 'folder' && (
         <>
           <div className="context-menu-item" onClick={() => { onPinToFavorites?.(); onClose(); }}>
-            📌 Pin to Quick Access
+            {isPinnedToFavorites ? '📍 Unpin from Quick Access' : '📌 Pin to Quick Access'}
           </div>
           <div className="context-menu-item" onClick={() => { onOpenTerminal?.(); onClose(); }}>
             💻 Open Terminal Here

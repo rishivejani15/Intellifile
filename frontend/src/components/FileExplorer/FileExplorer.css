@@ -2089,7 +2089,8 @@
 
 .versioning-body {
   flex: 1;
-  overflow-y: auto;
+  min-height: 0;
+  overflow: hidden;
   padding: 14px;
   display: flex;
   flex-direction: column;

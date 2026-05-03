@@ -97,9 +97,10 @@ export const useFileExplorer = (ipcRenderer) => {
     return false;
   },  [renamingItem, renameValue, ipcRenderer, pushUndo]);
 
-  const handleDelete = useCallback(async (selectedItems, selectedItem, currentPath, onDeleteComplete) => {
+  const handleDelete = useCallback(async (selectedItems, selectedItem, currentPath, onDeleteComplete, options = {}) => {
     const itemsToDelete = selectedItems.length > 0 ? selectedItems : (selectedItem ? [selectedItem] : []);
     const protectedItems = itemsToDelete.filter(item => item.protected);
+    const { skipConfirm = false } = options || {};
 
     if (protectedItems.length > 0) {
       alert('Cannot delete system files or folders');
@@ -107,13 +108,15 @@ export const useFileExplorer = (ipcRenderer) => {
     }
 
     if (itemsToDelete.length > 0) {
-       // Confirmation dialog
-      const names = itemsToDelete.map(i => i.name).join(', ');
-      const msg = itemsToDelete.length === 1
-        ? `Are you sure you want to move "${names}" to the Recycle Bin?`
-        : `Are you sure you want to move ${itemsToDelete.length} items to the Recycle Bin?\n\n${names}`;
-      
-      if (!window.confirm(msg)) return false;
+      if (!skipConfirm) {
+        // Confirmation dialog
+        const names = itemsToDelete.map(i => i.name).join(', ');
+        const msg = itemsToDelete.length === 1
+          ? `Are you sure you want to move "${names}" to the Recycle Bin?`
+          : `Are you sure you want to move ${itemsToDelete.length} items to the Recycle Bin?\n\n${names}`;
+
+        if (!window.confirm(msg)) return false;
+      }
       try {
         for (const item of itemsToDelete) {
           const result = await ipcRenderer?.invoke('delete-file', item.path);

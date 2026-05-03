@@ -70,24 +70,119 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
 
   // eslint-disable-next-line no-unused-vars
   const inputRef = useRef(null);
+  const lastFocusRefreshRef = useRef(0);
+  const loadRequestRef = useRef(0);
 
   // Derived values
   const displayItems = useMemo(() => sortItems(items, sortBy, sortDirection), [items, sortBy, sortDirection]);
+  const matchesSearch = useCallback((name) => {
+    if (!searchQuery) return true;
+    return name.toLowerCase().includes(searchQuery.toLowerCase());
+  }, [searchQuery]);
+  const getParentPath = useCallback((filePath) => {
+    if (!filePath) return '';
+    const idx = filePath.lastIndexOf('\\');
+    if (idx <= 0) return filePath;
+    return filePath.slice(0, idx);
+  }, []);
+  const getExtFromName = useCallback((name) => {
+    const idx = name.lastIndexOf('.');
+    if (idx <= 0) return '';
+    return name.slice(idx).toLowerCase();
+  }, []);
+  const addItemsToState = useCallback((itemsToAdd) => {
+    if (!itemsToAdd || itemsToAdd.length === 0) return;
+    setItems(prev => {
+      const existing = new Set(prev.map(item => item.path));
+      const filtered = itemsToAdd.filter(item => !existing.has(item.path) && matchesSearch(item.name));
+      return filtered.length ? [...prev, ...filtered] : prev;
+    });
+  }, [matchesSearch]);
+  const removeItemsFromState = useCallback((itemsToRemove) => {
+    if (!itemsToRemove || itemsToRemove.length === 0) return;
+    const pathSet = new Set(itemsToRemove.map(item => item.path));
+    setItems(prev => prev.filter(item => !pathSet.has(item.path)));
+    setSelectedItems(prev => prev.filter(item => !pathSet.has(item.path)));
+    setSelectedItem(prev => (prev && pathSet.has(prev.path)) ? null : prev);
+    setLastSelectedIndex(null);
+  }, []);
+  const updateItemPathInState = useCallback((oldPath, newPath, newName) => {
+    const newExt = getExtFromName(newName);
+    const removeFromView = !matchesSearch(newName);
+
+    setItems(prev => {
+      let next = prev.map(item => {
+        if (item.path !== oldPath) return item;
+        return {
+          ...item,
+          path: newPath,
+          name: newName,
+          ext: item.type === 'file' ? newExt : item.ext
+        };
+      });
+      if (removeFromView) {
+        next = next.filter(item => item.path !== newPath);
+      }
+      return next;
+    });
+
+    setSelectedItems(prev => {
+      let next = prev.map(item => {
+        if (item.path !== oldPath) return item;
+        return {
+          ...item,
+          path: newPath,
+          name: newName,
+          ext: item.type === 'file' ? newExt : item.ext
+        };
+      });
+      if (removeFromView) {
+        next = next.filter(item => item.path !== newPath);
+      }
+      return next;
+    });
+
+    setSelectedItem(prev => {
+      if (!prev || prev.path !== oldPath) return prev;
+      if (removeFromView) return null;
+      return {
+        ...prev,
+        path: newPath,
+        name: newName,
+        ext: prev.type === 'file' ? newExt : prev.ext
+      };
+    });
+
+    if (removeFromView) {
+      setLastSelectedIndex(null);
+    }
+  }, [getExtFromName, matchesSearch]);
 
   // Load directory with filtering and sorting
-  const loadDirectory = useCallback(async (dirPath) => {
-    setLoading(true);
-    setRenamingItem(null);
-    setShowContextMenu(false);
+  const loadDirectory = useCallback(async (dirPath, options = {}) => {
+    const { soft = false, trackHistory = true, tabId = null } = options;
+    const requestId = ++loadRequestRef.current;
+    const isStale = () => requestId !== loadRequestRef.current;
+
+    if (!soft) {
+      setLoading(true);
+      setRenamingItem(null);
+      setShowContextMenu(false);
+    }
     try {
       const result = await ipcRenderer?.invoke('list-directory', dirPath, { showHidden });
+      if (isStale()) return;
       if (!result || result.error) {
         console.error('Error loading directory:', result?.error || 'Unknown error');
         setItems([]);
         if (dirPath && dirPath !== 'C:\\') {
           const parentPath = dirPath.substring(0, dirPath.lastIndexOf('\\'));
           if (parentPath && parentPath !== dirPath) {
-            setTimeout(() => loadDirectory(parentPath), 100);
+            setTimeout(() => {
+              if (!isStale()) {
+                loadDirectory(parentPath, { soft, trackHistory, tabId });
+              }
+            }, 100);
           }
         }
       } else {
@@ -130,22 +225,32 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
           dirPath;
         
         if (actualPath) {
-          setCurrentPath(actualPath);
-          setAddressPath(actualPath);
-          updateBreadcrumb(actualPath);
+          const pathChanged = !currentPath || actualPath !== currentPath;
+          if (pathChanged) {
+            setCurrentPath(actualPath);
+            setAddressPath(actualPath);
+            updateBreadcrumb(actualPath);
+          }
           setSelectedItem(prev => (prev && loadedItems.some(i => i.path === prev.path)) ? prev : null);
           setSelectedItems(prev => prev.filter(pItem => loadedItems.some(i => i.path === pItem.path)));
           setLastSelectedIndex(null);
-          updateHistory(actualPath);
-          updateActiveTab(actualPath);
+          if (trackHistory && pathChanged) {
+            updateHistory(actualPath, tabId);
+          }
+          if (pathChanged) {
+            updateActiveTab(actualPath, tabId);
+          }
         }
       }
     } catch (error) {
+      if (isStale()) return;
       console.error('Error:', error);
     } finally {
-      setLoading(false);
+      if (!soft && !isStale()) {
+        setLoading(false);
+      }
     }
-  }, [updateBreadcrumb, searchQuery, sortBy, sortDirection, showHidden, updateHistory, updateActiveTab, setCurrentPath, setAddressPath, setRenamingItem]);
+  }, [updateBreadcrumb, searchQuery, sortBy, sortDirection, showHidden, updateHistory, updateActiveTab, setCurrentPath, setAddressPath, setRenamingItem, currentPath]);
 
   // Initialize with Documents folder
   useEffect(() => {
@@ -157,7 +262,11 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
   // Refresh on window focus
   useEffect(() => {
     const handleFocus = () => {
-      if (currentPath) loadDirectory(currentPath);
+      if (!currentPath) return;
+      const now = Date.now();
+      if (now - lastFocusRefreshRef.current < 500) return;
+      lastFocusRefreshRef.current = now;
+      loadDirectory(currentPath, { soft: true, trackHistory: false });
     };
     window.addEventListener('focus', handleFocus);
     return () => window.removeEventListener('focus', handleFocus);
@@ -181,6 +290,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
 
   const handleFolderClick = (item) => {
     if (item.type === 'folder' || item.type === 'drive') {
+      setShowPreview(false);
       loadDirectory(item.path);
     } else if (item.type === 'file') {
       openFileWithDefaultApp(item.path);
@@ -216,6 +326,8 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
   useEffect(() => {
     if (selectedItem) {
       setShowPreview(true);
+    } else {
+      setShowPreview(false);
     }
   }, [selectedItem]);
 
@@ -225,12 +337,12 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
 
   const handleBack = () => {
     const prevPath = navBack();
-    if (prevPath) loadDirectory(prevPath);
+    if (prevPath) loadDirectory(prevPath, { trackHistory: false, tabId: activeTabId });
   };
 
   const handleForward = () => {
     const nextPath = navForward();
-    if (nextPath) loadDirectory(nextPath);
+    if (nextPath) loadDirectory(nextPath, { trackHistory: false, tabId: activeTabId });
   };
 
   const handleUp = () => {
@@ -249,36 +361,88 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
   };
 
   const handlePaste = async () => {
-    await fileOps.handlePaste(currentPath, () => loadDirectory(currentPath));
+    if (clipboard?.operation === 'cut' && clipboard.items?.length && currentPath) {
+      const itemsToAdd = clipboard.items
+        .filter(item => getParentPath(item.path) !== currentPath)
+        .map(item => ({
+          ...item,
+          path: `${currentPath}\\${item.name}`
+        }));
+      addItemsToState(itemsToAdd);
+    }
+    await fileOps.handlePaste(currentPath, () => loadDirectory(currentPath, { soft: true, trackHistory: false }));
   };
 
   const handleRename = async () => {
-    const result = await fileOps.handleRename(currentPath, () => loadDirectory(currentPath));
-    if (result) loadDirectory(currentPath);
+    if (renamingItem?.protected) {
+      alert('Cannot rename system files or folders');
+      setRenamingItem(null);
+      return;
+    }
+
+    if (renamingItem && renameValue && renameValue !== renamingItem.name && currentPath) {
+      const newPath = `${currentPath}\\${renameValue}`;
+      updateItemPathInState(renamingItem.path, newPath, renameValue);
+    }
+
+    const ok = await fileOps.handleRename(currentPath, () => loadDirectory(currentPath, { soft: true, trackHistory: false }));
+    if (!ok && currentPath) {
+      loadDirectory(currentPath, { soft: true, trackHistory: false });
+    }
   };
 
   const handleDelete = async () => {
-    await fileOps.handleDelete(selectedItems, selectedItem, currentPath, () => loadDirectory(currentPath));
+    const itemsToDelete = selectedItems.length > 0 ? selectedItems : (selectedItem ? [selectedItem] : []);
+    if (itemsToDelete.length === 0) {
+      setShowContextMenu(false);
+      return;
+    }
+
+    if (itemsToDelete.some(item => item.protected)) {
+      alert('Cannot delete system files or folders');
+      setShowContextMenu(false);
+      return;
+    }
+
+    const names = itemsToDelete.map(i => i.name).join(', ');
+    const msg = itemsToDelete.length === 1
+      ? `Are you sure you want to move "${names}" to the Recycle Bin?`
+      : `Are you sure you want to move ${itemsToDelete.length} items to the Recycle Bin?\n\n${names}`;
+
+    if (!window.confirm(msg)) {
+      setShowContextMenu(false);
+      return;
+    }
+
+    setItems(prev => prev.filter(item => !itemsToDelete.some(del => del.path === item.path)));
+    setSelectedItems([]);
+    setSelectedItem(null);
+    setLastSelectedIndex(null);
+
+    const ok = await fileOps.handleDelete(
+      itemsToDelete,
+      null,
+      currentPath,
+      () => currentPath && loadDirectory(currentPath, { soft: true, trackHistory: false }),
+      { skipConfirm: true }
+    );
+    if (!ok && currentPath) {
+      loadDirectory(currentPath, { soft: true, trackHistory: false });
+    }
+
     setShowContextMenu(false);
-    loadDirectory(currentPath);
   };
 
   const handleCreateFolder = async () => {
-    await fileOps.handleCreateFolder(currentPath, () => loadDirectory(currentPath));
+    await fileOps.handleCreateFolder(currentPath, () => loadDirectory(currentPath, { soft: true, trackHistory: false }));
   };
 
   const handleCreateFile = async (fileName) => {
-    await fileOps.handleCreateFile(currentPath, fileName, () => loadDirectory(currentPath));
+    await fileOps.handleCreateFile(currentPath, fileName, () => loadDirectory(currentPath, { soft: true, trackHistory: false }));
   };
 
   const handleUndo = async () => {
-    await fileOps.handleUndo(() => loadDirectory(currentPath));
-  };
-
-  const handleOpenWith = async () => {
-    if (selectedItem && selectedItem.type === 'file') {
-      await ipcRenderer?.invoke('open-with', selectedItem.path);
-    }
+    await fileOps.handleUndo(() => loadDirectory(currentPath, { soft: true, trackHistory: false }));
   };
 
   const handleCopyPath = async () => {
@@ -303,13 +467,24 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
   };
 
   const handlePinToFavorites = () => {
-    if (selectedItem?.type === 'folder' && window.__intellifile_addFavorite) {
+    if (selectedItem?.type !== 'folder') return;
+
+    const isPinned = window.__intellifile_isFavorite?.(selectedItem.path);
+    if (isPinned && window.__intellifile_removeFavorite) {
+      window.__intellifile_removeFavorite(selectedItem.path);
+      return;
+    }
+
+    if (!isPinned && window.__intellifile_addFavorite) {
       window.__intellifile_addFavorite(selectedItem.path, selectedItem.name);
     }
   };
 
+  const isSelectedFolderPinned = selectedItem?.type === 'folder' &&
+    !!window.__intellifile_isFavorite?.(selectedItem.path);
+
   const handleRefresh = () => {
-    if (currentPath) loadDirectory(currentPath);
+    if (currentPath) loadDirectory(currentPath, { soft: true, trackHistory: false });
   };
 
   const handleVersioning = () => {
@@ -340,7 +515,19 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
   };
 
   const handleDropOnItem = async (e, targetItem) => {
-    await fileOps.handleDropOnItem(e, targetItem, currentPath, () => loadDirectory(currentPath));
+    const isCopy = e.ctrlKey;
+    if (!isCopy && targetItem?.type === 'folder') {
+      try {
+        const data = e.dataTransfer.getData('application/json');
+        const paths = JSON.parse(data || '[]');
+        if (Array.isArray(paths) && paths.length > 0) {
+          const draggedItems = items.filter(item => paths.includes(item.path));
+          removeItemsFromState(draggedItems);
+        }
+      } catch (err) {
+      }
+    }
+    await fileOps.handleDropOnItem(e, targetItem, currentPath, () => loadDirectory(currentPath, { soft: true, trackHistory: false }));
   };
 
   const handleContextMenu = (e, item) => {
@@ -466,7 +653,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
   // Tab handlers
   const handleTabSelect = (tab) => {
     handleSelectTab(tab);
-    if (tab.path) loadDirectory(tab.path);
+    if (tab.path) loadDirectory(tab.path, { tabId: tab.id });
   };
 
   const handleTabClose = (tabId) => {
@@ -614,7 +801,6 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
         isEmptySpace={isEmptySpaceContext}
         clipboard={clipboard}
         onOpen={() => selectedItem && openFileWithDefaultApp(selectedItem.path)}
-        onOpenWith={handleOpenWith}
         onCut={handleCut}
         onCopy={handleCopy}
         onPaste={handlePaste}
@@ -628,6 +814,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
         onOpenTerminal={handleOpenTerminal}
         onOpenInVSCode={handleOpenInVSCode}
         onPinToFavorites={handlePinToFavorites}
+        isPinnedToFavorites={isSelectedFolderPinned}
         onCreateFile={handleCreateFile}
         onCreateFolder={handleCreateFolder}
         onRefresh={handleRefresh}

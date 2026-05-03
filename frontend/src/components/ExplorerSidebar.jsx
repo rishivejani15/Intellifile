@@ -3,6 +3,8 @@ import './FileExplorer/FileExplorer.css';
 
 const FAVORITES_KEY = 'intellifile-favorites';
 
+const normalizePath = (p) => (p || '').toLowerCase().replace(/\//g, '\\').replace(/[\\]+$/, '');
+
 function ExplorerSidebar({ drives, onNavigate, currentPath }) {
   const [favorites, setFavorites] = useState([]);
   const [expandedSections, setExpandedSections] = useState({
@@ -47,7 +49,16 @@ function ExplorerSidebar({ drives, onNavigate, currentPath }) {
   // Expose addFavorite through window for ContextMenu to use
   useEffect(() => {
     window.__intellifile_addFavorite = addFavorite;
-    return () => { delete window.__intellifile_addFavorite; };
+    window.__intellifile_removeFavorite = removeFavorite;
+    window.__intellifile_isFavorite = (folderPath) => {
+      const target = normalizePath(folderPath);
+      return favorites.some((f) => normalizePath(f.path) === target);
+    };
+    return () => {
+      delete window.__intellifile_addFavorite;
+      delete window.__intellifile_removeFavorite;
+      delete window.__intellifile_isFavorite;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [favorites]);
   

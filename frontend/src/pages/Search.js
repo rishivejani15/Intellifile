@@ -111,7 +111,7 @@ export default function Search() {
         <div className={`index-status ${indexing ? 'running' : 'done'}`} title={indexDetail || indexMessage}>
           <span className="index-dot" />
           <span className="index-text">
-            {indexing ? `Indexing${indexPhase ? ` (${indexPhase})` : ''}` : (indexMessage || 'Index updated')}
+            {indexing ? `Indexing${indexPhase ? ` (${indexPhase})` : ''}` : (indexMessage || 'Checking index...')}
           </span>
      
       {indexing && typeof indexPct === 'number' && (

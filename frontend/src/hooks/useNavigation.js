@@ -4,9 +4,7 @@ import { useState, useCallback } from 'react';
 export const useNavigation = (ipcRenderer) => {
   const [currentPath, setCurrentPath] = useState(null);
   const [breadcrumb, setBreadcrumb] = useState([]);
-  const [history, setHistory] = useState([]);
-  const [historyIndex, setHistoryIndex] = useState(-1);
-  const [tabs, setTabs] = useState([{ id: 'tab-1', path: null, title: 'Documents' }]);
+  const [tabs, setTabs] = useState([{ id: 'tab-1', path: null, title: 'Documents', history: [], historyIndex: -1 }]);
   const [activeTabId, setActiveTabId] = useState('tab-1');
   const [addressPath, setAddressPath] = useState('');
 
@@ -19,18 +17,22 @@ export const useNavigation = (ipcRenderer) => {
     setBreadcrumb(crumbs);
   }, []);
 
-  const updateHistory = useCallback((path) => {
-    setHistory(prev => {
-      const newHistory = prev.slice(0, historyIndex + 1);
-      newHistory.push(path);
-      return newHistory;
-    });
-    setHistoryIndex(prev => prev + 1);
-  }, [historyIndex]);
-
-  const updateActiveTab = useCallback((path) => {
+  const updateHistory = useCallback((path, tabId) => {
+    const targetId = tabId || activeTabId;
     setTabs(prev => prev.map(tab => {
-      if (tab.id === activeTabId) {
+      if (tab.id !== targetId) return tab;
+      const baseHistory = Array.isArray(tab.history) ? tab.history : [];
+      const baseIndex = typeof tab.historyIndex === 'number' ? tab.historyIndex : -1;
+      const newHistory = baseHistory.slice(0, baseIndex + 1);
+      newHistory.push(path);
+      return { ...tab, history: newHistory, historyIndex: baseIndex + 1 };
+    }));
+  }, [activeTabId]);
+
+  const updateActiveTab = useCallback((path, tabId) => {
+    const targetId = tabId || activeTabId;
+    setTabs(prev => prev.map(tab => {
+      if (tab.id === targetId) {
         const title = path.split('\\').filter(Boolean).pop() || 'Root';
         return { ...tab, path, title };
       }
@@ -39,20 +41,26 @@ export const useNavigation = (ipcRenderer) => {
   }, [activeTabId]);
 
   const handleBack = useCallback(() => {
-    if (historyIndex > 0) {
-      setHistoryIndex(prev => prev - 1);
-      return history[historyIndex - 1];
-    }
-    return null;
-  }, [historyIndex, history]);
+    const activeTab = tabs.find(tab => tab.id === activeTabId);
+    if (!activeTab || activeTab.historyIndex <= 0) return null;
+    const newIndex = activeTab.historyIndex - 1;
+    setTabs(prev => prev.map(tab => {
+      if (tab.id !== activeTabId) return tab;
+      return { ...tab, historyIndex: newIndex };
+    }));
+    return activeTab.history[newIndex] || null;
+  }, [tabs, activeTabId]);
 
   const handleForward = useCallback(() => {
-    if (historyIndex < history.length - 1) {
-      setHistoryIndex(prev => prev + 1);
-      return history[historyIndex + 1];
-    }
-    return null;
-  }, [historyIndex, history]);
+    const activeTab = tabs.find(tab => tab.id === activeTabId);
+    if (!activeTab || activeTab.historyIndex >= activeTab.history.length - 1) return null;
+    const newIndex = activeTab.historyIndex + 1;
+    setTabs(prev => prev.map(tab => {
+      if (tab.id !== activeTabId) return tab;
+      return { ...tab, historyIndex: newIndex };
+    }));
+    return activeTab.history[newIndex] || null;
+  }, [tabs, activeTabId]);
 
   const handleUp = useCallback(() => {
     if (currentPath && currentPath !== 'C:\\') {
@@ -69,7 +77,11 @@ export const useNavigation = (ipcRenderer) => {
 
   const handleNewTab = useCallback(() => {
     const newId = `tab-${Date.now()}`;
-    setTabs(prev => [...prev, { id: newId, path: currentPath, title: 'New Tab' }]);
+    setTabs(prev => {
+      const history = currentPath ? [currentPath] : [];
+      const historyIndex = currentPath ? 0 : -1;
+      return [...prev, { id: newId, path: currentPath, title: 'New Tab', history, historyIndex }];
+    });
     setActiveTabId(newId);
   }, [currentPath]);
 
@@ -92,6 +104,10 @@ export const useNavigation = (ipcRenderer) => {
     setActiveTabId(tab.id);
     return tab.path;
   }, []);
+
+  const activeTab = tabs.find(tab => tab.id === activeTabId);
+  const history = activeTab?.history || [];
+  const historyIndex = typeof activeTab?.historyIndex === 'number' ? activeTab.historyIndex : -1;
 
   return {
     currentPath,

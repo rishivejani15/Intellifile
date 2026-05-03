@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React from 'react';
 import './FileExplorer/FileExplorer.css';
 
 function ExplorerNavbar({
@@ -36,8 +36,8 @@ function ExplorerNavbar({
   onSearchChange,
   onSearchKeyDown,
 }) {
-  const [showNewDropdown, setShowNewDropdown] = useState(false);
-  const newDropdownRef = useRef(null);
+  // const [showNewDropdown, setShowNewDropdown] = useState(false);
+  // const newDropdownRef = useRef(null);
 
   return (
     <div className="explorer-navbar">
@@ -179,7 +179,7 @@ function ExplorerNavbar({
           <div className={`index-status ${indexing ? 'running' : 'done'}`} title={indexDetail || indexMessage}>
             <span className="index-dot" />
             <span className="index-text">
-              {indexing ? `Indexing${indexPhase ? ` (${indexPhase})` : ''}` : (indexMessage || 'Index updated')}
+              {indexing ? `Indexing${indexPhase ? ` (${indexPhase})` : ''}` : (indexMessage || 'Checking index...')}
             </span>
             {indexing && typeof indexPct === 'number' && (
               <span className="index-pct">{indexPct}%</span>
