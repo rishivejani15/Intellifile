@@ -414,31 +414,99 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
       return;
     }
 
-    setItems(prev => prev.filter(item => !itemsToDelete.some(del => del.path === item.path)));
-    setSelectedItems([]);
-    setSelectedItem(null);
-    setLastSelectedIndex(null);
+    setShowContextMenu(false);
 
+    // Call backend delete operation first
     const ok = await fileOps.handleDelete(
       itemsToDelete,
       null,
       currentPath,
-      () => currentPath && loadDirectory(currentPath, { soft: true, trackHistory: false }),
+      null,
       { skipConfirm: true }
     );
-    if (!ok && currentPath) {
-      loadDirectory(currentPath, { soft: true, trackHistory: false });
-    }
 
-    setShowContextMenu(false);
+    if (ok) {
+      // Delete succeeded - remove from UI immediately
+      setItems(prev => prev.filter(item => !itemsToDelete.some(del => del.path === item.path)));
+      setSelectedItems([]);
+      setSelectedItem(null);
+      setLastSelectedIndex(null);
+    } else {
+      // Delete failed - reload directory to sync UI with backend state
+      if (currentPath) {
+        loadDirectory(currentPath, { soft: true, trackHistory: false });
+      }
+      alert('Failed to delete items. Please try again.');
+    }
   };
 
   const handleCreateFolder = async () => {
-    await fileOps.handleCreateFolder(currentPath, () => loadDirectory(currentPath, { soft: true, trackHistory: false }));
+    if (!currentPath) return;
+    
+    const folderName = 'New Folder';
+    const newPath = currentPath + '\\' + folderName;
+    
+    // Create the folder
+    const created = await fileOps.handleCreateFolder(currentPath, () => {});
+    
+    if (created) {
+      // Create a new item object for rename mode
+      const newItem = {
+        path: newPath,
+        name: folderName,
+        type: 'folder',
+        size: 0,
+        modified: new Date().toISOString(),
+        protected: false
+      };
+      
+      // Immediately enter rename mode
+      setRenamingItem(newItem);
+      setRenameValue(folderName);
+      
+      // Focus the input field immediately
+      setTimeout(() => {
+        inputRef.current?.focus?.();
+        inputRef.current?.select?.();
+      }, 10);
+      
+      // Reload directory in background
+      loadDirectory(currentPath, { soft: true, trackHistory: false });
+    }
   };
 
   const handleCreateFile = async (fileName) => {
-    await fileOps.handleCreateFile(currentPath, fileName, () => loadDirectory(currentPath, { soft: true, trackHistory: false }));
+    if (!currentPath || !fileName) return;
+    
+    const newPath = currentPath + '\\' + fileName;
+    
+    // Create the file
+    const created = await fileOps.handleCreateFile(currentPath, fileName, () => {});
+    
+    if (created) {
+      // Create a new item object for rename mode
+      const newItem = {
+        path: newPath,
+        name: fileName,
+        type: 'file',
+        size: 0,
+        modified: new Date().toISOString(),
+        protected: false
+      };
+      
+      // Immediately enter rename mode
+      setRenamingItem(newItem);
+      setRenameValue(fileName);
+      
+      // Focus the input field immediately
+      setTimeout(() => {
+        inputRef.current?.focus?.();
+        inputRef.current?.select?.();
+      }, 10);
+      
+      // Reload directory in background
+      loadDirectory(currentPath, { soft: true, trackHistory: false });
+    }
   };
 
   const handleUndo = async () => {
