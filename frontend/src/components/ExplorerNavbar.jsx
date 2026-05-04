@@ -19,6 +19,10 @@ function ExplorerNavbar({
   indexDetail,
   indexPct,
   indexMessage,
+  archiveActive,
+  archiveAction,
+  archivePct,
+  archiveMessage,
   semanticLoading,
   onAddressSubmit,
   onBreadcrumbClick,
@@ -185,6 +189,26 @@ function ExplorerNavbar({
               <span className="index-pct">{indexPct}%</span>
             )}
           </div>
+          {(archiveActive || archiveMessage) && (
+            <div className={`archive-status ${archiveActive ? 'running' : 'done'}`} title={archiveMessage || ''}>
+              <div className="archive-row">
+                <span className="archive-dot" />
+                <span className="archive-text">
+                  {archiveActive
+                    ? (archiveAction === 'extract' ? 'Extracting' : 'Compressing')
+                    : (archiveMessage || 'Archive complete')}
+                </span>
+                {archiveActive && typeof archivePct === 'number' && (
+                  <span className="archive-pct">{archivePct}%</span>
+                )}
+              </div>
+              {archiveActive && typeof archivePct === 'number' && (
+                <div className="archive-progress-bar">
+                  <div className="archive-progress-fill" style={{ width: `${archivePct}%` }} />
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </div>

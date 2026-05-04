@@ -187,6 +187,40 @@ export const useFileExplorer = (ipcRenderer) => {
     return false;
   }, [ipcRenderer]);
 
+  const handleCompressZip = useCallback(async (selectedItem) => {
+    if (!selectedItem?.path) return false;
+    try {
+      const result = await ipcRenderer?.invoke('compress-zip', selectedItem.path);
+      if (!result?.success) {
+        if (!result?.canceled) {
+          alert('Compression failed: ' + (result?.error || 'Unknown error'));
+        }
+        return false;
+      }
+      return true;
+    } catch (err) {
+      alert('Compression failed: ' + (err?.message || 'Unknown error'));
+      return false;
+    }
+  }, [ipcRenderer]);
+
+  const handleExtractZip = useCallback(async (selectedItem) => {
+    if (!selectedItem?.path) return false;
+    try {
+      const result = await ipcRenderer?.invoke('extract-zip', selectedItem.path);
+      if (!result?.success) {
+        if (!result?.canceled) {
+          alert('Extraction failed: ' + (result?.error || 'Unknown error'));
+        }
+        return false;
+      }
+      return true;
+    } catch (err) {
+      alert('Extraction failed: ' + (err?.message || 'Unknown error'));
+      return false;
+    }
+  }, [ipcRenderer]);
+
   const handleDragStart = useCallback((e, item, selectedItems) => {
     const itemsToDrag = selectedItems.length > 0 ? selectedItems : [item];
     e.dataTransfer.setData('application/json', JSON.stringify(itemsToDrag.map(i => i.path)));
@@ -235,5 +269,7 @@ export const useFileExplorer = (ipcRenderer) => {
     handleUndo,
     handleDragStart,
     handleDropOnItem,
+    handleCompressZip,
+    handleExtractZip,
   };
 };

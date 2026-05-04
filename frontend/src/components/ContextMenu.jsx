@@ -25,6 +25,8 @@ function ContextMenu({
   onCreateFolder,
   onRefresh,
   onVersioning,
+  onCompress,
+  onExtract,
   onClose,
 }) {
   const contextMenuRef = useRef(null);
@@ -141,6 +143,7 @@ function ContextMenu({
     );
   }
 if (!selectedItem) return null;
+  const isZipFile = selectedItem?.type === 'file' && selectedItem?.ext?.toLowerCase() === '.zip';
 
   // File/folder context menu
   return (
@@ -202,6 +205,19 @@ if (!selectedItem) return null;
         📌 Paste (Ctrl+V)
       </div>
       <div className="context-menu-divider"></div>
+      {selectedItem?.type !== 'drive' && (
+        <div className="context-menu-item" onClick={() => { onCompress?.(); onClose(); }}>
+          🗜️ Compress to ZIP
+        </div>
+      )}
+      {isZipFile && (
+        <div className="context-menu-item" onClick={() => { onExtract?.(); onClose(); }}>
+          📂 Extract...
+        </div>
+      )}
+      {(selectedItem?.type !== 'drive' || isZipFile) && (
+        <div className="context-menu-divider"></div>
+      )}
       <div
         className={`context-menu-item ${selectedItem?.protected ? 'disabled' : ''}`}
         onClick={selectedItem?.protected ? null : () => { onRename(); onClose(); }}

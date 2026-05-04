@@ -3,6 +3,8 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
+const archiver = require('archiver');
+const unzipper = require('unzipper');
 const { registerSystemRoots, getSystemRoots } = require('./system_roots');
 
 const PROJECT_ROOT = path.join(__dirname, '..');
@@ -831,6 +833,118 @@ function isProtectedPath(filePath) {
   return PROTECTED_PATHS.some(pattern => pattern.test(filePath));
 }
 
+function emitArchiveProgress(payload) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('archive-progress', payload);
+  }
+}
+
+function emitArchiveComplete(payload) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('archive-complete', payload);
+  }
+}
+
+function getAvailablePath(dirPath, baseName, ext) {
+  let candidate = path.join(dirPath, `${baseName}${ext}`);
+  if (!fs.existsSync(candidate)) return candidate;
+  let counter = 1;
+  while (fs.existsSync(candidate)) {
+    candidate = path.join(dirPath, `${baseName} (${counter})${ext}`);
+    counter++;
+  }
+  return candidate;
+}
+
+function compressToZip(sourcePath, destPath, onProgress) {
+  return new Promise((resolve, reject) => {
+    const output = fs.createWriteStream(destPath);
+    const archive = archiver('zip', { zlib: { level: 9 } });
+    let lastPct = -1;
+
+    output.on('close', () => resolve({ bytes: archive.pointer() }));
+    output.on('error', reject);
+    archive.on('error', reject);
+
+    archive.on('progress', (data) => {
+      const totalBytes = data?.fs?.totalBytes || 0;
+      const processedBytes = data?.fs?.processedBytes || 0;
+      const totalEntries = data?.entries?.total || 0;
+      const processedEntries = data?.entries?.processed || 0;
+
+      let pct = null;
+      if (totalBytes > 0) {
+        pct = Math.min(100, Math.floor((processedBytes / totalBytes) * 100));
+      } else if (totalEntries > 0) {
+        pct = Math.min(100, Math.floor((processedEntries / totalEntries) * 100));
+      }
+
+      if (typeof pct === 'number' && pct !== lastPct) {
+        lastPct = pct;
+        onProgress?.(pct, data);
+      }
+    });
+
+    archive.pipe(output);
+
+    const stats = fs.statSync(sourcePath);
+    if (stats.isDirectory()) {
+      archive.directory(sourcePath, path.basename(sourcePath));
+    } else {
+      archive.file(sourcePath, { name: path.basename(sourcePath) });
+    }
+
+    archive.finalize();
+  });
+}
+
+function resolveSafeExtractPath(destDir, entryPath) {
+  const normalized = path.normalize(entryPath || '').replace(/^([A-Za-z]:)?[\\/]+/, '');
+  const outputPath = path.join(destDir, normalized);
+  const resolvedDest = path.resolve(destDir);
+  const resolvedOut = path.resolve(outputPath);
+  if (resolvedOut === resolvedDest) return outputPath;
+  if (!resolvedOut.startsWith(resolvedDest + path.sep)) return null;
+  return outputPath;
+}
+
+async function extractZip(zipPath, destDir, onProgress) {
+  const directory = await unzipper.Open.file(zipPath);
+  const total = directory.files?.length || 0;
+  let processed = 0;
+
+  const bump = () => {
+    processed += 1;
+    if (total > 0) {
+      const pct = Math.min(100, Math.floor((processed / total) * 100));
+      onProgress?.(pct, { processed, total });
+    }
+  };
+
+  for (const entry of directory.files || []) {
+    const safePath = resolveSafeExtractPath(destDir, entry.path);
+    if (!safePath) {
+      bump();
+      continue;
+    }
+
+    if (entry.type === 'Directory') {
+      fs.mkdirSync(safePath, { recursive: true });
+      bump();
+      continue;
+    }
+
+    fs.mkdirSync(path.dirname(safePath), { recursive: true });
+    await new Promise((resolve, reject) => {
+      entry.stream()
+        .pipe(fs.createWriteStream(safePath))
+        .on('finish', resolve)
+        .on('error', reject);
+    });
+    bump();
+  }
+}
+
 // Calculate folder size recursively
 function calculateFolderSize(folderPath) {
   let totalSize = 0;
@@ -1273,6 +1387,68 @@ function registerIpcHandlers() {
       fs.writeFileSync(filePath, '', 'utf-8');
       return { success: true, path: filePath };
     } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('compress-zip', async (_event, sourcePath) => {
+    try {
+      if (!sourcePath) return { success: false, error: 'Missing source path' };
+      if (isProtectedPath(sourcePath)) {
+        return { success: false, error: 'Cannot compress system files or folders' };
+      }
+      if (!fs.existsSync(sourcePath)) {
+        return { success: false, error: 'Source path not found' };
+      }
+
+      const stats = fs.statSync(sourcePath);
+      const dirPath = path.dirname(sourcePath);
+      const baseName = stats.isDirectory()
+        ? path.basename(sourcePath)
+        : path.basename(sourcePath, path.extname(sourcePath));
+      const destPath = getAvailablePath(dirPath, baseName, '.zip');
+
+      emitArchiveProgress({ action: 'compress', path: sourcePath, pct: 0 });
+      await compressToZip(sourcePath, destPath, (pct) => {
+        emitArchiveProgress({ action: 'compress', path: sourcePath, pct });
+      });
+      emitArchiveComplete({ action: 'compress', success: true, path: sourcePath, outputPath: destPath, pct: 100 });
+      return { success: true, path: destPath };
+    } catch (err) {
+      emitArchiveComplete({ action: 'compress', success: false, error: err.message });
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('extract-zip', async (_event, zipPath) => {
+    try {
+      if (!zipPath) return { success: false, error: 'Missing zip path' };
+      if (!fs.existsSync(zipPath)) {
+        return { success: false, error: 'Zip file not found' };
+      }
+      if (path.extname(zipPath).toLowerCase() !== '.zip') {
+        return { success: false, error: 'Only .zip files are supported' };
+      }
+
+      const result = await dialog.showOpenDialog(mainWindow, {
+        properties: ['openDirectory'],
+        defaultPath: path.dirname(zipPath),
+      });
+
+      if (result.canceled || !result.filePaths || result.filePaths.length === 0) {
+        return { success: false, canceled: true };
+      }
+
+      const destDir = result.filePaths[0];
+      fs.mkdirSync(destDir, { recursive: true });
+      emitArchiveProgress({ action: 'extract', path: zipPath, pct: 0 });
+      await extractZip(zipPath, destDir, (pct) => {
+        emitArchiveProgress({ action: 'extract', path: zipPath, pct });
+      });
+      emitArchiveComplete({ action: 'extract', success: true, path: zipPath, destination: destDir, pct: 100 });
+      return { success: true, destination: destDir };
+    } catch (err) {
+      emitArchiveComplete({ action: 'extract', success: false, error: err.message });
       return { success: false, error: err.message };
     }
   });

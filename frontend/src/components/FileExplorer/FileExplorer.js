@@ -47,6 +47,10 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
   const [indexDetail, setIndexDetail] = useState('');
   const [indexPct, setIndexPct] = useState(null);
   const [indexMessage, setIndexMessage] = useState('');
+  const [archiveActive, setArchiveActive] = useState(false);
+  const [archiveAction, setArchiveAction] = useState('');
+  const [archivePct, setArchivePct] = useState(null);
+  const [archiveMessage, setArchiveMessage] = useState('');
   // eslint-disable-next-line no-unused-vars
   const [indexedFolder, setIndexedFolder] = useState('');
 
@@ -66,13 +70,16 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
   // Destructure file operations
   const {
     clipboard, renamingItem, setRenamingItem,
-    renameValue, setRenameValue
+    renameValue, setRenameValue,
+    handleCompressZip,
+    handleExtractZip
   } = fileOps;
 
   // eslint-disable-next-line no-unused-vars
   const inputRef = useRef(null);
   const loadRequestRef = useRef(0);
   const watchedDirectoryRef = useRef(null);
+  const archiveMessageTimerRef = useRef(null);
 
   // Derived values
   const displayItems = useMemo(() => sortItems(items, sortBy, sortDirection), [items, sortBy, sortDirection]);
@@ -605,6 +612,16 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
     }
   };
 
+  const handleCompress = async () => {
+    if (!selectedItem) return;
+    await handleCompressZip?.(selectedItem);
+  };
+
+  const handleExtract = async () => {
+    if (!selectedItem) return;
+    await handleExtractZip?.(selectedItem);
+  };
+
   const handleRefreshVersioningTimeline = () => {
     window.dispatchEvent(new CustomEvent('refresh-version-timeline'));
   };
@@ -747,6 +764,62 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
     };
   }, []);
 
+  useEffect(() => {
+    if (!ipcRenderer) return undefined;
+
+    const handleArchiveProgress = (payload) => {
+      if (!payload) return;
+      setArchiveActive(true);
+      setArchiveAction(payload.action || 'archive');
+      if (typeof payload.pct === 'number') {
+        setArchivePct(payload.pct);
+      }
+      setArchiveMessage('');
+    };
+
+    const handleArchiveComplete = (payload) => {
+      setArchiveActive(false);
+      setArchiveAction(payload?.action || 'archive');
+      if (typeof payload?.pct === 'number') {
+        setArchivePct(payload.pct);
+      }
+
+      if (archiveMessageTimerRef.current) {
+        clearTimeout(archiveMessageTimerRef.current);
+        archiveMessageTimerRef.current = null;
+      }
+
+      if (payload?.success) {
+        if (payload?.action === 'compress') {
+          setArchiveMessage('ZIP created');
+        } else if (payload?.action === 'extract') {
+          setArchiveMessage('Extraction complete');
+        } else {
+          setArchiveMessage('Archive complete');
+        }
+      } else if (payload?.error) {
+        setArchiveMessage(`Archive failed: ${payload.error}`);
+      }
+
+      archiveMessageTimerRef.current = setTimeout(() => {
+        setArchiveMessage('');
+        archiveMessageTimerRef.current = null;
+      }, 4000);
+    };
+
+    ipcRenderer.on('archive-progress', handleArchiveProgress);
+    ipcRenderer.on('archive-complete', handleArchiveComplete);
+
+    return () => {
+      ipcRenderer.off('archive-progress', handleArchiveProgress);
+      ipcRenderer.off('archive-complete', handleArchiveComplete);
+      if (archiveMessageTimerRef.current) {
+        clearTimeout(archiveMessageTimerRef.current);
+        archiveMessageTimerRef.current = null;
+      }
+    };
+  }, []);
+
   const handleSearch = async (query) => {
     if (!query || !query.trim()) {
       setSemanticResults(null);
@@ -829,6 +902,10 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
           indexDetail={indexDetail}
           indexPct={indexPct}
           indexMessage={indexMessage}
+          archiveActive={archiveActive}
+          archiveAction={archiveAction}
+          archivePct={archivePct}
+          archiveMessage={archiveMessage}
           showHidden={showHidden}
           onShowHiddenChange={setShowHidden}
           semanticLoading={semanticLoading}
@@ -977,6 +1054,8 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
         onRefresh={handleRefresh}
         onUndo={handleUndo}
         onVersioning={handleVersioning}
+        onCompress={handleCompress}
+        onExtract={handleExtract}
         onChatWithAI={() => {
           setShowContextMenu(false);
           onChatWithAI(selectedItem);

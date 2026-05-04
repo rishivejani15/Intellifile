@@ -15,11 +15,13 @@
   },
   "dependencies": {
     "axios": "^1.4.0",
+    "archiver": "^7.0.1",
     "fs": "^0.0.1-security",
     "react": "^18.2.0",
     "react-diff-view": "^3.3.2",
     "react-dom": "^18.2.0",
     "react-scripts": "^5.0.1",
+    "unzipper": "^0.12.3",
     "wrtc": "^0.4.7",
     "ws": "^8.20.0"
   },
