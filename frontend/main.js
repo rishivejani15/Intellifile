@@ -117,6 +117,7 @@ let fileWatchers = new Map();
 let directoryWatchers = new Map();
 let fileContents = new Map();
 let debounceTimers = new Map();
+let directoryIndexTimers = new Map();
 
 function sendToPython(payload, timeoutMs = 120000) {
   return new Promise((resolve) => {
@@ -195,6 +196,12 @@ function startWatchingFile(filePath) {
             old_content: isBinaryP ? p : lastVal,
             new_content: isBinaryP ? p : currentVal
           });
+          
+          // Trigger immediate indexing for the modified file
+          sendToPython({
+            action: "index_file",
+            file_path: p
+          }).catch(err => console.error(`[Watcher] Index trigger error:`, err));
 
           if (result && result.success) {
             fileContents.set(normP, currentVal);
@@ -214,7 +221,14 @@ function startWatchingFile(filePath) {
       }, 2500)); // 2.5-second debounce window to outlast MS Word's save process
     });
 
-    watcher.on('unlink', (p) => stopWatchingFile(p));
+    watcher.on('unlink', (p) => {
+      sendToPython({ action: 'delete_file', file_path: p }).then((res) => {
+        if (res && res.error) {
+          console.warn('[Watcher] Delete index failed:', res.error);
+        }
+      });
+      stopWatchingFile(p);
+    });
 
     fileWatchers.set(normPath, watcher);
     fileContents.set(normPath, '');
@@ -262,6 +276,23 @@ function buildDirectoryItem(filePath) {
   }
 }
 
+function scheduleDirectoryReindex(directoryPath, reason) {
+  if (!directoryPath) return;
+  const normPath = path.resolve(directoryPath).toLowerCase();
+  if (directoryIndexTimers.has(normPath)) {
+    clearTimeout(directoryIndexTimers.get(normPath));
+  }
+  directoryIndexTimers.set(normPath, setTimeout(() => {
+    directoryIndexTimers.delete(normPath);
+    console.log(`[Index] Reindexing folder due to ${reason || 'change'}: ${directoryPath}`);
+    sendToPython({ action: 'index', folder: directoryPath }, 1800000).then((res) => {
+      if (res && res.error) {
+        console.warn('[Index] Folder reindex failed:', res.error);
+      }
+    });
+  }, 2000));
+}
+
 function broadcastDirectoryChange(directoryPath, payload) {
   const windows = require('electron').BrowserWindow.getAllWindows();
   for (const w of windows) {
@@ -297,16 +328,44 @@ function startWatchingDirectory(directoryPath) {
 
     watcher.on('add', (filePath) => {
       const item = buildDirectoryItem(filePath);
-      if (item) broadcastDirectoryChange(directoryPath, { action: 'add', item });
+      if (item) {
+        broadcastDirectoryChange(directoryPath, { action: 'add', item });
+        if (item.type === 'file') {
+          sendToPython({ action: 'index_file', file_path: filePath }).catch(() => {});
+        }
+      }
+    });
+
+    watcher.on('addDir', (dirPath) => {
+      const item = buildDirectoryItem(dirPath);
+      if (item) {
+        broadcastDirectoryChange(directoryPath, { action: 'add', item });
+      }
+      scheduleDirectoryReindex(directoryPath, 'dir-add');
     });
 
     watcher.on('change', (filePath) => {
       const item = buildDirectoryItem(filePath);
-      if (item) broadcastDirectoryChange(directoryPath, { action: 'change', item });
+      if (item) {
+        broadcastDirectoryChange(directoryPath, { action: 'change', item });
+        if (item.type === 'file') {
+          sendToPython({ action: 'index_file', file_path: filePath }).catch(() => {});
+        }
+      }
     });
 
     watcher.on('unlink', (filePath) => {
       broadcastDirectoryChange(directoryPath, { action: 'unlink', filePath });
+      sendToPython({ action: 'delete_file', file_path: filePath }).then((res) => {
+        if (res && res.error) {
+          console.warn('[Index] Delete index failed:', res.error);
+        }
+      });
+    });
+
+    watcher.on('unlinkDir', (dirPath) => {
+      broadcastDirectoryChange(directoryPath, { action: 'unlink', filePath: dirPath });
+      scheduleDirectoryReindex(directoryPath, 'dir-delete');
     });
 
     directoryWatchers.set(normPath, watcher);
@@ -323,6 +382,10 @@ function stopWatchingDirectory(directoryPath) {
   if (watcher) {
     try { watcher.close(); } catch (e) { /* ignore */ }
     directoryWatchers.delete(normPath);
+  }
+  if (directoryIndexTimers.has(normPath)) {
+    clearTimeout(directoryIndexTimers.get(normPath));
+    directoryIndexTimers.delete(normPath);
   }
   return { success: true };
 }
@@ -572,16 +635,19 @@ function parseDateFromQuery(rawQuery) {
     }
   }
 
-  // Pattern: "<month> <year>" (whole month, no day)
+  // Pattern: "<month> <year>" (whole month, no day) or just "<month>"
   if (!dateFrom && !dateTo) {
     const monthYearRe = new RegExp(
-      `(?:from|in|during)?\\s*(${monthPattern})\\s+(\\d{4})`,
+      `(?:from|in|during|of)?\\s*(${monthPattern})(?:\\s+(\\d{4}))?\\b`,
       'i'
     );
     match = query.match(monthYearRe);
     if (match) {
       const month = MONTHS[match[1].toLowerCase()];
-      const year = parseInt(match[2]);
+      const now = new Date();
+      // If year is provided, use it, otherwise default to current year
+      const year = match[2] ? parseInt(match[2]) : now.getFullYear();
+      
       dateFrom = startOfMonth(year, month);
       dateTo = endOfMonth(year, month);
       query = query.replace(match[0], '').trim();
@@ -612,10 +678,10 @@ function parseDateFromQuery(rawQuery) {
       dateFrom = startOfDay(d.getFullYear(), d.getMonth(), d.getDate());
       dateTo = endOfDay(d.getFullYear(), d.getMonth(), d.getDate());
       query = query.replace(/\byesterday\b/i, '').trim();
-    } else if (/\btoday\b/i.test(query)) {
+    } else if (/\btoday'?s?\b/i.test(query)) {
       dateFrom = startOfDay(now.getFullYear(), now.getMonth(), now.getDate());
       dateTo = endOfDay(now.getFullYear(), now.getMonth(), now.getDate());
-      query = query.replace(/\btoday\b/i, '').trim();
+      query = query.replace(/\btoday'?s?\b/i, '').trim();
     } else if (/\blast\s+week\b/i.test(query)) {
       const d = new Date(now);
       d.setDate(d.getDate() - 7);
@@ -643,7 +709,7 @@ function parseDateFromQuery(rawQuery) {
   query = query.replace(/\b(containing|with|about|files?|from|created)\b/gi, ' ').replace(/\s+/g, ' ').trim();
 
   return {
-    cleanQuery: query || rawQuery,  // Fallback to original if cleaning empties it
+    cleanQuery: (!query.trim() && (dateFrom || dateTo)) ? "" : (query.trim() || rawQuery.trim()),
     dateFrom: dateFrom ? Math.floor(dateFrom) : null,
     dateTo: dateTo ? Math.floor(dateTo) : null,
   };
@@ -763,94 +829,6 @@ ipcMain.handle('save-version', async (_event, payload) => {
 
 function isProtectedPath(filePath) {
   return PROTECTED_PATHS.some(pattern => pattern.test(filePath));
-}
-
-// ── File Version Watching with Debounce ──────────────────────────────────────
-
-async function startWatchingFile(filePath) {
-  if (fileWatchers.has(filePath)) return; // Already watching this file
-
-  const chokidar = require('chokidar');
-  
-  const watcher = chokidar.watch(filePath, {
-    persistent: true,
-    ignoreInitial: true,
-    awaitWriteFinish: { stabilityThreshold: 800, pollInterval: 100 }
-  });
-
-  fileWatchers.set(filePath, watcher);
-
-  watcher.on('change', (p) => {
-    console.log(`[Watcher] Raw Change detected: ${p}`);
-    const normP = p.toLowerCase().replace(/\//g, '\\');
-    
-    if (debounceTimers.has(normP)) {
-      clearTimeout(debounceTimers.get(normP));
-    }
-    
-    debounceTimers.set(normP, setTimeout(async () => {
-      debounceTimers.delete(normP);
-      console.log(`[Watcher] Processing debounced change for: ${p}`);
-      
-      const extP = path.extname(p).toLowerCase();
-      const isBinaryP = ['.docx', '.xlsx'].includes(extP);
-
-      try {
-        if (!fs.existsSync(p)) return; // Handle rapid temp file deletions
-        let currentVal = isBinaryP ? fs.statSync(p).mtimeMs.toString() : fs.readFileSync(p, 'utf-8');
-        let lastVal = fileContents.get(normP) || '';
-
-        if (!isBinaryP && currentVal.trim() === lastVal.trim()) return;
-        if (isBinaryP && currentVal === lastVal) return;
-
-        console.log(`[Watcher] Change verified. Triggering version save...`);
-        // For binary files, pass path as "content" to let engine parse it
-         const result = await sendToPython({ action: "save_version", file_path: p, old_content: old, new_content: c });
-      
-      // TRIGGER INSTANT UI UPDATE
-      if (result && result.success && win) {
-        win.webContents.send('version-updated', { 
-            filePath: p, 
-            versionId: result.data.version_id,
-            summary: result.data.summary,
-            riskLevel: result.data.risk_level
-        });
-      }
-
-        if (result && result.success) {
-          fileContents.set(normP, currentVal);
-          if (win) {
-            // Sync with VersionTimeline.js which expects 'version-updated' and { filePath }
-            win.webContents.send('version-updated', {
-              filePath: p,
-              versionId: result.data.version_id,
-              summary: result.data.summary,
-              riskLevel: result.data.risk_level
-            });
-          }
-        }
-      } catch (err) {
-        console.error(`[Watcher] Update error: ${err.message}`);
-      }
-    }, 500)); // 2.5-second debounce window to outlast MS Word's save process
-  });
-
-  watcher.on('unlink', (p) => stopWatchingFile(p));
-}
-
-function stopWatchingFile(filePath) {
-  const watcher = fileWatchers.get(filePath);
-  if (watcher) {
-    watcher.close();
-    fileWatchers.delete(filePath);
-    const normP = filePath.toLowerCase().replace(/\//g, '\\');
-    fileContents.delete(normP);
-    const timer = debounceTimers.get(normP);
-    if (timer) {
-      clearTimeout(timer);
-      debounceTimers.delete(normP);
-    }
-  }
 }
 
 // Calculate folder size recursively
@@ -1727,6 +1705,11 @@ app.on('before-quit', () => {
     clearTimeout(timer);
   }
   debounceTimers.clear();
+
+  for (const timer of directoryIndexTimers.values()) {
+    clearTimeout(timer);
+  }
+  directoryIndexTimers.clear();
 
   if (pyProcess) {
     console.log('[Python] Killing engine process');

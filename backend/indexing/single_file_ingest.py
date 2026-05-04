@@ -95,6 +95,48 @@ def ingest_single_file(file_path: str) -> Dict[str, object]:
     }
 
 
+def remove_single_file(file_path: str) -> Dict[str, object]:
+    """
+    Remove one file from the canonical files.db + vectors.faiss pipeline.
+    """
+    init_db()
+
+    abs_path = os.path.abspath(file_path)
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("SELECT id, filename FROM files WHERE path = ?", (abs_path,))
+    row = cur.fetchone()
+    if not row:
+        conn.close()
+        return {
+            "status": "skipped",
+            "path": abs_path,
+            "reason": "not_found",
+        }
+
+    file_id, filename = row
+    cur.execute("SELECT id FROM chunks WHERE file_id = ?", (file_id,))
+    chunk_ids = [r[0] for r in cur.fetchall()]
+    cur.execute("DELETE FROM chunks WHERE file_id = ?", (file_id,))
+    cur.execute("DELETE FROM files WHERE id = ?", (file_id,))
+    conn.commit()
+    conn.close()
+
+    if chunk_ids:
+        update_faiss(chunk_ids)
+    rebuild_fts()
+    invalidate_cache()
+
+    return {
+        "status": "deleted",
+        "file_id": int(file_id),
+        "path": abs_path,
+        "filename": filename,
+        "removed_chunks": len(chunk_ids),
+    }
+
+
 def reset_canonical_index_store() -> Dict[str, object]:
     """
     Clears canonical files/chunks and resets FAISS index to empty.

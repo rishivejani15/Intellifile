@@ -123,6 +123,30 @@ while True:
             except Exception as e:
                 print(json.dumps({"_id": req_id, "error": f"Indexing failed: {e}"}), flush=True)
 
+        elif action == "index_file":
+            try:
+                from indexing.single_file_ingest import ingest_single_file
+                file_path = request.get("file_path")
+                if file_path and os.path.exists(file_path):
+                    result = ingest_single_file(file_path)
+                    print(json.dumps({"_id": req_id, "status": "indexed", "file_path": file_path, "data": result}), flush=True)
+                else:
+                    print(json.dumps({"_id": req_id, "status": "skipped", "reason": "file_not_found", "file_path": file_path}), flush=True)
+            except Exception as e:
+                print(json.dumps({"_id": req_id, "error": f"Single file indexing failed: {e}"}), flush=True)
+
+        elif action == "delete_file":
+            try:
+                from indexing.single_file_ingest import remove_single_file
+                file_path = request.get("file_path")
+                if not file_path:
+                    print(json.dumps({"_id": req_id, "error": "Missing file_path"}), flush=True)
+                else:
+                    result = remove_single_file(file_path)
+                    print(json.dumps({"_id": req_id, "success": True, "file_path": file_path, "data": result}), flush=True)
+            except Exception as e:
+                print(json.dumps({"_id": req_id, "error": f"Delete failed: {e}"}), flush=True)
+
         elif action == "save_version":
             file_path = request.get("file_path")
             old_content = request.get("old_content", "")

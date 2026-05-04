@@ -9,6 +9,8 @@ _RRF_K = 60
 
 def _faiss_search(query, top_k, min_sim=0.15):
     """Semantic similarity search via FAISS."""
+    if not query.strip():
+        return []
     index = load_index()
     if index is None or index.ntotal == 0:
         return []
@@ -56,6 +58,15 @@ def _filename_search(query, top_k):
     conn = get_connection()
     try:
         cur = conn.cursor()
+        if not query.strip():
+            cur.execute(
+                """SELECT id, path FROM files
+                   ORDER BY created_time DESC, modified_time DESC
+                   LIMIT ?""",
+                (top_k,)
+            )
+            return cur.fetchall()
+
         pattern = f"%{query}%"
         cur.execute(
             """SELECT id, path FROM files
