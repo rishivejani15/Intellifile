@@ -1,11 +1,43 @@
 const { contextBridge, ipcRenderer, shell } = require('electron');
 
+// Store handler wrappers so they can be properly removed
+const listeners = new Map();
+
+function getOrCreateHandlerList(channel) {
+  if (!listeners.has(channel)) {
+    listeners.set(channel, []);
+  }
+  return listeners.get(channel);
+}
+
 contextBridge.exposeInMainWorld('electron', {
   ipcRenderer: {
     invoke: (channel, ...args) => ipcRenderer.invoke(channel, ...args),
     send: (channel, ...args) => ipcRenderer.send(channel, ...args),
-    on: (channel, func) => ipcRenderer.on(channel, (event, ...args) => func(...args)),
+    on: (channel, func) => {
+      const wrappedFunc = (event, ...args) => func(...args);
+      getOrCreateHandlerList(channel).push({ func, wrapped: wrappedFunc });
+      ipcRenderer.on(channel, wrappedFunc);
+    },
     once: (channel, func) => ipcRenderer.once(channel, (event, ...args) => func(...args)),
+    off: (channel, func) => {
+      const handlers = getOrCreateHandlerList(channel);
+      const index = handlers.findIndex(h => h.func === func);
+      if (index !== -1) {
+        const { wrapped } = handlers[index];
+        ipcRenderer.off(channel, wrapped);
+        handlers.splice(index, 1);
+      }
+    },
+    removeListener: (channel, func) => {
+      const handlers = getOrCreateHandlerList(channel);
+      const index = handlers.findIndex(h => h.func === func);
+      if (index !== -1) {
+        const { wrapped } = handlers[index];
+        ipcRenderer.removeListener(channel, wrapped);
+        handlers.splice(index, 1);
+      }
+    },
   },
   shell: {
     openPath: (path) => shell.openPath(path)
@@ -26,12 +58,12 @@ contextBridge.exposeInMainWorld('intellifile', {
   onIndexProgress: (callback) => {
     const handler = (_event, data) => callback(data);
     ipcRenderer.on('index-progress', handler);
-    return () => ipcRenderer.removeListener('index-progress', handler);
+    return () => ipcRenderer.off('index-progress', handler);
   },
   onIndexComplete: (callback) => {
     const handler = (_event, data) => callback(data);
     ipcRenderer.on('index-complete', handler);
-    return () => ipcRenderer.removeListener('index-complete', handler);
+    return () => ipcRenderer.off('index-complete', handler);
   },
   chatAsk: (query) => {
     return ipcRenderer.invoke('chat-ask', query);
@@ -42,17 +74,17 @@ contextBridge.exposeInMainWorld('intellifile', {
   onChatStreamToken: (callback) => {
     const handler = (_event, token) => callback(token);
     ipcRenderer.on('chat-stream-token', handler);
-    return () => ipcRenderer.removeListener('chat-stream-token', handler);
+    return () => ipcRenderer.off('chat-stream-token', handler);
   },
   onChatStreamDone: (callback) => {
     const handler = (_event, answer) => callback(answer);
     ipcRenderer.on('chat-stream-done', handler);
-    return () => ipcRenderer.removeListener('chat-stream-done', handler);
+    return () => ipcRenderer.off('chat-stream-done', handler);
   },
   onChatStreamError: (callback) => {
     const handler = (_event, err) => callback(err);
     ipcRenderer.on('chat-stream-error', handler);
-    return () => ipcRenderer.removeListener('chat-stream-error', handler);
+    return () => ipcRenderer.off('chat-stream-error', handler);
   },
   ingestFileForChat: (filePath) => {
     return ipcRenderer.invoke('chat-ingest-file', filePath);
@@ -102,22 +134,22 @@ contextBridge.exposeInMainWorld('intellifile', {
   onSyncStatus: (callback) => {
     const handler = (_event, data) => callback(data);
     ipcRenderer.on('sync-status', handler);
-    return () => ipcRenderer.removeListener('sync-status', handler);
+    return () => ipcRenderer.off('sync-status', handler);
   },
   onSyncLog: (callback) => {
     const handler = (_event, msg) => callback(msg);
     ipcRenderer.on('sync-log', handler);
-    return () => ipcRenderer.removeListener('sync-log', handler);
+    return () => ipcRenderer.off('sync-log', handler);
   },
   onSyncFiles: (callback) => {
     const handler = (_event, files) => callback(files);
     ipcRenderer.on('sync-files', handler);
-    return () => ipcRenderer.removeListener('sync-files', handler);
+    return () => ipcRenderer.off('sync-files', handler);
   },
   onSyncPending: (callback) => {
     const handler = (_event, changes) => callback(changes);
     ipcRenderer.on('sync-pending', handler);
-    return () => ipcRenderer.removeListener('sync-pending', handler);
+    return () => ipcRenderer.off('sync-pending', handler);
   },
 
   // Compatibility aliases for existing UI components.

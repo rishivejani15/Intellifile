@@ -1,12 +1,38 @@
 // Hook for navigation logic: history, breadcrumbs, tabs, address bar
-import { useState, useCallback } from 'react';
+import { useEffect, useCallback, useState } from 'react';
+
+const NAV_STATE_KEY = 'intellifile-navigation-state';
+
+const readSavedNavigationState = () => {
+  if (typeof window === 'undefined') return {};
+  try {
+    return JSON.parse(localStorage.getItem(NAV_STATE_KEY) || '{}') || {};
+  } catch (error) {
+    return {};
+  }
+};
 
 export const useNavigation = (ipcRenderer) => {
-  const [currentPath, setCurrentPath] = useState(null);
+  const savedState = readSavedNavigationState();
+  const [currentPath, setCurrentPath] = useState(savedState.currentPath || null);
   const [breadcrumb, setBreadcrumb] = useState([]);
-  const [tabs, setTabs] = useState([{ id: 'tab-1', path: null, title: 'Documents', history: [], historyIndex: -1 }]);
-  const [activeTabId, setActiveTabId] = useState('tab-1');
-  const [addressPath, setAddressPath] = useState('');
+  const [tabs, setTabs] = useState(savedState.tabs || [{ id: 'tab-1', path: savedState.currentPath || null, title: 'Documents', history: savedState.currentPath ? [savedState.currentPath] : [], historyIndex: savedState.currentPath ? 0 : -1 }]);
+  const [activeTabId, setActiveTabId] = useState(savedState.activeTabId || 'tab-1');
+  const [addressPath, setAddressPath] = useState(savedState.addressPath || '');
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      localStorage.setItem(NAV_STATE_KEY, JSON.stringify({
+        currentPath,
+        tabs,
+        activeTabId,
+        addressPath,
+      }));
+    } catch (error) {
+      // ignore storage failures
+    }
+  }, [currentPath, tabs, activeTabId, addressPath]);
 
   const updateBreadcrumb = useCallback((dirPath) => {
     const parts = dirPath.split('\\').filter(p => p);

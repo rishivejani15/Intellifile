@@ -111,7 +111,7 @@ const VersionTimeline = ({ filePath }) => {
       window.removeEventListener('refresh-version-timeline', handleManualRefresh);
       if (ipc) {
         try {
-          if (typeof ipc.removeListener === 'function') ipc.removeListener('version-updated', handler);
+          if (typeof ipc.off === 'function') ipc.off('version-updated', handler);
           else if (typeof ipc.off === 'function') ipc.off('version-updated', handler);
         } catch (err) {
           console.error('[Timeline] Error removing listener:', err);

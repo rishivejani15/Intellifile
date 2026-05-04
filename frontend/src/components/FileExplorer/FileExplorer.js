@@ -71,8 +71,8 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
 
   // eslint-disable-next-line no-unused-vars
   const inputRef = useRef(null);
-  const lastFocusRefreshRef = useRef(0);
   const loadRequestRef = useRef(0);
+  const watchedDirectoryRef = useRef(null);
 
   // Derived values
   const displayItems = useMemo(() => sortItems(items, sortBy, sortDirection), [items, sortBy, sortDirection]);
@@ -158,6 +158,36 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
       setLastSelectedIndex(null);
     }
   }, [getExtFromName, matchesSearch]);
+
+  const applyDirectoryChange = useCallback((change) => {
+    if (!change?.directoryPath || !currentPath) return;
+    const normalizedCurrent = currentPath.toLowerCase().replace(/[\\/]+$/, '');
+    const normalizedDirectory = change.directoryPath.toLowerCase().replace(/[\\/]+$/, '');
+    if (normalizedCurrent !== normalizedDirectory) return;
+
+    if (change.action === 'add' || change.action === 'change') {
+      const updatedItem = change.item;
+      if (!updatedItem?.path) return;
+      setItems(prev => {
+        const existingIndex = prev.findIndex(item => item.path === updatedItem.path);
+        const nextItems = [...prev];
+        if (existingIndex >= 0) {
+          nextItems[existingIndex] = { ...nextItems[existingIndex], ...updatedItem };
+        } else if (matchesSearch(updatedItem.name || '')) {
+          nextItems.push(updatedItem);
+        }
+        return nextItems;
+      });
+      return;
+    }
+
+    if (change.action === 'unlink' && change.filePath) {
+      setItems(prev => prev.filter(item => item.path !== change.filePath));
+      setSelectedItems(prev => prev.filter(item => item.path !== change.filePath));
+      setSelectedItem(prev => (prev?.path === change.filePath ? null : prev));
+      return;
+    }
+  }, [currentPath, matchesSearch]);
 
   // Load directory with filtering and sorting
   const loadDirectory = useCallback(async (dirPath, options = {}) => {
@@ -260,18 +290,39 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
     }
   }, [currentPath, loadDirectory]);
 
-  // Refresh on window focus
+  // Watch the active directory and apply incremental updates
   useEffect(() => {
-    const handleFocus = () => {
-      if (!currentPath) return;
-      const now = Date.now();
-      if (now - lastFocusRefreshRef.current < 500) return;
-      lastFocusRefreshRef.current = now;
+    if (!ipcRenderer || !currentPath) return undefined;
+
+    const normalizedCurrent = currentPath.toLowerCase().replace(/[\\/]+$/, '');
+    const previousWatched = watchedDirectoryRef.current;
+
+    if (previousWatched && previousWatched !== normalizedCurrent) {
+      ipcRenderer.invoke('unwatch-directory', previousWatched).catch(() => {});
+    }
+
+    watchedDirectoryRef.current = normalizedCurrent;
+    ipcRenderer.invoke('watch-directory', currentPath).catch(() => {});
+
+    const handleDirectoryChanged = (event) => {
+      applyDirectoryChange(event);
+    };
+
+    const handleVersionUpdated = (event) => {
+      if (!event?.filePath || !currentPath) return;
+      if (event.filePath.toLowerCase().replace(/[\\/]+$/, '') !== currentPath.toLowerCase().replace(/[\\/]+$/, '')) return;
       loadDirectory(currentPath, { soft: true, trackHistory: false });
     };
-    window.addEventListener('focus', handleFocus);
-    return () => window.removeEventListener('focus', handleFocus);
-  }, [currentPath, loadDirectory]);
+
+    ipcRenderer.on('directory-changed', handleDirectoryChanged);
+    ipcRenderer.on('version-updated', handleVersionUpdated);
+
+    return () => {
+      ipcRenderer.off('directory-changed', handleDirectoryChanged);
+      ipcRenderer.off('version-updated', handleVersionUpdated);
+      ipcRenderer.invoke('unwatch-directory', normalizedCurrent).catch(() => {});
+    };
+  }, [currentPath, applyDirectoryChange, loadDirectory]);
 
   // Event Handlers
   const handleAddressSubmit = (e) => {
@@ -371,7 +422,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
         }));
       addItemsToState(itemsToAdd);
     }
-    await fileOps.handlePaste(currentPath, () => loadDirectory(currentPath, { soft: true, trackHistory: false }));
+      await fileOps.handlePaste(currentPath, () => {});
   };
 
   const handleRename = async () => {
@@ -386,10 +437,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
       updateItemPathInState(renamingItem.path, newPath, renameValue);
     }
 
-    const ok = await fileOps.handleRename(currentPath, () => loadDirectory(currentPath, { soft: true, trackHistory: false }));
-    if (!ok && currentPath) {
-      loadDirectory(currentPath, { soft: true, trackHistory: false });
-    }
+    await fileOps.handleRename(currentPath, () => {});
   };
 
   const handleDelete = async () => {
@@ -433,10 +481,6 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
       setSelectedItem(null);
       setLastSelectedIndex(null);
     } else {
-      // Delete failed - reload directory to sync UI with backend state
-      if (currentPath) {
-        loadDirectory(currentPath, { soft: true, trackHistory: false });
-      }
       alert('Failed to delete items. Please try again.');
     }
   };
@@ -471,8 +515,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
         inputRef.current?.select?.();
       }, 10);
       
-      // Reload directory in background
-      loadDirectory(currentPath, { soft: true, trackHistory: false });
+      addItemsToState([newItem]);
     }
   };
 
@@ -505,13 +548,12 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
         inputRef.current?.select?.();
       }, 10);
       
-      // Reload directory in background
-      loadDirectory(currentPath, { soft: true, trackHistory: false });
+      addItemsToState([newItem]);
     }
   };
 
   const handleUndo = async () => {
-    await fileOps.handleUndo(() => loadDirectory(currentPath, { soft: true, trackHistory: false }));
+    await fileOps.handleUndo(() => {});
   };
 
   const handleCopyPath = async () => {
@@ -624,7 +666,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
       } catch (err) {
       }
     }
-    await fileOps.handleDropOnItem(e, targetItem, currentPath, () => loadDirectory(currentPath, { soft: true, trackHistory: false }));
+    await fileOps.handleDropOnItem(e, targetItem, currentPath, () => {});
   };
 
   const handleContextMenu = (e, item) => {

@@ -2623,6 +2623,283 @@
   background: #0052a3;
 }
 
+.properties-subtitle {
+  margin-top: 2px;
+  font-size: 12px;
+  color: #666;
+}
+
+@media (prefers-color-scheme: dark) {
+  .properties-subtitle {
+    color: #aaa;
+  }
+}
+
+.properties-section-title {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: #666;
+  margin: 8px 0 10px;
+}
+
+@media (prefers-color-scheme: dark) {
+  .properties-section-title {
+    color: #999;
+  }
+}
+
+.properties-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.properties-secondary-btn {
+  border: 1px solid #cfcfcf;
+  background: #fff;
+  color: #333;
+  padding: 7px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.properties-secondary-btn:hover {
+  background: #f5f5f5;
+  border-color: #bdbdbd;
+}
+
+@media (prefers-color-scheme: dark) {
+  .properties-secondary-btn {
+    background: #262626;
+    color: #e0e0e0;
+    border-color: #444;
+  }
+
+  .properties-secondary-btn:hover {
+    background: #303030;
+  }
+}
+
+.properties-secondary-btn--inline {
+  min-width: 82px;
+}
+
+.detail-row--stacked {
+  align-items: flex-start;
+}
+
+.attribute-editor {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 16px;
+  flex-wrap: wrap;
+  width: 100%;
+}
+
+.security-table-wrap {
+  overflow: auto;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+}
+
+.security-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.security-table th,
+.security-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid #e6e6e6;
+  text-align: left;
+}
+
+.security-table th {
+  background: #f7f7f7;
+  font-weight: 600;
+  color: #555;
+}
+
+.security-empty {
+  text-align: center;
+  color: #777;
+  padding: 12px;
+}
+
+@media (prefers-color-scheme: dark) {
+  .security-table-wrap {
+    border-color: #444;
+  }
+
+  .security-table th,
+  .security-table td {
+    border-bottom-color: #333;
+  }
+
+  .security-table th {
+    background: #252525;
+    color: #ddd;
+  }
+
+  .security-empty {
+    color: #aaa;
+  }
+}
+
+.properties-note {
+  margin-top: 10px;
+  color: #777;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+@media (prefers-color-scheme: dark) {
+  .properties-note {
+    color: #aaa;
+  }
+}
+
+.chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.chip {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border: 1px solid #ddd;
+  background: #fafafa;
+  border-radius: 6px;
+  padding: 8px 10px;
+  min-width: 180px;
+}
+
+.chip strong {
+  font-size: 13px;
+  color: #333;
+}
+
+.chip span {
+  font-size: 12px;
+  color: #666;
+  word-break: break-word;
+}
+
+@media (prefers-color-scheme: dark) {
+  .chip {
+    border-color: #444;
+    background: #262626;
+  }
+
+  .chip strong {
+    color: #e0e0e0;
+  }
+
+  .chip span {
+    color: #aaa;
+  }
+}
+
+.version-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.version-list-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid #ddd;
+  background: #fafafa;
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+
+.version-list-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #333;
+}
+
+.version-list-meta {
+  margin-top: 2px;
+  font-size: 12px;
+  color: #666;
+  word-break: break-word;
+}
+
+@media (prefers-color-scheme: dark) {
+  .version-list-item {
+    border-color: #444;
+    background: #262626;
+  }
+
+  .version-list-title {
+    color: #e0e0e0;
+  }
+
+  .version-list-meta {
+    color: #aaa;
+  }
+}
+
+.customize-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.customize-card {
+  border: 1px solid #ddd;
+  background: #fafafa;
+  border-radius: 6px;
+  padding: 12px;
+}
+
+.customize-card-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: #777;
+  margin-bottom: 6px;
+}
+
+.customize-card-value {
+  font-size: 14px;
+  font-weight: 600;
+  color: #333;
+}
+
+@media (prefers-color-scheme: dark) {
+  .customize-card {
+    border-color: #444;
+    background: #262626;
+  }
+
+  .customize-card-label {
+    color: #aaa;
+  }
+
+  .customize-card-value {
+    color: #e0e0e0;
+  }
+}
+
+.properties-dialog--windows .properties-content {
+  min-height: 280px;
+}
+
 /* ===== Status Bar Actions ===== */
 .statusbar-actions {
   display: flex;

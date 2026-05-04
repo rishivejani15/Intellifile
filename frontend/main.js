@@ -3,7 +3,6 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
-const axios = require('axios');
 const { registerSystemRoots, getSystemRoots } = require('./system_roots');
 
 const PROJECT_ROOT = path.join(__dirname, '..');
@@ -108,15 +107,16 @@ let chatBackendProcess;
 let syncServerProcess;
 
 let pyReady = false;
+let pythonReadyForIndexing = false;
 let pyBuffer = '';
 let pendingRequests = new Map();  // requestId -> { resolve, timeout }
 let requestCounter = 0;
 let autoIndexRequested = false;
 let indexInProgress = false;
 let fileWatchers = new Map();
+let directoryWatchers = new Map();
 let fileContents = new Map();
 let debounceTimers = new Map();
-const CHAT_BACKEND_URL = 'http://127.0.0.1:8000';
 
 function sendToPython(payload, timeoutMs = 120000) {
   return new Promise((resolve) => {
@@ -139,38 +139,13 @@ function sendToPython(payload, timeoutMs = 120000) {
 // Register system roots IPC handlers
 try { registerSystemRoots(ipcMain); } catch (err) { console.warn('System roots handler not registered:', err); }
 
-// Watch for system roots changes (polling fallback for device hotplug)
-let _rootsWatcherInterval = null;
-let _lastRootsSnapshot = null;
-function startSystemRootsWatcher(intervalMs = 5000) {
-  if (_rootsWatcherInterval) return;
-  const poll = async () => {
-    try {
-      const res = await getSystemRoots();
-      if (!res || !res.success) return;
-      const json = JSON.stringify(res.data || {});
-      if (_lastRootsSnapshot !== json) {
-        _lastRootsSnapshot = json;
-        const windows = require('electron').BrowserWindow.getAllWindows();
-        for (const w of windows) {
-          try { w.webContents.send('system-roots-changed', res.data); } catch (e) { /* ignore */ }
-        }
-      }
-    } catch (err) {
-      // ignore
-    }
-  };
-  // initial poll
-  poll();
-  _rootsWatcherInterval = setInterval(poll, intervalMs);
-}
-
-app.on('ready', () => {
-  try { startSystemRootsWatcher(5000); } catch (err) { console.warn('Failed to start system roots watcher', err); }
-});
+// System roots are now fetched on-demand via IPC handler only (no continuous polling)
 
 app.on('will-quit', () => {
-  if (_rootsWatcherInterval) { clearInterval(_rootsWatcherInterval); _rootsWatcherInterval = null; }
+  for (const [directoryPath, watcher] of Array.from(directoryWatchers.entries())) {
+    try { watcher.close(); } catch (e) { /* ignore */ }
+    directoryWatchers.delete(directoryPath);
+  }
 });
 
 function startWatchingFile(filePath) {
@@ -267,6 +242,91 @@ function stopWatchingFile(filePath) {
   }
 }
 
+function buildDirectoryItem(filePath) {
+  try {
+    const stats = fs.statSync(filePath);
+    const ext = path.extname(filePath).toLowerCase();
+    return {
+      name: path.basename(filePath),
+      path: filePath,
+      type: stats.isDirectory() ? 'folder' : 'file',
+      ext,
+      size: stats.size,
+      modified: stats.mtimeMs,
+      created: stats.birthtimeMs,
+      accessed: stats.atimeMs,
+      isDirectory: stats.isDirectory(),
+    };
+  } catch (err) {
+    return null;
+  }
+}
+
+function broadcastDirectoryChange(directoryPath, payload) {
+  const windows = require('electron').BrowserWindow.getAllWindows();
+  for (const w of windows) {
+    try {
+      w.webContents.send('directory-changed', { directoryPath, ...payload });
+    } catch (e) {
+      // ignore
+    }
+  }
+}
+
+function startWatchingDirectory(directoryPath) {
+  if (!directoryPath) return { success: false, error: 'Missing directory path.' };
+  
+  // Don't watch Windows system folders
+  const upperPath = directoryPath.toUpperCase();
+  if (upperPath.includes('\\WINDOWS') || upperPath.includes('\\PROGRAM FILES') || 
+      upperPath.includes('\\PROGRAMDATA') || upperPath.includes('\\SYSTEM VOLUME INFORMATION')) {
+    return { success: false, error: 'Cannot watch system folders.' };
+  }
+  
+  const normPath = path.resolve(directoryPath).toLowerCase();
+  if (directoryWatchers.has(normPath)) return { success: true };
+
+  try {
+    const chokidar = require('chokidar');
+    const watcher = chokidar.watch(directoryPath, {
+      ignoreInitial: true,
+      depth: 0,
+      persistent: true,
+      awaitWriteFinish: { stabilityThreshold: 700, pollInterval: 100 },
+    });
+
+    watcher.on('add', (filePath) => {
+      const item = buildDirectoryItem(filePath);
+      if (item) broadcastDirectoryChange(directoryPath, { action: 'add', item });
+    });
+
+    watcher.on('change', (filePath) => {
+      const item = buildDirectoryItem(filePath);
+      if (item) broadcastDirectoryChange(directoryPath, { action: 'change', item });
+    });
+
+    watcher.on('unlink', (filePath) => {
+      broadcastDirectoryChange(directoryPath, { action: 'unlink', filePath });
+    });
+
+    directoryWatchers.set(normPath, watcher);
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+}
+
+function stopWatchingDirectory(directoryPath) {
+  if (!directoryPath) return { success: true };
+  const normPath = path.resolve(directoryPath).toLowerCase();
+  const watcher = directoryWatchers.get(normPath);
+  if (watcher) {
+    try { watcher.close(); } catch (e) { /* ignore */ }
+    directoryWatchers.delete(normPath);
+  }
+  return { success: true };
+}
+
 function startPython() {
   const scriptPath = path.join(__dirname, "../backend/engine_server.py");
   console.log('[Python] Starting engine from:', scriptPath);
@@ -287,8 +347,10 @@ function startPython() {
     // Check for readiness signal
     if (!pyReady && text.includes('IntelliFile Python Engine Ready')) {
       pyReady = true;
+      pythonReadyForIndexing = true;
       console.log('[Python] ✅ Engine is ready — pyReady = true');
-      triggerAutoIndex();
+      // Don't trigger auto-index here; wait for window to be ready
+      // triggerAutoIndex will be called from createWindow after window loads
     }
 
     // Buffer stdout and resolve pending requests when we get complete JSON lines
@@ -615,75 +677,6 @@ ipcMain.handle("index-device", async () => {
   return result;  // 30-min timeout for full device
 });
 
-ipcMain.handle('chat-ask', async (_event, query) => {
-  try {
-    const response = await axios.post(`${CHAT_BACKEND_URL}/ask`, { query, top_k: 5 });
-    return response.data;
-  } catch (err) {
-    return { ok: false, answer: `Chat request failed: ${err.message || 'unknown error'}` };
-  }
-});
-
-ipcMain.handle('chat-status', async () => {
-  try {
-    const response = await axios.get(`${CHAT_BACKEND_URL}/chat/status`, { timeout: 5000 });
-    return response.data;
-  } catch (err) {
-    return {
-      enabled: false,
-      mode: 'none',
-      reason: `Chat backend unavailable: ${err.message || 'unknown error'}`,
-    };
-  }
-});
-
-ipcMain.on('chat-stream-start', async (event, query) => {
-  try {
-    const response = await axios({
-      method: 'post',
-      url: `${CHAT_BACKEND_URL}/chat`,
-      data: { query, top_k: 5 },
-      responseType: 'stream'
-    });
-
-    let fullAnswer = '';
-    response.data.on('data', (chunk) => {
-      const token = chunk.toString();
-      fullAnswer += token;
-      event.reply('chat-stream-token', token);
-    });
-
-    response.data.on('end', () => {
-      event.reply('chat-stream-done', fullAnswer);
-    });
-
-    response.data.on('error', () => {
-      event.reply('chat-stream-error', 'Stream interrupted.');
-    });
-  } catch (err) {
-    event.reply('chat-stream-error', err.message || 'Failed to stream chat response.');
-  }
-});
-
-ipcMain.handle('chat-ingest-file', async (_event, filePath) => {
-  try {
-    const response = await axios.post(`${CHAT_BACKEND_URL}/chat/ingest`, { file_path: filePath });
-    return response.data;
-  } catch (err) {
-    return { ok: false, error: `File ingest failed: ${err.message || 'unknown error'}` };
-  }
-});
-
-// Backward-compatible channel for ChatSidebar.jsx
-ipcMain.handle('ingest-file', async (_event, filePath) => {
-  try {
-    const response = await axios.post(`${CHAT_BACKEND_URL}/chat/ingest`, { file_path: filePath });
-    return response.data;
-  } catch (err) {
-    return { ok: false, error: `File ingest failed: ${err.message || 'unknown error'}` };
-  }
-});
-
 // Versioning via Python engine
 ipcMain.handle('get-versions', async (_event, filePath) => {
   return sendToPython({
@@ -767,28 +760,6 @@ ipcMain.handle('save-version', async (_event, payload) => {
     new_content: payload.newContent || payload.new_content || '',
   });
 });
-
-// Legacy chat call expected by ChatSidebar.jsx
-ipcMain.handle('chat', async (_event, query) => {
-  try {
-    const response = await axios.post(`${CHAT_BACKEND_URL}/ask`, { query, top_k: 5 });
-    return response.data?.answer || '';
-  } catch (err) {
-    return `Chat request failed: ${err.message || 'unknown error'}`;
-  }
-});
-
-// Legacy clear request from ChatSidebar.jsx; keep as no-op for compatibility.
-ipcMain.handle('clear-faiss', async () => {
-  try {
-    const response = await axios.post(`${CHAT_BACKEND_URL}/chat/reset`);
-    return { success: true, ...(response.data || {}) };
-  } catch (err) {
-    return { success: false, error: err.message || 'Failed to clear chat store.' };
-  }
-});
-
-
 
 function isProtectedPath(filePath) {
   return PROTECTED_PATHS.some(pattern => pattern.test(filePath));
@@ -1397,6 +1368,150 @@ function registerIpcHandlers() {
     }
   });
 
+  ipcMain.handle('set-file-attributes', async (_event, payload) => {
+    const filePath = payload?.filePath || payload?.path;
+    const readOnly = !!payload?.readOnly;
+    const hidden = !!payload?.hidden;
+
+    try {
+      if (process.platform === 'win32') {
+        const { execSync } = require('child_process');
+        const quotedPath = `"${String(filePath).replace(/"/g, '\\"')}"`;
+        const commands = [
+          `attrib ${readOnly ? '+r' : '-r'} ${quotedPath}`,
+          `attrib ${hidden ? '+h' : '-h'} ${quotedPath}`,
+        ];
+        commands.forEach((command) => execSync(command, { encoding: 'utf8', shell: true }));
+      } else {
+        const { execSync } = require('child_process');
+        const stats = fs.statSync(filePath);
+        const mode = stats.mode;
+        if (readOnly) {
+          fs.chmodSync(filePath, mode & ~0o222);
+        } else {
+          fs.chmodSync(filePath, mode | 0o200);
+        }
+      }
+
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('get-file-security', async (_event, filePath) => {
+    try {
+      const result = {
+        success: true,
+        security: {
+          owner: null,
+          group: null,
+          access: [],
+          isFolder: false,
+        },
+      };
+
+      if (process.platform === 'win32') {
+        try {
+          const { execSync } = require('child_process');
+          const escapedPath = String(filePath).replace(/'/g, "''");
+          const output = execSync(
+            `powershell -NoProfile -Command "$acl = Get-Acl -LiteralPath '${escapedPath}'; $acl | Select-Object Owner,Group,@{Name='Access';Expression={@($acl.Access | Select-Object IdentityReference,FileSystemRights,AccessControlType,IsInherited,InheritanceFlags,PropagationFlags)}} | ConvertTo-Json -Depth 4"`,
+            { encoding: 'utf8', timeout: 5000 }
+          ).trim();
+
+          if (output) {
+            const parsed = JSON.parse(output);
+            const access = parsed?.Access ? (Array.isArray(parsed.Access) ? parsed.Access : [parsed.Access]) : [];
+            result.security = {
+              owner: parsed?.Owner || null,
+              group: parsed?.Group || null,
+              access,
+              isFolder: fs.existsSync(filePath) ? fs.statSync(filePath).isDirectory() : false,
+            };
+          }
+        } catch (_error) {
+          // best effort only
+        }
+      }
+
+      return result;
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('get-file-sharing-info', async (_event, filePath) => {
+    try {
+      const sharing = {
+        success: true,
+        info: {
+          isNetworkPath: /^\\\\/.test(String(filePath)),
+          shares: [],
+          sharedName: null,
+          sharedPath: null,
+        },
+      };
+
+      if (process.platform === 'win32') {
+        try {
+          const { execSync } = require('child_process');
+          const output = execSync(
+            `powershell -NoProfile -Command "@(Get-CimInstance Win32_Share -ErrorAction SilentlyContinue | Select-Object Name,Path,Description,Type) | ConvertTo-Json -Depth 3"`,
+            { encoding: 'utf8', timeout: 5000 }
+          ).trim();
+
+          if (output) {
+            const parsed = JSON.parse(output);
+            const shares = Array.isArray(parsed) ? parsed : [parsed];
+            const normalized = path.resolve(filePath).toLowerCase();
+            const matchingShares = shares.filter((share) => {
+              if (!share?.Path) return false;
+              const sharePath = path.resolve(share.Path).toLowerCase();
+              return normalized === sharePath || normalized.startsWith(`${sharePath}${path.sep}`);
+            });
+            sharing.info.shares = matchingShares;
+            if (matchingShares.length > 0) {
+              sharing.info.sharedName = matchingShares[0].Name || null;
+              sharing.info.sharedPath = matchingShares[0].Path || null;
+            }
+          }
+        } catch (_error) {
+          // best effort only
+        }
+      }
+
+      return sharing;
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('open-native-properties', async (_event, filePath) => {
+    try {
+      if (process.platform !== 'win32') {
+        return { success: false, error: 'Native properties dialog is only supported on Windows.' };
+      }
+
+      const { exec } = require('child_process');
+      const escapedPath = String(filePath).replace(/'/g, "''");
+      exec(
+        `powershell -NoProfile -Command "$shell = New-Object -ComObject Shell.Application; $folder = $shell.Namespace((Split-Path -LiteralPath '${escapedPath}' -Parent)); if ($folder) { $item = $folder.ParseName((Split-Path -LiteralPath '${escapedPath}' -Leaf)); if ($item) { $item.InvokeVerb('properties') } }"`
+      );
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('watch-directory', async (_event, directoryPath) => {
+    return startWatchingDirectory(directoryPath);
+  });
+
+  ipcMain.handle('unwatch-directory', async (_event, directoryPath) => {
+    return stopWatchingDirectory(directoryPath);
+  });
+
   // ── Open Terminal Here ──
   ipcMain.handle('open-terminal-here', async (event, dirPath) => {
     try {
@@ -1568,6 +1683,14 @@ function createWindow() {
     : `file://${path.join(__dirname, '../build/index.html')}`;
 
   mainWindow.loadURL(startUrl);
+
+  // Trigger auto-indexing once window is ready and Python is ready
+  mainWindow.webContents.on('did-finish-load', () => {
+    if (pythonReadyForIndexing && !autoIndexRequested) {
+      console.log('[Window] Ready, triggering auto-index');
+      triggerAutoIndex();
+    }
+  });
 
   if (isDev) {
     mainWindow.webContents.openDevTools();

@@ -197,7 +197,7 @@ function ExplorerSidebar({ drives, onNavigate, currentPath }) {
 
     return () => {
       mounted = false;
-      try { ipcRenderer && ipcRenderer.removeListener && ipcRenderer.removeListener('system-roots-changed', onChanged); } catch (e) {}
+      try { ipcRenderer && ipcRenderer.off && ipcRenderer.off('system-roots-changed', onChanged); } catch (e) {}
     };
   }, []);
   
