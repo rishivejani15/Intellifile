@@ -2,16 +2,45 @@ import React, { useState, useEffect, useCallback } from 'react';
 import './FileExplorer/FileExplorer.css';
 
 const FAVORITES_KEY = 'intellifile-favorites';
+const ipcRenderer = window.electron?.ipcRenderer;
 
 const normalizePath = (p) => (p || '').toLowerCase().replace(/\//g, '\\').replace(/[\\]+$/, '');
+const getNodeName = (p) => {
+  if (!p) return '';
+  const clean = p.replace(/[\\]+$/, '');
+  const idx = clean.lastIndexOf('\\');
+  return idx >= 0 ? clean.slice(idx + 1) : clean;
+};
+const isPathWithin = (candidate, target) => {
+  const a = normalizePath(candidate);
+  const b = normalizePath(target);
+  return b === a || b.startsWith(`${a}\\`);
+};
+
+const getFolderIcon = (name = '') => {
+  const lower = String(name).toLowerCase();
+  if (lower.includes('desktop')) return '🖥️';
+  if (lower.includes('document')) return '📄';
+  if (lower.includes('download')) return '⬇️';
+  if (lower.includes('picture') || lower.includes('photo')) return '🖼️';
+  if (lower.includes('music')) return '🎵';
+  if (lower.includes('video')) return '🎬';
+  if (lower.includes('onedrive')) return '☁️';
+  if (lower.includes('recycle')) return '🗑️';
+  return '📁';
+};
 
 function ExplorerSidebar({ drives, onNavigate, currentPath }) {
   const [favorites, setFavorites] = useState([]);
+  const [systemRoots, setSystemRoots] = useState(null);
   const [expandedSections, setExpandedSections] = useState({
     favorites: true,
     quickAccess: true,
     drives: true,
   });
+  const [treeExpanded, setTreeExpanded] = useState({});
+  const [treeChildren, setTreeChildren] = useState({});
+  const [treeLoading, setTreeLoading] = useState({});
 
   // Load favorites from localStorage
   useEffect(() => {
@@ -46,6 +75,92 @@ function ExplorerSidebar({ drives, onNavigate, currentPath }) {
     setExpandedSections(prev => ({ ...prev, [section]: !prev[section] }));
   }, []);
 
+  const loadTreeChildren = useCallback(async (dirPath) => {
+    const key = normalizePath(dirPath);
+    if (!dirPath || !ipcRenderer) return [];
+    if (treeChildren[key]) return treeChildren[key];
+
+    setTreeLoading(prev => ({ ...prev, [key]: true }));
+    try {
+      const result = await ipcRenderer.invoke('list-directory', dirPath, { showHidden: false });
+      const entries = Array.isArray(result?.items) ? result.items : [];
+      if (!Array.isArray(entries)) {
+        setTreeChildren(prev => ({ ...prev, [key]: [] }));
+        return [];
+      }
+
+      const folders = entries
+        .filter((item) => item && item.path && (item.type === 'folder' || item.type === 'directory' || item.isDirectory === true))
+        .map((item) => ({ path: item.path, name: item.name || getNodeName(item.path), isRoot: false }))
+        .sort((a, b) => a.name.localeCompare(b.name));
+
+      setTreeChildren(prev => ({ ...prev, [key]: folders }));
+      return folders;
+    } catch (error) {
+      console.error('Failed to load tree children:', error);
+      setTreeChildren(prev => ({ ...prev, [key]: [] }));
+      return [];
+    } finally {
+      setTreeLoading(prev => ({ ...prev, [key]: false }));
+    }
+  }, [treeChildren]);
+
+  const toggleTreeNode = useCallback(async (nodePath) => {
+    const key = normalizePath(nodePath);
+    const shouldExpand = !treeExpanded[key];
+    setTreeExpanded(prev => ({ ...prev, [key]: shouldExpand }));
+    if (shouldExpand && !treeChildren[key]) {
+      await loadTreeChildren(nodePath);
+    }
+  }, [loadTreeChildren, treeChildren, treeExpanded]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const expandCurrentPath = async () => {
+      if (!currentPath) return;
+      const candidateRoots = [
+        ...((drives || []).map((d) => ({ path: d.device || '' })).filter((d) => d.path)),
+        ...(favorites.map((f) => ({ path: f.path || '' })).filter((f) => f.path)),
+      ];
+      const matchingRoots = candidateRoots.filter((r) => isPathWithin(r.path, currentPath));
+      const root = matchingRoots.sort((a, b) => b.path.length - a.path.length)[0];
+      if (!root) return;
+
+      const rootKey = normalizePath(root.path);
+      // Don't auto-expand drive roots, only their children
+      const isRootADrive = drives && drives.some(d => normalizePath(d.device) === rootKey);
+      
+      let cursor = root.path;
+      let cursorKey = normalizePath(cursor);
+      if (!treeChildren[cursorKey]) {
+        await loadTreeChildren(cursor);
+      }
+
+      const cleanCurrent = currentPath.replace(/[\\]+$/, '');
+      const remainder = cleanCurrent.slice(root.path.replace(/[\\]+$/, '').length).replace(/^\\+/, '');
+      const parts = remainder ? remainder.split('\\').filter(Boolean) : [];
+
+      for (const part of parts) {
+        if (cancelled) return;
+        const children = treeChildren[cursorKey] || await loadTreeChildren(cursor);
+        const next = children.find((c) => normalizePath(c.name) === normalizePath(part));
+        if (!next) break;
+        const nextKey = normalizePath(next.path);
+        setTreeExpanded(prev => ({ ...prev, [nextKey]: true }));
+        cursor = next.path;
+        cursorKey = nextKey;
+      }
+      
+      // Only auto-expand drive root if it's a favorite (favorites should always show tree)
+      if (isRootADrive) return;
+      setTreeExpanded(prev => ({ ...prev, [rootKey]: true }));
+    };
+
+    expandCurrentPath();
+    return () => { cancelled = true; };
+  }, [currentPath, loadTreeChildren, treeChildren, drives, favorites]);
+
   // Expose addFavorite through window for ContextMenu to use
   useEffect(() => {
     window.__intellifile_addFavorite = addFavorite;
@@ -61,16 +176,157 @@ function ExplorerSidebar({ drives, onNavigate, currentPath }) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [favorites]);
+
+  // Load native system roots (This PC, special folders, removable drives)
+  useEffect(() => {
+    let mounted = true;
+    const loadRoots = async () => {
+      try {
+        if (!ipcRenderer) return;
+        const res = await ipcRenderer.invoke('get-system-roots');
+        if (!mounted) return;
+        if (res && res.success && res.data) setSystemRoots(res.data);
+      } catch (err) {
+        // ignore
+      }
+    };
+    loadRoots();
+    // subscribe to hotplug/changes
+    const onChanged = (_e, data) => { if (mounted && data) setSystemRoots(data); };
+    try { ipcRenderer && ipcRenderer.on && ipcRenderer.on('system-roots-changed', onChanged); } catch (e) {}
+
+    return () => {
+      mounted = false;
+      try { ipcRenderer && ipcRenderer.removeListener && ipcRenderer.removeListener('system-roots-changed', onChanged); } catch (e) {}
+    };
+  }, []);
   
   const navigateToQuickAccess = (folderName) => {
     onNavigate(folderName);
   };
+
+  const dynamicFolders = [
+    ...(systemRoots?.specialFolders || []),
+  ].filter((item) => item && item.id !== 'this_pc');
 
   const isActive = (path) => {
     if (!currentPath) return false;
     const norm = (p) => (p || '').toLowerCase().replace(/[\\/]+$/, '');
     return norm(currentPath) === norm(path);
   };
+
+  const renderTreeNode = (node, depth = 0) => {
+    const nodeKey = normalizePath(node.path);
+    const isExpanded = !!treeExpanded[nodeKey];
+    const children = treeChildren[nodeKey] || [];
+    const isLoading = !!treeLoading[nodeKey];
+    const isCurrent = isActive(node.path);
+    const isAncestor = !isCurrent && isPathWithin(node.path, currentPath);
+
+    return (
+      <div key={node.path} className="tree-node">
+        <div
+          className={`tree-row ${isCurrent ? 'active' : ''} ${isAncestor ? 'ancestor' : ''}`}
+          style={{ paddingLeft: `${12 + depth * 18}px` }}
+          onClick={() => onNavigate(node.path)}
+          title={node.path}
+        >
+          <button
+            className="tree-expander"
+            onClick={(e) => {
+              e.stopPropagation();
+              toggleTreeNode(node.path);
+            }}
+            title={isExpanded ? 'Collapse' : 'Expand'}
+          >
+            {isExpanded ? '▾' : '▸'}
+          </button>
+          <span className="tree-icon">{node.icon || (node.isRoot ? '💾' : '📁')}</span>
+          <span className="tree-label">{node.name || getNodeName(node.path)}</span>
+          {node.removable && (
+            <button
+              className="sidebar-unpin"
+              onClick={(e) => {
+                e.stopPropagation();
+                node.onRemove?.(node.path);
+              }}
+              title="Unpin"
+            >
+              ×
+            </button>
+          )}
+        </div>
+
+        {isExpanded && (
+          <div className="tree-children">
+            {isLoading && <div className="tree-loading" style={{ paddingLeft: `${30 + depth * 18}px` }}>Loading...</div>}
+            {!isLoading && children.length === 0 && <div className="tree-empty" style={{ paddingLeft: `${30 + depth * 18}px` }}>No folders</div>}
+            {!isLoading && children.map((child) => renderTreeNode(child, depth + 1))}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const renderDriveCard = (drive) => {
+    const driveDevice = drive.device || drive.path || drive.id || '';
+    const driveLabel = drive.description || drive.name || drive.label || drive.volumeName || driveDevice;
+    const driveSize = Number(drive.size || drive.total || drive.totalSize || 0);
+    const driveAvailable = Number(drive.available ?? drive.free ?? drive.freeSpace ?? drive.free_bytes ?? 0);
+
+    const driveKey = normalizePath(driveDevice);
+    const isExpanded = !!treeExpanded[driveKey];
+    const children = treeChildren[driveKey] || [];
+    const isLoading = !!treeLoading[driveKey];
+    const isCurrent = isActive(driveDevice);
+
+    const usedSpace = driveSize - driveAvailable;
+    const usedPercent = driveSize > 0 ? Math.round((usedSpace / driveSize) * 100) : 0;
+    const availableGB = Math.round(driveAvailable / (1024 ** 3));
+    const totalGB = Math.round(driveSize / (1024 ** 3));
+
+    return (
+      <div key={driveDevice || driveLabel} className={`drive-card-wrapper`}>
+        <div
+          className={`drive-card ${isCurrent ? 'active' : ''}`}
+          onClick={() => onNavigate(driveDevice)}
+        >
+          <div className="drive-header">
+            <button
+              className="tree-expander"
+              onClick={(e) => {
+                e.stopPropagation();
+                toggleTreeNode(driveDevice);
+              }}
+              title={isExpanded ? 'Collapse' : 'Expand'}
+            >
+              {isExpanded ? '▾' : '▸'}
+            </button>
+            <span className="drive-icon">💾</span>
+            <div className="drive-info">
+              <div className="drive-name">{driveLabel}</div>
+              <div className="drive-space">{availableGB} GB free of {totalGB} GB</div>
+            </div>
+          </div>
+          <div className="drive-progress-bar">
+            <div
+              className={`drive-progress-fill ${usedPercent > 90 ? 'critical' : usedPercent > 75 ? 'warning' : ''}`}
+              style={{ width: `${usedPercent}%` }}
+            />
+          </div>
+        </div>
+
+        {isExpanded && (
+          <div className="drive-tree-children">
+            {isLoading && <div className="tree-loading" style={{ paddingLeft: '30px' }}>Loading...</div>}
+            {!isLoading && children.length === 0 && <div className="tree-empty" style={{ paddingLeft: '30px' }}>No folders</div>}
+            {!isLoading && children.map((child) => renderTreeNode({ ...child, isRoot: false }, 0))}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
     <div className="explorer-sidebar">
       {/* Favorites / Pinned */}
@@ -83,26 +339,21 @@ function ExplorerSidebar({ drives, onNavigate, currentPath }) {
             <span className="collapse-icon">{expandedSections.favorites ? '▾' : '▸'}</span>
             ⭐ Favorites
           </div>
-          {expandedSections.favorites && favorites.map((fav, idx) => (
-            <div
-              key={fav.path}
-              className={`sidebar-item ${isActive(fav.path) ? 'active' : ''}`}
-              onClick={() => onNavigate(fav.path)}
-            >
-              <span className="sidebar-icon">📌</span>
-              <span className="sidebar-label">{fav.name}</span>
-              <button
-                className="sidebar-unpin"
-                onClick={(e) => { e.stopPropagation(); removeFavorite(fav.path); }}
-                title="Unpin"
-              >
-                ×
-              </button>
+          {expandedSections.favorites && (
+            <div className="sidebar-tree">
+              {favorites.map((fav) => renderTreeNode({
+                path: fav.path,
+                name: fav.name,
+                isRoot: true,
+                icon: '📌',
+                removable: true,
+                onRemove: removeFavorite,
+              }, 0))}
             </div>
-          ))}
+          )}
         </div>
 )}
-         {/* Quick Access */}
+      {/* Quick Access */}
       <div className="sidebar-section">
         <div
           className="sidebar-title collapsible"
@@ -117,33 +368,31 @@ function ExplorerSidebar({ drives, onNavigate, currentPath }) {
               <span className="sidebar-icon">💻</span>
               <span className="sidebar-label">This PC</span>
             </div>
-            <div className={`sidebar-item ${isActive('Desktop') ? 'active' : ''}`} onClick={() => navigateToQuickAccess('Desktop')}>
-              <span className="sidebar-icon">🖥️</span>
-              <span className="sidebar-label">Desktop</span>
-            </div>
-            <div className={`sidebar-item ${isActive('Documents') ? 'active' : ''}`} onClick={() => navigateToQuickAccess('Documents')}>
-              <span className="sidebar-icon">📄</span>
-              <span className="sidebar-label">Documents</span>
-            </div>
-            <div className={`sidebar-item ${isActive('Downloads') ? 'active' : ''}`} onClick={() => navigateToQuickAccess('Downloads')}>
-              <span className="sidebar-icon">⬇️</span>
-              <span className="sidebar-label">Downloads</span>
-            </div>
-            <div className={`sidebar-item ${isActive('Pictures') ? 'active' : ''}`} onClick={() => navigateToQuickAccess('Pictures')}>
-              <span className="sidebar-icon">🖼️</span>
-              <span className="sidebar-label">Pictures</span>
-            </div>
-            <div className={`sidebar-item ${isActive('Music') ? 'active' : ''}`} onClick={() => navigateToQuickAccess('Music')}>
-              <span className="sidebar-icon">🎵</span>
-              <span className="sidebar-label">Music</span>
-            </div>
-            <div className={`sidebar-item ${isActive('Videos') ? 'active' : ''}`} onClick={() => navigateToQuickAccess('Videos')}>
-              <span className="sidebar-icon">🎬</span>
-              <span className="sidebar-label">Videos</span>
-            </div>
           </>
         )}
       </div>
+
+      {/* Native folders */}
+      {dynamicFolders.length > 0 && (
+        <div className="sidebar-section">
+          <div className="sidebar-title">
+            Native folders
+          </div>
+          <div className="sidebar-tree">
+            {dynamicFolders.map((folder) => (
+              <div
+                key={folder.id}
+                className={`sidebar-item ${isActive(folder.path) ? 'active' : ''}`}
+                onClick={() => folder.path && onNavigate(folder.path)}
+                title={folder.path || folder.name}
+              >
+                <span className="sidebar-icon">{getFolderIcon(folder.name)}</span>
+                <span className="sidebar-label">{folder.name}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
               {/* Drives */}
       {drives.length > 0 && (
@@ -155,32 +404,20 @@ function ExplorerSidebar({ drives, onNavigate, currentPath }) {
             <span className="collapse-icon">{expandedSections.drives ? '▾' : '▸'}</span>
             Drives
           </div>
-          {expandedSections.drives && drives.map((drive, idx) => {
-            const usedSpace = drive.size - (drive.available || 0);
-            const usedPercent = drive.size > 0 ? Math.round((usedSpace / drive.size) * 100) : 0;
-            const availableGB = Math.round((drive.available || 0) / (1024 ** 3));
-            const totalGB = Math.round(drive.size / (1024 ** 3));
-
-            return (
-              <div key={drive.device || idx} className={`drive-item ${isActive(drive.device) ? 'active' : ''}`} onClick={() => onNavigate(drive.device)}>
-                <div className="drive-header">
-                  <span className="drive-icon">💾</span>
-                  <div className="drive-name-info">
-                    <div className="drive-name">{drive.description}</div>
-                    <div className="drive-space-text">{availableGB} GB free of {totalGB} GB</div>
-                  </div>
-                  </div>
-                <div className="drive-progress-container">
-                  <div className="drive-progress-bar">
-                    <div
-                      className={`drive-progress-fill ${usedPercent > 90 ? 'critical' : ''}`}
-                      style={{ width: `${usedPercent}%` }}
-                    ></div>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
+          {expandedSections.drives && (
+            <div className="sidebar-drives">
+              {drives.filter(d => d && (d.device || d.path || d.id)).map((drive) => {
+                // Normalize to object shape expected by renderDriveCard
+                const drv = {
+                  device: drive.device || drive.id || drive.path || drive.DeviceID || drive.Device || '',
+                  description: drive.description || drive.name || drive.label || drive.VolumeName || drive.volumeName || drive.device || drive.path || '',
+                  size: drive.size || drive.Size || 0,
+                  available: drive.available ?? drive.free ?? drive.Free ?? drive.freeSpace ?? drive.free_space ?? 0
+                };
+                return renderDriveCard(drv);
+              })}
+            </div>
+          )}
         </div>
       )}
     </div>

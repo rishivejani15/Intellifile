@@ -52,7 +52,6 @@ function App() {
     setShowChatSidebar(true);
   };
 
-  // Debug: log versioningFile state
   useEffect(() => {
     console.log('[App] versioningFile:', versioningFile);
   }, [versioningFile]);
@@ -66,13 +65,13 @@ function App() {
     <div className="App">
       <header className="App-header">
         <div className="tab-nav">
-          <button 
+          <button
             className={`tab-btn ${activeTab === 'explorer' ? 'active' : ''}`}
             onClick={() => setActiveTab('explorer')}
           >
             Explorer
           </button>
-          <button 
+          <button
             className={`tab-btn ${activeTab === 'sync' ? 'active' : ''}`}
             onClick={() => setActiveTab('sync')}
           >

@@ -4,6 +4,7 @@ const fs = require('fs');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
 const axios = require('axios');
+const { registerSystemRoots, getSystemRoots } = require('./system_roots');
 
 const PROJECT_ROOT = path.join(__dirname, '..');
 
@@ -134,6 +135,43 @@ function sendToPython(payload, timeoutMs = 120000) {
     pyProcess.stdin.write(JSON.stringify(payload) + '\n');
   });
 }
+
+// Register system roots IPC handlers
+try { registerSystemRoots(ipcMain); } catch (err) { console.warn('System roots handler not registered:', err); }
+
+// Watch for system roots changes (polling fallback for device hotplug)
+let _rootsWatcherInterval = null;
+let _lastRootsSnapshot = null;
+function startSystemRootsWatcher(intervalMs = 5000) {
+  if (_rootsWatcherInterval) return;
+  const poll = async () => {
+    try {
+      const res = await getSystemRoots();
+      if (!res || !res.success) return;
+      const json = JSON.stringify(res.data || {});
+      if (_lastRootsSnapshot !== json) {
+        _lastRootsSnapshot = json;
+        const windows = require('electron').BrowserWindow.getAllWindows();
+        for (const w of windows) {
+          try { w.webContents.send('system-roots-changed', res.data); } catch (e) { /* ignore */ }
+        }
+      }
+    } catch (err) {
+      // ignore
+    }
+  };
+  // initial poll
+  poll();
+  _rootsWatcherInterval = setInterval(poll, intervalMs);
+}
+
+app.on('ready', () => {
+  try { startSystemRootsWatcher(5000); } catch (err) { console.warn('Failed to start system roots watcher', err); }
+});
+
+app.on('will-quit', () => {
+  if (_rootsWatcherInterval) { clearInterval(_rootsWatcherInterval); _rootsWatcherInterval = null; }
+});
 
 function startWatchingFile(filePath) {
   if (!filePath) return;
@@ -1484,6 +1522,8 @@ async function getDrivesInfo() {
               drives.push({
                 device: drive,
                 description: description,
+                name: description,
+                label: volInfo && volInfo.label ? volInfo.label : null,
                 mountpoints: [{ path: drivePath }],
                 size: size,
                 available: available,

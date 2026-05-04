@@ -13,6 +13,7 @@ import PropertiesModal from '../PropertiesModal';
 import SearchResults from '../SearchResults';
 import TabsBar from '../TabsBar';
 import VersionTimeline from '../Versioning/VersionTimeline';
+import { smartCleanupVersions } from '../../services/versionService';
 import './FileExplorer.css';
 
 const ipcRenderer = window.electron?.ipcRenderer;
@@ -562,6 +563,34 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
     }
   };
 
+  const handleRefreshVersioningTimeline = () => {
+    window.dispatchEvent(new CustomEvent('refresh-version-timeline'));
+  };
+
+  const handleSmartCleanupVersioningTimeline = async () => {
+    if (!selectedItem?.path) return;
+
+    try {
+      const result = await smartCleanupVersions(selectedItem.path);
+      if (!result?.success) {
+        alert('Cleanup failed: ' + (result?.error || 'Unknown error'));
+        return;
+      }
+
+      const deleted = Number(result?.deleted_versions || 0);
+      const freedMb = Number(result?.freed_mb || 0);
+      if (deleted > 0) {
+        alert(`Cleanup complete: removed ${deleted} version(s), freed ${freedMb.toFixed(2)} MB.`);
+      } else {
+        alert('Cleanup complete: 0 versions removed. Recent versions may be retained by policy.');
+      }
+
+      handleRefreshVersioningTimeline();
+    } catch (err) {
+      alert('Cleanup failed: ' + (err?.message || 'Unknown error'));
+    }
+  };
+
   const handleCloseVersioning = () => {
     setShowVersioning(false);
     setShowPreview(true);
@@ -730,7 +759,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
 
   return (
     <div className={`file-explorer ${showVersioning || showPreview ? 'with-versioning' : ''}`}>
-      <ExplorerSidebar drives={drives} onNavigate={loadDirectory} />
+      <ExplorerSidebar drives={drives} onNavigate={loadDirectory} currentPath={currentPath} />
 
       <div className="explorer-main-area">
         <TabsBar
@@ -818,26 +847,26 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
             )}
 
           </div>
+        </div>
 
-          <div className="explorer-statusbar">
-            <div className="statusbar-info">
-              <span>{items.length} items</span>
-              <span>{selectedItems.length} selected</span>
-              {selectedItem && (
-                <span>{selectedItem.type === 'file' ? `${formatFileSize(selectedItem.size)}` : 'Folder'}</span>
-              )}
-              {clipboard && <span>📋 {clipboard.operation === 'cut' ? 'Cut' : 'Copied'}: {clipboard.items.length} item(s)</span>}
-            </div>
+        <div className="explorer-statusbar">
+          <div className="statusbar-info">
+            <span>{items.length} items </span>
+            <span>{selectedItems.length} selected</span>
+            {selectedItem && (
+              <span>{selectedItem.type === 'file' ? `${formatFileSize(selectedItem.size)}` : 'Folder'}</span>
+            )}
+            {clipboard && <span>📋 {clipboard.operation === 'cut' ? 'Cut' : 'Copied'}: {clipboard.items.length} item(s)</span>}
+          </div>
 
-            <div className="statusbar-actions">
-              <button
-                className={`statusbar-btn ${showPreview ? 'active' : ''}`}
-                onClick={() => setShowPreview(!showPreview)}
-                title="Toggle preview panel"
-              >
-                👁️ Preview
-              </button>
-            </div>
+          <div className="statusbar-actions">
+            <button
+              className={`statusbar-btn ${showPreview ? 'active' : ''}`}
+              onClick={() => setShowPreview(!showPreview)}
+              title="Toggle preview panel"
+            >
+              👁️ Preview
+            </button>
           </div>
         </div>
       </div>
@@ -846,7 +875,25 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
         <div className="versioning-panel">
           <div className="versioning-header">
             <h3>🕒 Version History</h3>
-            <button className="close-btn" onClick={handleCloseVersioning}>×</button>
+            <div className="header-actions">
+              <button
+                className="panel-refresh-btn"
+                onClick={handleRefreshVersioningTimeline}
+                title="Refresh history"
+              >
+                🔄
+              </button>
+              <button
+                className="panel-refresh-btn"
+                onClick={handleSmartCleanupVersioningTimeline}
+                title="Smart cleanup history"
+              >
+                🧹
+              </button>
+              <button className="close-panel-btn" onClick={handleCloseVersioning} title="Close">
+                ×
+              </button>
+            </div>
           </div>
           <div className="versioning-body">
             <VersionTimeline filePath={selectedItem.path} />

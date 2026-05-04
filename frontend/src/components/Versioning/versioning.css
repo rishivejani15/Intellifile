@@ -11,9 +11,40 @@
     overflow: hidden;
 }
 
+.timeline-header {
+    display: flex;
+    gap: 8px;
+    padding: 12px 16px;
+    border-bottom: 1px solid #333;
+    background: #252525;
+    flex-shrink: 0;
+}
 
+.btn-timeline-action {
+    padding: 8px 12px;
+    background: #0e639c;
+    color: #fff;
+    border: none;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s;
+}
 
+.btn-timeline-action:hover:not(:disabled) {
+    background: #1177bb;
+    box-shadow: 0 2px 8px rgba(17, 119, 187, 0.4);
+}
 
+.btn-timeline-action:active:not(:disabled) {
+    background: #0d5a91;
+}
+
+.btn-timeline-action:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
 
 .timeline-list {
     flex: 1;

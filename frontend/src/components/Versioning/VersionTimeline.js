@@ -15,8 +15,6 @@ const VersionTimeline = ({ filePath }) => {
   const [diffText, setDiffText] = useState(null);
   const [showDiff, setShowDiff] = useState(false);
 
-  const [refreshKey, setRefreshKey] = useState(0);
-
   const normalizeVersions = useCallback((raw) => {
     if (!Array.isArray(raw)) return [];
 
@@ -78,7 +76,7 @@ const VersionTimeline = ({ filePath }) => {
     } finally {
       setLoading(false);
     }
-  }, [filePath, normalizeVersions, refreshKey]);
+  }, [filePath, normalizeVersions]);
 
   useEffect(() => {
     console.log('[VersionTimeline] Mounting/Updating for path:', filePath);
@@ -86,7 +84,7 @@ const VersionTimeline = ({ filePath }) => {
 
     const handleManualRefresh = () => {
       console.log('[VersionTimeline] Manual refresh triggered');
-      setRefreshKey(prev => prev + 1);
+      fetchVersions();
     };
     window.addEventListener('refresh-version-timeline', handleManualRefresh);
 
@@ -160,12 +158,12 @@ const VersionTimeline = ({ filePath }) => {
     setCompareA(null);
     setCompareB(null);
   };
+
   if (!filePath) {
     return null;
   }
- return (
+  return (
         <div className="version-timeline">
-
             {compareA && (
                 <div className="compare-banner">
                     <span>Select version to compare with <strong>{compareA.substring(0, 8)}</strong></span>
