@@ -79,6 +79,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
   const inputRef = useRef(null);
   const loadRequestRef = useRef(0);
   const watchedDirectoryRef = useRef(null);
+  const initialLoadRef = useRef(false);
   const archiveMessageTimerRef = useRef(null);
 
   // Derived values
@@ -290,9 +291,13 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
     }
   }, [updateBreadcrumb, searchQuery, sortBy, sortDirection, showHidden, updateHistory, updateActiveTab, setCurrentPath, setAddressPath, setRenamingItem, currentPath]);
 
-  // Initialize with Documents folder
+  // Initialize with saved path or Documents folder
   useEffect(() => {
-    if (!currentPath) {
+    if (initialLoadRef.current) return;
+    initialLoadRef.current = true;
+    if (currentPath) {
+      loadDirectory(currentPath, { trackHistory: false });
+    } else {
       loadDirectory(null);
     }
   }, [currentPath, loadDirectory]);
