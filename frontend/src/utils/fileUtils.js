@@ -1,12 +1,15 @@
 // File utility functions
-export const getFileIcon = (item) => {
-  if (item.type === 'drive') {
+export const getFileIcon = (item = {}) => {
+  const type = (item.type || '').toLowerCase();
+  if (type === 'drive') {
     return '💾';
   }
-  if (item.type === 'folder') {
+  if (type === 'folder' || type === 'directory') {
     return '📁';
   }
-  const ext = item.ext.toLowerCase();
+  const extSource = item.ext || item.name || item.path || '';
+  const ext = String(extSource).toLowerCase();
+  const normalized = ext.includes('.') ? ext.slice(ext.lastIndexOf('.')) : ext;
   const iconMap = {
     '.py': '🐍',
     '.js': '⚡',
@@ -38,7 +41,7 @@ export const getFileIcon = (item) => {
     '.rar': '📦',
     '.7z': '📦',
   };
-  return iconMap[ext] || '📄';
+  return iconMap[normalized] || '📄';
 };
 
 export const formatFileSize = (bytes) => {
