@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { QRCodeCanvas } from 'qrcode.react';
 import './SyncManager.css';
 
 // ── Icons ───────────────────────────────────────────────────────────────────
@@ -127,8 +128,28 @@ const SyncManager = () => {
   const [sessionId, setSessionId] = useState(savedSettings.sessionId || '');
   const [isInitiator, setIsInitiator] = useState(savedSettings.isInitiator ?? true);
   const [activeTab, setActiveTab] = useState('files'); // 'files' | 'activity'
+  const [localAddress, setLocalAddress] = useState('');
+  const [localAddressError, setLocalAddressError] = useState('');
 
   const isConnected = ['synced', 'syncing', 'waiting', 'reconnecting', 'connected_p2p', 'connected_relay'].includes(syncStatus.status);
+  const qrValue = localAddress ? `intellifile://lan?addr=${encodeURIComponent(localAddress)}` : '';
+
+  const loadLocalAddress = useCallback(async () => {
+    try {
+      if (!window.intellifile?.getLocalSyncAddress) return;
+      const res = await window.intellifile.getLocalSyncAddress();
+      if (res && res.success && res.address) {
+        setLocalAddress(res.address);
+        setLocalAddressError('');
+      } else {
+        setLocalAddress('');
+        setLocalAddressError('Could not detect a LAN IPv4 address.');
+      }
+    } catch (e) {
+      setLocalAddress('');
+      setLocalAddressError('Failed to read LAN address.');
+    }
+  }, []);
 
   // ── Load local files ─────────────────────────────────────────────────
 
@@ -193,6 +214,7 @@ const SyncManager = () => {
   // ── Subscribe to engine events ───────────────────────────────────────
 
   useEffect(() => {
+    loadLocalAddress();
     loadFiles();
     const interval = setInterval(loadFiles, 2000);
 
@@ -234,7 +256,7 @@ const SyncManager = () => {
       clearInterval(interval);
       cleanups.forEach(fn => fn && fn());
     };
-  }, [loadFiles]); // note: savedSettings is read outside so we just auto-connect on initial load.
+  }, [loadFiles, loadLocalAddress]); // note: savedSettings is read outside so we just auto-connect on initial load.
 
   // ── Auto-dismiss notifications ───────────────────────────────────────
 
@@ -418,6 +440,29 @@ const SyncManager = () => {
         {pendingChanges.length > 0 && (
           <span className="sync-pending-badge">{pendingChanges.length} pending</span>
         )}
+      </div>
+
+      {/* ── LAN QR Quick Connect ─────────────────────────────────────── */}
+      <div className="sync-qr-card">
+        <div className="sync-qr-left">
+          <div className="sync-qr-title">LAN Quick Connect</div>
+          <div className="sync-qr-subtitle">Scan from mobile to connect instantly.</div>
+          {localAddress ? (
+            <div className="sync-qr-address">{localAddress}</div>
+          ) : (
+            <div className="sync-qr-error">{localAddressError || 'No LAN address detected.'}</div>
+          )}
+          <button className="sync-qr-refresh" onClick={loadLocalAddress}>
+            Refresh IP
+          </button>
+        </div>
+        <div className="sync-qr-code">
+          {localAddress ? (
+            <QRCodeCanvas value={qrValue} size={140} bgColor="#ffffff" fgColor="#111111" />
+          ) : (
+            <div className="sync-qr-placeholder">QR unavailable</div>
+          )}
+        </div>
       </div>
 
       {/* ── Connect Panel ──────────────────────────────────────────────── */}
