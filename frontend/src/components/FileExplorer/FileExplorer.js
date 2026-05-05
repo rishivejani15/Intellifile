@@ -759,7 +759,12 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
       if (payload && payload.error) {
         setIndexMessage(`Indexing failed: ${payload.error}`);
       } else {
-        setIndexMessage('Index updated');
+        const skipped = Number(payload?.skipped_total || 0);
+        if (skipped > 0) {
+          setIndexMessage(`Index updated (skipped ${skipped} protected ${skipped === 1 ? 'item' : 'items'})`);
+        } else {
+          setIndexMessage('Index updated');
+        }
       }
     });
 

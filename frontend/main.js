@@ -9,6 +9,44 @@ const { registerSystemRoots, getSystemRoots } = require('./system_roots');
 
 const PROJECT_ROOT = path.join(__dirname, '..');
 
+const DEFAULT_INDEXING_PREFS = {
+  allowProtectedIndexing: false,
+};
+
+let indexingPreferences = { ...DEFAULT_INDEXING_PREFS };
+let preferencesPath = null;
+
+function loadIndexingPreferences() {
+  try {
+    if (!preferencesPath) {
+      preferencesPath = path.join(app.getPath('userData'), 'intellifile-preferences.json');
+    }
+    if (!fs.existsSync(preferencesPath)) return;
+    const raw = fs.readFileSync(preferencesPath, 'utf-8');
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed.allowProtectedIndexing === 'boolean') {
+      indexingPreferences.allowProtectedIndexing = parsed.allowProtectedIndexing;
+    }
+  } catch (err) {
+    console.warn('[Prefs] Failed to load preferences:', err.message || err);
+  }
+}
+
+function saveIndexingPreferences() {
+  try {
+    if (!preferencesPath) {
+      preferencesPath = path.join(app.getPath('userData'), 'intellifile-preferences.json');
+    }
+    fs.writeFileSync(preferencesPath, JSON.stringify(indexingPreferences, null, 2), 'utf-8');
+  } catch (err) {
+    console.warn('[Prefs] Failed to save preferences:', err.message || err);
+  }
+}
+
+function getAllowProtectedIndexing() {
+  return !!indexingPreferences.allowProtectedIndexing;
+}
+
 const venvCandidates = [
   path.join(PROJECT_ROOT,'backend', '.venv', 'Scripts', 'python.exe'),
   path.join(PROJECT_ROOT,'backend' ,'.venv', 'Scripts', 'python.exe'),
@@ -24,7 +62,7 @@ if (!(venvCandidates.some((p) => fs.existsSync(p)))) {
 console.log('[Python] Using executable:', PYTHON_EXECUTABLE);
 
 // Check if running in development mode (force true for now since React dev server is running)
-const isDev = true;
+const isDev = false;
 
 // Supported file extensions
 const EDITABLE_EXTENSIONS = [
@@ -202,7 +240,8 @@ function startWatchingFile(filePath) {
           // Trigger immediate indexing for the modified file
           sendToPython({
             action: "index_file",
-            file_path: p
+            file_path: p,
+            allow_protected: getAllowProtectedIndexing(),
           }).catch(err => console.error(`[Watcher] Index trigger error:`, err));
 
           if (result && result.success) {
@@ -287,7 +326,7 @@ function scheduleDirectoryReindex(directoryPath, reason) {
   directoryIndexTimers.set(normPath, setTimeout(() => {
     directoryIndexTimers.delete(normPath);
     console.log(`[Index] Reindexing folder due to ${reason || 'change'}: ${directoryPath}`);
-    sendToPython({ action: 'index', folder: directoryPath }, 1800000).then((res) => {
+    sendToPython({ action: 'index', folder: directoryPath, allow_protected: getAllowProtectedIndexing() }, 1800000).then((res) => {
       if (res && res.error) {
         console.warn('[Index] Folder reindex failed:', res.error);
       }
@@ -333,7 +372,7 @@ function startWatchingDirectory(directoryPath) {
       if (item) {
         broadcastDirectoryChange(directoryPath, { action: 'add', item });
         if (item.type === 'file') {
-          sendToPython({ action: 'index_file', file_path: filePath }).catch(() => {});
+          sendToPython({ action: 'index_file', file_path: filePath, allow_protected: getAllowProtectedIndexing() }).catch(() => {});
         }
       }
     });
@@ -351,7 +390,7 @@ function startWatchingDirectory(directoryPath) {
       if (item) {
         broadcastDirectoryChange(directoryPath, { action: 'change', item });
         if (item.type === 'file') {
-          sendToPython({ action: 'index_file', file_path: filePath }).catch(() => {});
+          sendToPython({ action: 'index_file', file_path: filePath, allow_protected: getAllowProtectedIndexing() }).catch(() => {});
         }
       }
     });
@@ -472,7 +511,7 @@ function triggerAutoIndex() {
   autoIndexRequested = true;
   indexInProgress = true;
   console.log('[Index] Auto-indexing started on app launch');
-  sendToPython({ action: "index" }, 1800000).then((res) => {
+  sendToPython({ action: "index", allow_protected: getAllowProtectedIndexing() }, 1800000).then((res) => {
     indexInProgress = false;
     if (res && res.error) {
       console.warn('[Index] Auto-indexing failed:', res.error);
@@ -734,12 +773,27 @@ ipcMain.handle("search-status", async () => {
   return { ready: pyReady };
 });
 
-ipcMain.handle("index-device", async () => {
+ipcMain.handle('indexing-preferences-get', async () => {
+  return { ...indexingPreferences };
+});
+
+ipcMain.handle('indexing-preferences-set', async (_event, updates = {}) => {
+  if (typeof updates.allowProtectedIndexing === 'boolean') {
+    indexingPreferences.allowProtectedIndexing = updates.allowProtectedIndexing;
+    saveIndexingPreferences();
+  }
+  return { ...indexingPreferences };
+});
+
+ipcMain.handle("index-device", async (_event, options = {}) => {
   if (indexInProgress) {
     return { status: 'running' };
   }
+  const allowProtected = typeof options.allowProtectedIndexing === 'boolean'
+    ? options.allowProtectedIndexing
+    : getAllowProtectedIndexing();
   indexInProgress = true;
-  const result = await sendToPython({ action: "index" }, 1800000);
+  const result = await sendToPython({ action: "index", allow_protected: allowProtected }, 1800000);
   indexInProgress = false;
   notifyIndexComplete(result);
   return result;  // 30-min timeout for full device
@@ -1832,11 +1886,33 @@ function createWindow() {
   // Set win for version watching
   win = mainWindow;
 
+  const prodIndexPath = path.join(__dirname, 'build', 'index.html');
   const startUrl = isDev
     ? 'http://localhost:3000'
-    : `file://${path.join(__dirname, '../build/index.html')}`;
+    : `file://${prodIndexPath}`;
 
-  mainWindow.loadURL(startUrl);
+  if (!isDev && !fs.existsSync(prodIndexPath)) {
+    console.error('[UI] build/index.html not found at:', prodIndexPath);
+    const missingHtml = `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>IntelliFile - UI Missing</title>
+    <style>
+      body { font-family: Arial, sans-serif; padding: 24px; color: #222; }
+      code { background: #f3f3f3; padding: 2px 4px; }
+    </style>
+  </head>
+  <body>
+    <h2>UI build not found</h2>
+    <p>The production UI files are missing.</p>
+    <p>Run <code>npm run build</code> inside the <code>frontend</code> folder, then relaunch the app.</p>
+  </body>
+</html>`;
+    mainWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(missingHtml)}`);
+  } else {
+    mainWindow.loadURL(startUrl);
+  }
 
   // Trigger auto-indexing once window is ready and Python is ready
   mainWindow.webContents.on('did-finish-load', () => {
@@ -1858,6 +1934,7 @@ function createWindow() {
 }
 
 app.on('ready', () => {
+  loadIndexingPreferences();
   registerIpcHandlers();
   startPython();
   startChatBackend();

@@ -3,13 +3,13 @@ from typing import Dict, List
 
 from core.chunker import chunk_text
 from core.db import get_connection, init_db, rebuild_fts
-from core.extractor import extract_text
+from core.extractor import extract_text_with_status
 from core.model import MODEL
 from core.faiss_manager import invalidate_cache, save_index
 from indexing.update_faiss import update_faiss
 
 
-def ingest_single_file(file_path: str) -> Dict[str, object]:
+def ingest_single_file(file_path: str, allow_protected: bool = False) -> Dict[str, object]:
     """
     Ingest one file into the canonical files.db + vectors.faiss pipeline.
     Uses persistent dedup based on absolute path + modified time.
@@ -46,6 +46,20 @@ def ingest_single_file(file_path: str) -> Dict[str, object]:
                 "skipped": True,
             }
 
+    text, reason = extract_text_with_status(abs_path, allow_protected=allow_protected)
+    if reason in {"permission_denied", "file_locked", "password_protected", "not_found", "access_error"} and not allow_protected:
+        conn.close()
+        return {
+            "status": "skipped",
+            "path": abs_path,
+            "filename": filename,
+            "new_chunks": 0,
+            "affected_chunk_ids": [],
+            "reason": reason,
+            "skipped": True,
+        }
+
+    if existing:
         cur.execute("SELECT id FROM chunks WHERE file_id = ?", (file_id,))
         affected_chunk_ids.extend([row[0] for row in cur.fetchall()])
         cur.execute("DELETE FROM chunks WHERE file_id = ?", (file_id,))
@@ -60,7 +74,6 @@ def ingest_single_file(file_path: str) -> Dict[str, object]:
         )
         file_id = cur.lastrowid
 
-    text = extract_text(abs_path)
     chunks = chunk_text(text) if text and len(text.strip()) >= 50 else []
 
     name_no_ext = os.path.splitext(filename)[0].replace("_", " ").replace("-", " ")

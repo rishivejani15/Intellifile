@@ -41,6 +41,7 @@ function ExplorerSidebar({ drives, onNavigate, currentPath }) {
   const [treeExpanded, setTreeExpanded] = useState({});
   const [treeChildren, setTreeChildren] = useState({});
   const [treeLoading, setTreeLoading] = useState({});
+  const [allowProtectedIndexing, setAllowProtectedIndexing] = useState(false);
 
   // Load favorites from localStorage
   useEffect(() => {
@@ -51,6 +52,32 @@ function ExplorerSidebar({ drives, onNavigate, currentPath }) {
       }
     } catch (e) {
       console.error('Error loading favorites:', e);
+    }
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+    const loadPrefs = async () => {
+      try {
+        const prefs = await window.intellifile?.getIndexingPreferences?.();
+        if (!mounted) return;
+        if (prefs && typeof prefs.allowProtectedIndexing === 'boolean') {
+          setAllowProtectedIndexing(prefs.allowProtectedIndexing);
+        }
+      } catch (e) {
+        console.warn('Failed to load indexing preferences:', e);
+      }
+    };
+    loadPrefs();
+    return () => { mounted = false; };
+  }, []);
+
+  const updateAllowProtectedIndexing = useCallback(async (nextValue) => {
+    setAllowProtectedIndexing(nextValue);
+    try {
+      await window.intellifile?.setIndexingPreferences?.({ allowProtectedIndexing: nextValue });
+    } catch (e) {
+      console.warn('Failed to save indexing preference:', e);
     }
   }, []);
 
@@ -420,6 +447,19 @@ function ExplorerSidebar({ drives, onNavigate, currentPath }) {
           )}
         </div>
       )}
+
+      <div className="sidebar-section">
+        <div className="sidebar-title">Preferences</div>
+        <label className="sidebar-toggle">
+          <input
+            type="checkbox"
+            checked={allowProtectedIndexing}
+            onChange={(e) => updateAllowProtectedIndexing(e.target.checked)}
+          />
+          <span className="sidebar-toggle-text">Allow protected indexing</span>
+        </label>
+        <div className="sidebar-help">Includes files that require permission or a password.</div>
+      </div>
     </div>
   );
 }

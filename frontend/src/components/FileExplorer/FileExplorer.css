@@ -95,6 +95,39 @@
   flex: 1;
 }
 
+.sidebar-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 16px 4px;
+  font-size: 12px;
+  color: #333;
+}
+
+.sidebar-toggle input {
+  margin: 0;
+}
+
+.sidebar-toggle-text {
+  flex: 1;
+}
+
+.sidebar-help {
+  padding: 0 16px 10px;
+  font-size: 11px;
+  color: #777;
+}
+
+@media (prefers-color-scheme: dark) {
+  .sidebar-toggle {
+    color: #ddd;
+  }
+
+  .sidebar-help {
+    color: #aaa;
+  }
+}
+
 .sidebar-tree {
   display: flex;
   flex-direction: column;

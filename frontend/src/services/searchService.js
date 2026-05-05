@@ -3,8 +3,8 @@ export async function searchFiles(query) {
     return response.results || [];
 }
 
-export async function indexDevice() {
-    const response = await window.intellifile.indexDevice();
+export async function indexDevice(options = {}) {
+    const response = await window.intellifile.indexDevice(options);
     return response;
 }
 

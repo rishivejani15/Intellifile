@@ -52,8 +52,14 @@ contextBridge.exposeInMainWorld('intellifile', {
   searchStatus: () => {
     return ipcRenderer.invoke('search-status');
   },
-  indexDevice: () => {
-    return ipcRenderer.invoke('index-device');
+  indexDevice: (options = {}) => {
+    return ipcRenderer.invoke('index-device', options);
+  },
+  getIndexingPreferences: () => {
+    return ipcRenderer.invoke('indexing-preferences-get');
+  },
+  setIndexingPreferences: (updates = {}) => {
+    return ipcRenderer.invoke('indexing-preferences-set', updates);
   },
   onIndexProgress: (callback) => {
     const handler = (_event, data) => callback(data);

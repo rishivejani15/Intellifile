@@ -11,7 +11,8 @@ from indexing.update_faiss import update_faiss
 
 
 def run():
-    affected_chunk_ids = index_files_incremental()
+    result = index_files_incremental()
+    affected_chunk_ids = result["affected_chunk_ids"] if isinstance(result, dict) else result
     update_faiss(affected_chunk_ids)
 
 

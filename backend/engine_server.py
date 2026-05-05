@@ -88,6 +88,7 @@ while True:
         elif action == "index":
             try:
                 folder = request.get("folder")
+                allow_protected = bool(request.get("allow_protected"))
                 from indexing.index_files import index_files_incremental
                 from indexing.update_faiss import update_faiss
                 from core.faiss_manager import load_index, invalidate_cache
@@ -110,16 +111,30 @@ while True:
                         payload["pct"] = pct
                     print(json.dumps(payload), flush=True)
 
-                affected = index_files_incremental(folder, progress_cb=emit_progress)
+                result = index_files_incremental(folder, progress_cb=emit_progress, allow_protected=allow_protected)
+                affected = result["affected_chunk_ids"] if isinstance(result, dict) else result
+                skipped_total = int(result.get("skipped_total", 0)) if isinstance(result, dict) else 0
+                skipped_by_reason = result.get("skipped_by_reason", {}) if isinstance(result, dict) else {}
                 update_faiss(affected, progress_cb=emit_progress)
                 invalidate_cache()
                 load_index(force_reload=True)
                 total_secs = round(_time.perf_counter() - _t_total, 1)
-                sys.stderr.write(f"[engine] Indexing completed in {total_secs}s (chunks={len(affected)})\n")
+                sys.stderr.write(f"[engine] Indexing completed in {total_secs}s (chunks={len(affected)}, skipped={skipped_total})\n")
                 sys.stderr.flush()
 
-                emit_progress("done", f"Indexing complete — {len(affected)} chunks in {total_secs}s", pct=100)
-                print(json.dumps({"_id": req_id, "status": "indexed", "folder": folder or "", "total_secs": total_secs, "chunks": len(affected)}), flush=True)
+                detail = f"Indexing complete — {len(affected)} chunks in {total_secs}s"
+                if skipped_total:
+                    detail += f" (skipped {skipped_total} protected files)"
+                emit_progress("done", detail, pct=100)
+                print(json.dumps({
+                    "_id": req_id,
+                    "status": "indexed",
+                    "folder": folder or "",
+                    "total_secs": total_secs,
+                    "chunks": len(affected),
+                    "skipped_total": skipped_total,
+                    "skipped_by_reason": skipped_by_reason,
+                }), flush=True)
             except Exception as e:
                 print(json.dumps({"_id": req_id, "error": f"Indexing failed: {e}"}), flush=True)
 
@@ -127,8 +142,9 @@ while True:
             try:
                 from indexing.single_file_ingest import ingest_single_file
                 file_path = request.get("file_path")
+                allow_protected = bool(request.get("allow_protected"))
                 if file_path and os.path.exists(file_path):
-                    result = ingest_single_file(file_path)
+                    result = ingest_single_file(file_path, allow_protected=allow_protected)
                     print(json.dumps({"_id": req_id, "status": "indexed", "file_path": file_path, "data": result}), flush=True)
                 else:
                     print(json.dumps({"_id": req_id, "status": "skipped", "reason": "file_not_found", "file_path": file_path}), flush=True)

@@ -2,8 +2,9 @@ import os
 import sys
 import time
 import concurrent.futures
+from functools import partial
 from core.scanner import fast_scan_device
-from core.extractor import extract_text
+from core.extractor import extract_text_with_status
 from core.chunker import chunk_text
 from core.db import init_db, get_connection, rebuild_fts
 
@@ -13,6 +14,8 @@ _EXTRACT_WORKERS = min(8, (os.cpu_count() or 4))
 _BATCH_SIZE = 500          # files per commit batch
 _BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
+_SKIP_REASONS = {"permission_denied", "file_locked", "password_protected", "not_found", "access_error"}
+
 
 def _init_worker():
     """Initializer for ProcessPoolExecutor children — ensures imports work."""
@@ -20,25 +23,25 @@ def _init_worker():
         sys.path.insert(0, _BACKEND_DIR)
 
 
-def _extract_one(path):
-    """Extract + chunk a single file. Returns (path, chunks) or (path, None)."""
-    try:
-        text = extract_text(path)
-        chunks = chunk_text(text) if len(text.strip()) >= 50 else []
+def _extract_one(path, allow_protected=False):
+    """Extract + chunk a single file. Returns (path, chunks, reason) or (path, None, reason)."""
+    text, reason = extract_text_with_status(path, allow_protected=allow_protected)
+    if reason in _SKIP_REASONS and not allow_protected:
+        return (path, None, reason)
 
-        # Always include filename + path as a searchable chunk so every
-        # indexed file can be found by its name even without body text.
-        filename = os.path.basename(path)
-        name_no_ext = os.path.splitext(filename)[0].replace("_", " ").replace("-", " ")
-        meta_chunk = f"{name_no_ext} {filename} {path}"
-        chunks.insert(0, meta_chunk)
+    chunks = chunk_text(text) if len(text.strip()) >= 50 else []
 
-        return (path, chunks)
-    except Exception:
-        return (path, None)
+    # Always include filename + path as a searchable chunk so every
+    # indexed file can be found by its name even without body text.
+    filename = os.path.basename(path)
+    name_no_ext = os.path.splitext(filename)[0].replace("_", " ").replace("-", " ")
+    meta_chunk = f"{name_no_ext} {filename} {path}"
+    chunks.insert(0, meta_chunk)
+
+    return (path, chunks, reason)
 
 
-def index_files_incremental(root_folder=None, progress_cb=None):
+def index_files_incremental(root_folder=None, progress_cb=None, allow_protected=False):
     """
     Scan the device (or a specified root), extract text in parallel, chunk, and store
     in SQLite.  Returns a list of chunk IDs that were added or modified
@@ -154,11 +157,18 @@ def index_files_incremental(root_folder=None, progress_cb=None):
     sys.stderr.write(f"[engine] Extracting with ThreadPool ({_EXTRACT_WORKERS} workers)\n")
     sys.stderr.flush()
 
+    skipped = []
+    skipped_by_reason = {}
+    extractor = partial(_extract_one, allow_protected=allow_protected)
+
     with concurrent.futures.ThreadPoolExecutor(max_workers=_EXTRACT_WORKERS) as pool:
         batch_data = []  # accumulate (file_id, idx, chunk_text)
 
-        for path, chunks in pool.map(_extract_one, paths):
+        for path, chunks, reason in pool.map(extractor, paths):
             if chunks is None:
+                skipped.append((path, reason))
+                if reason:
+                    skipped_by_reason[reason] = skipped_by_reason.get(reason, 0) + 1
                 processed += 1
                 continue
 
@@ -189,6 +199,18 @@ def index_files_incremental(root_folder=None, progress_cb=None):
                 batch_data,
             )
             conn.commit()
+
+    if skipped:
+        skipped_fids = [path_to_fid.get(path) for path, _ in skipped]
+        skipped_fids = [fid for fid in skipped_fids if fid is not None]
+        if skipped_fids:
+            for i in range(0, len(skipped_fids), 500):
+                batch = skipped_fids[i:i + 500]
+                placeholders = ",".join("?" * len(batch))
+                cur.execute(f"SELECT id FROM chunks WHERE file_id IN ({placeholders})", batch)
+                affected_chunk_ids.extend(r[0] for r in cur.fetchall())
+                cur.execute(f"DELETE FROM chunks WHERE file_id IN ({placeholders})", batch)
+                cur.execute(f"DELETE FROM files WHERE id IN ({placeholders})", batch)
 
     # Collect IDs of newly inserted chunks for FAISS
     fids = list(path_to_fid.values())
@@ -238,5 +260,14 @@ def index_files_incremental(root_folder=None, progress_cb=None):
     print(f"Indexing completed — {len(affected_chunk_ids)} chunks affected "
           f"(scan {scan_secs:.1f}s + extract {extract_secs:.1f}s + fts {fts_secs:.1f}s "
           f"= {total_secs:.1f}s total).", flush=True)
-    _progress("extract", f"{len(affected_chunk_ids)} chunks ready ({total_secs:.1f}s)", pct=100)
-    return affected_chunk_ids
+    skipped_total = len(skipped)
+    if skipped_total:
+        _progress("extract", f"{len(affected_chunk_ids)} chunks ready ({total_secs:.1f}s) — skipped {skipped_total} protected files", pct=100)
+    else:
+        _progress("extract", f"{len(affected_chunk_ids)} chunks ready ({total_secs:.1f}s)", pct=100)
+
+    return {
+        "affected_chunk_ids": affected_chunk_ids,
+        "skipped_total": skipped_total,
+        "skipped_by_reason": skipped_by_reason,
+    }
