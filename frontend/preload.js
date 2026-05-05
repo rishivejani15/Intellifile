@@ -65,6 +65,9 @@ contextBridge.exposeInMainWorld('intellifile', {
   getSyncFiles: () => {
     return ipcRenderer.invoke('get-sync-files');
   },
+  getLocalSyncAddress: () => {
+    return ipcRenderer.invoke('get-local-sync-address');
+  },
   selectFilesForSync: () => {
     return ipcRenderer.invoke('select-files-for-sync');
   },
