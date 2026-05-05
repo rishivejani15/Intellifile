@@ -148,6 +148,7 @@ let syncServerProcess;
 
 let pyReady = false;
 let pythonReadyForIndexing = false;
+let windowReadyForIndexing = false;
 let pyBuffer = '';
 let pendingRequests = new Map();  // requestId -> { resolve, timeout }
 let requestCounter = 0;
@@ -175,6 +176,12 @@ function sendToPython(payload, timeoutMs = 120000) {
     pendingRequests.set(id, { resolve, timeout: timer });
     pyProcess.stdin.write(JSON.stringify(payload) + '\n');
   });
+}
+
+function tryAutoIndex() {
+  if (autoIndexRequested || indexInProgress) return;
+  if (!pythonReadyForIndexing || !windowReadyForIndexing) return;
+  triggerAutoIndex();
 }
 
 // Register system roots IPC handlers
@@ -453,8 +460,7 @@ function startPython() {
       pyReady = true;
       pythonReadyForIndexing = true;
       console.log('[Python] ✅ Engine is ready — pyReady = true');
-      // Don't trigger auto-index here; wait for window to be ready
-      // triggerAutoIndex will be called from createWindow after window loads
+      tryAutoIndex();
     }
 
     // Buffer stdout and resolve pending requests when we get complete JSON lines
@@ -1916,10 +1922,9 @@ function createWindow() {
 
   // Trigger auto-indexing once window is ready and Python is ready
   mainWindow.webContents.on('did-finish-load', () => {
-    if (pythonReadyForIndexing && !autoIndexRequested) {
-      console.log('[Window] Ready, triggering auto-index');
-      triggerAutoIndex();
-    }
+    windowReadyForIndexing = true;
+    console.log('[Window] Ready for indexing');
+    tryAutoIndex();
   });
 
   if (isDev) {
