@@ -17,15 +17,16 @@
     "axios": "^1.4.0",
     "fs": "^0.0.1-security",
     "react": "^18.2.0",
+    "qrcode.react": "^4.2.0",
     "react-diff-view": "^3.3.2",
     "react-dom": "^18.2.0",
-    "react-scripts": "5.0.1",
-    "ws": "^8.20.0",
-    "wrtc": "^0.4.7"
+    "react-scripts": "^5.0.1",
+    "wrtc": "^0.4.7",
+    "ws": "^8.20.0"
   },
   "devDependencies": {
     "concurrently": "^8.0.0",
-    "electron": "^28.2.3",
+    "electron": "^41.4.0",
     "wait-on": "^7.0.0"
   },
   "eslintConfig": {
