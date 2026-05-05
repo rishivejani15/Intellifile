@@ -197,6 +197,10 @@ function startWatchingFile(filePath) {
   const watcher = chokidar.watch(filePath, {
     persistent: true,
     ignoreInitial: true,
+    usePolling: true, // Use polling for Windows file system stability
+    interval: 300,    // Check every 300ms
+    binaryInterval: 300,
+    ignorePermissionErrors: true,
     awaitWriteFinish: { stabilityThreshold: 800, pollInterval: 100 }
   });
 

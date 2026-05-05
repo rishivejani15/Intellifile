@@ -109,11 +109,12 @@ const VersionTimeline = ({ filePath }) => {
     const handleCleanup = async () => {
         const confirmed = window.confirm(
             "IntelliFile Smart Cleanup\n\n" +
-            "This will apply the following retention policy to save disk space:\n" +
-            "• Keep ALL versions for the last 7 days.\n" +
-            "• Keep ONLY 1 version per day for versions older than 30 days.\n" +
+            "This will apply the following maintenance to save disk space:\n" +
+            "• PURGE orphaned 'Lego Blocks' (Chunks) and Cache.\n" +
+            "• KEEP all versions for the last 7 days.\n" +
+            "• KEEP only 1 version per day for versions older than 30 days.\n" +
             "• DELETE all versions older than 1 year.\n\n" +
-            "Do you want to proceed with the cleanup?"
+            "Do you want to proceed with the total cleanup?"
         );
 
         if (!confirmed) return;
@@ -122,7 +123,8 @@ const VersionTimeline = ({ filePath }) => {
         try {
             const res = await runSmartCleanup(filePath);
             if (res && res.success) {
-                alert(`Cleanup Complete!\n\nDeleted ${res.deleted_versions} versions.\nFreed up ${res.freed_mb} MB of space.`);
+                const itemsCleaned = res.maintenance_count || 0;
+                alert(`Cleanup Complete!\n\nHistory: Deleted ${res.deleted_versions} versions.\nStorage: Cleaned ${itemsCleaned} background items.\nFreed up ${res.freed_mb} MB of space.`);
                 fetchVersions();
             } else {
                 alert("Cleanup failed: " + (res?.error || "Unknown error"));

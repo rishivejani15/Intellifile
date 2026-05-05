@@ -77,6 +77,35 @@
     color: #bbb;
 }
 
+/* Intent-specific label colors */
+.intent-heavy-deletion {
+    color: #ff4d4d;
+    text-shadow: 0 0 8px rgba(255, 77, 77, 0.6);
+    animation: pulse-red 1.5s ease-in-out infinite;
+}
+
+.intent-moderate-deletion {
+    color: #ff8c00;
+}
+
+.intent-light-deletion {
+    color: #ffcc00;
+}
+
+.intent-sensitive {
+    color: #ff4d4d;
+    letter-spacing: 0.5px;
+}
+
+.intent-addition {
+    color: #51cf66;
+}
+
+@keyframes pulse-red {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.6; }
+}
+
 .version-summary {
     font-size: 0.9rem;
     margin: 8px 0;
@@ -520,6 +549,32 @@
 
 .line-equal {
     color: #999;
+}
+
+.line-modified {
+    background-color: rgba(255, 140, 0, 0.08);
+    border-left: 4px solid #ff8c00;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.diff-old {
+    color: #ff6b6b;
+    text-decoration: line-through;
+    opacity: 0.75;
+}
+
+.diff-arrow {
+    color: #888;
+    font-weight: bold;
+    flex-shrink: 0;
+}
+
+.diff-new {
+    color: #51cf66;
+    font-weight: 500;
 }
 
 .empty-para {

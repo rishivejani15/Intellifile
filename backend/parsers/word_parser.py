@@ -22,25 +22,44 @@ def extract_word_structure(file_path):
 
         # 1. Extract Normal Paragraphs
         for i, para in enumerate(doc.paragraphs):
-            text = para.text
-            is_empty = not text.strip()
+            # Extract raw text first - THIS IS SACRED
+            raw_text = para.text.strip()
             
-            if is_empty:
-                # [Keeping the object-aware logic we added earlier]
-                contains_image = any('w:drawing' in r.element.xml or 'w:pict' in r.element.xml for r in para.runs)
-                contains_break = any('w:br' in r.element.xml or 'w:lastRenderedPageBreak' in r.element.xml for r in para.runs)
-                
-                if contains_image: 
-                    text = "[IMAGE / GRAPHIC]"
-                elif contains_break: 
-                    text = "[PAGE BREAK / SECTION]"
+            # Look for special objects (Images, Breaks)
+            has_image = any('w:drawing' in r.element.xml or 'w:pict' in r.element.xml for r in para.runs)
+            has_break = any('w:br' in r.element.xml or 'w:lastRenderedPageBreak' in r.element.xml for r in para.runs)
+            
+            final_text = raw_text
+            
+            # If there's no text but there is a graphic, tag it
+            if not raw_text:
+                if has_image:
+                    final_text = "[IMAGE / GRAPHIC]"
+                elif has_break:
+                    final_text = "[PAGE BREAK / SECTION]"
                 else:
-                    # TRUE EMPTY LINE: Skip it to prevent cluttering the timeline
+                    # Truly empty line with no objects - skip to avoid clutter
                     continue
+            else:
+                # If there IS text AND an image in the same block, keep the text!
+                # (Optional: append a small tag if you want to know an image was next to the text)
+                if has_image:
+                    final_text = f"{raw_text} [Graphic Attached]"
 
+            # Track headings for the forensic summary
             if para.style.name.startswith("Heading"):
-                headings.append(text)
-            paragraphs.append(text)
+                headings.append(final_text)
+            
+            paragraphs.append(final_text)
+        
+        # 1.5. POST-EXTRACTION SANITIZATION (The 'Anti-Ghosting' Filter)
+        # If the document starts with empty lines (often caused by Word restoration/formatting), 
+        # we strip them so that the FIRST LINE of real text is always index 0.
+        while paragraphs and (not paragraphs[0] or paragraphs[0] in ["[IMAGE / GRAPHIC]", "[PAGE BREAK / SECTION]"]):
+            if not paragraphs[0].strip():
+                paragraphs.pop(0)
+            else:
+                break
 
         # 2. Extract Table Content (Crucial for bordered/tabular docs)
         for table in doc.tables:

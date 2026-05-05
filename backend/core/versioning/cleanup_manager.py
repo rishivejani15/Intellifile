@@ -16,6 +16,8 @@ def run_smart_cleanup(file_path: str) -> dict:
     3. Delete everything older than 1 year.
     """
     try:
+        freed_bytes = 0
+
         norm_path = os.path.normpath(os.path.abspath(file_path)).lower()
         file_identifier = generate_sha256(norm_path)
         file_dir = os.path.join(BASE_VERSION_PATH, file_identifier)
@@ -114,23 +116,29 @@ def run_smart_cleanup(file_path: str) -> dict:
             deleted_count += 1
 
         # Optimization: Clear the transient cache folder
-        cache_dir = os.path.join(PROJECT_ROOT, "backend", "data", "storage", "cache")
+        cache_deleted = 0
+        # Use the absolute parent of the versions directory to find cache
+        storage_root = os.path.dirname(BASE_VERSION_PATH)
+        cache_dir = os.path.join(storage_root, "cache")
+        
         if os.path.exists(cache_dir):
             for f in os.listdir(cache_dir):
                 try:
                     fpath = os.path.join(cache_dir, f)
                     freed_bytes += os.path.getsize(fpath)
                     os.remove(fpath)
+                    cache_deleted += 1
                 except: pass
 
-        # CRITICAL: Trigger Chunk Garbage Collection to free real MB
-        from core.versioning.chunk_manager import clean_orphaned_chunks
-        _, chunk_freed = clean_orphaned_chunks()
+        # CRITICAL: Trigger Chunk Garbage Collection
+        from .chunk_manager import clean_orphaned_chunks
+        scavenge_count, chunk_freed = clean_orphaned_chunks()
         freed_bytes += chunk_freed
 
         return {
             "success": True, 
             "deleted_versions": deleted_count, 
+            "maintenance_count": scavenge_count + cache_deleted,
             "freed_mb": round(freed_bytes / (1024*1024), 2)
         }
     except Exception as e:

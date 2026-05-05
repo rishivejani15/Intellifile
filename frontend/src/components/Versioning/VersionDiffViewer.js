@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { parseDiff, Diff, Hunk, Header } from 'react-diff-view';
+import { parseDiff, Diff, Hunk } from 'react-diff-view';
 import 'react-diff-view/style/index.css';
 import './versioning.css';
 
@@ -47,11 +47,22 @@ const VersionDiffViewer = ({ diffText, versionA, versionB, onClose }) => {
                                     <div className="diff-details scrollable">
                                         <h5>Document Flow:</h5>
                                         <div className="para-list">
-                                            {diffText.para_diff?.map((p, idx) => (
-                                                <div key={idx} className={`para-item ${p.type === 'added' ? 'line-added' : p.type === 'removed' ? 'line-removed' : 'line-equal'}`}>
-                                                    {p.text}
-                                                </div>
-                                            ))}
+                                            {diffText.para_diff?.map((p, idx) => {
+                                                if (p.type === 'modified') {
+                                                    return (
+                                                        <div key={idx} className="para-item line-modified">
+                                                            <span className="diff-old">{p.old_text}</span>
+                                                            <span className="diff-arrow">→</span>
+                                                            <span className="diff-new">{p.new_text}</span>
+                                                        </div>
+                                                    );
+                                                }
+                                                return (
+                                                    <div key={idx} className={`para-item ${p.type === 'added' ? 'line-added' : p.type === 'removed' ? 'line-removed' : 'line-equal'}`}>
+                                                        {p.text}
+                                                    </div>
+                                                );
+                                            })}
                                         </div>
                                     </div>
                                     {diffText.added_headings?.length > 0 && (
