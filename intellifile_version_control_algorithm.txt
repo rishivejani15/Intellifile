@@ -1,0 +1,206 @@
+Intellifile Version Control Algorithm (IVCA)
+
+STEP 1 : Hashing
+
+and then storing the changed things that is the new modifications made to a file and store a json with parameters such as summary, risk_level, change_score, risk_score, severity, add_score, delete_score, file_hash etc. 
+
+output can be checked in Intellifile\backend\data\storage\versions\
+
+also in this way we avoid deduplication of files as every time a file is edited and modified we compare the file on the basis of their hash.
+
+STEP 2 : Format Detection and Parsing
+
+VersionEngine detects if the file is text, word and excel and then it calls parser of .docx and .xlsx file types (word_parser and excel_parser)
+
+Text Files (.py, .env, .txt): Sent to the Text Diff Engine, which generates a standard "Unified Diff." It identifies exactly which lines were added or removed so we can show them in a side-by-side view. 
+
+Uses difflib.unified_diff to get hunks i.e block of changes in a text file
+
+Word Files (.docx): Sent to the Word Diff Engine, which cracks open the binary structure to extract paragraphs and headings. It aligns the old document against the new one to detect if a section was moved, rewritten, or deleted.
+
+Uses difflib.SequenceMatcher i.e. it tries to find the LCS between new and old.
+
+Excel Files (.xlsx): Sent to the Excel Diff Engine, which maps out the spreadsheet grid. It compares the old version sheet-by-sheet to identify exactly which cell coordinates (like B5) were changed and whether a formula was modified.
+
+uses Coordinate Map method We load both versions into a dictionary (a map) where the Key is the cell coordinate (e.g., Sheet1!B12).
+
+STEP 3 : Stringification
+
+Converts structured data into a line-by-line format to ensure maximum Granularity (seeing every single line/cell individually) and Accuracy (pinpointing the exact character that changed). 
+
+This creates Compatibility (using the same intelligent math for Word, Excel, and Text), allowing the Risk Analyzer to judge every file type with forensic precision.
+
+Basically in step 2 we converted to computer readable language now in step 3 we convert to human readable language 
+
+STEP 4 : Intellifile Weighted Semantic Diff Algorithm (IWSD) (Deletion Heavy algorithm) & Risk Analysis
+
+The IWSD algorithm is a proprietary mathematical risk engine designed for IntelliFile. Unlike standard Git-based algorithms that only count how many lines changed, IWSD calculates how important the changed data was using Shannon Entropy, Asymmetric Information Loss heuristics, and Format-Specific Dependency shields.
+
+STEP A : Base Importance Calculation
+
+1. Token & Symbol Scoring
+What it does: Counts two things in every line:
+
+Tokens (words): "Hello World" = 2 tokens.
+Symbols (special characters): password = "K8!#z" has symbols like =, !, #, ".
+Why: A line with more words and more symbols is carrying more "stuff" — so it's more important.
+
+2. Shannon Entropy
+What it does: Measures how "unpredictable" the characters in a line are.
+
+Low Entropy: "aaaaaaa" — Very predictable, boring, low value.
+Medium Entropy: "Hello World" — Normal English, moderate value.
+High Entropy: "K8!s#2pZ_91xQ" — Looks like a password. Very random, very high value.
+The Math: It counts how many times each character appears, then calculates the probability. If every character is different (random), the entropy is maximum.
+
+Why: A line containing a complex API key holds way more "information" than a line saying "test". So if someone deletes that API key, we need to scream louder.
+
+3. The Base64 Illusion Shield (Prevention)
+The Problem: Sometimes a user pastes an image or icon into a document. That image gets stored as a giant string of random characters like:
+
+iVBORw0KGgoAAAANSUhEUgAAA...
+This string has extremely high entropy (it looks like a password), so without a shield, the algorithm would think: "Someone just deleted the most important data ever!"
+
+Formula 1: Shannon Entropy
+H = -Σ P(x) × log₂(P(x))
+Where P(x) = probability of each character appearing in the line.
+
+Example: For the string "aab":
+
+P(a) = 2/3, P(b) = 1/3
+H = -(2/3 × log₂(2/3)) - (1/3 × log₂(1/3)) = 0.918 bits
+
+Formula 2: Importance Score (The Aggregator)
+Importance = Entropy + Token Count + Symbol Count + (Line Length / Avg Line Length)
+Example: For the line password = "K8!#z":
+
+Entropy = ~3.8
+Token Count = 3 (three words)
+Symbol Count = 5 (=, ", !, #, ")
+Length Ratio = 20 / 40 = 0.5
+Importance = 3.8 + 3 + 5 + 0.5 = 12.3
+
+At the end of this step we calculate the importance score
+
+STEP B : Format Specific Boosters
+
+The Problem: Not all lines are equal. A line containing an Excel formula like =VLOOKUP(...) is way more dangerous to delete than a line saying "Hello". But Step 1 doesn't know the difference — it just sees text.
+
+The Solution: After calculating the Importance Score in Step 1, we apply special multipliers based on what type of content the line contains:
+
+Booster 1: Excel Formula Shield (5.0x)
+Trigger: If the line contains "formula": "= (meaning it's an Excel formula).
+Action: Multiply the importance by 5.0x.
+Why: One formula like =SUM(A1:A1000) controls thousands of cells. Deleting it is catastrophic.
+
+Booster 2: Macro Detection — Simple Explanation
+What is a Macro? A Macro is a small script/program hidden inside a Word or Excel file. For example, someone can write a script that says: "When this file opens, automatically delete all data on the computer."
+
+The Danger: You can't see Macros by opening the file normally. They are hidden inside a secret file called vbaProject.bin that lives deep inside the .docx or .xlsx zip structure.
+
+What our code does: When the Parser opens a Word or Excel file, it unzips the file and checks: "Does a file called vbaProject.bin exist inside?"
+
+If YES → We flag it as has_macros = True → The UI shows a warning badge saying (MACRO-ENABLED).
+If NO → The file is clean. Nothing happens.
+Why we do this: It's a security alert. We are telling the user: "Hey, this file has hidden scripts inside it. Be careful."
+
+Think of it like an X-ray at the airport. We scan the file's insides to check for hidden "weapons" (scripts) before letting it through.
+
+STEP C : Scoring Engines
+
+Engine 1 : The Addition Engine(1.0x - Standard Risk)
+When: A line exists in the new file but NOT in the old file. Score: add_score += importance of that line Why 1.0x?: Adding data is normal. It grows the file. Low risk.
+
+Engine 2 : The Modification Engine (2.0x — Downgrade Penalty)
+Information Downgrade: If Old Line Importance > New Line Importance.
+Penalty: Applies a 2.0x Risk Penalty to the exact mathematical delta that was lost.
+
+Information Upgrade: If New > Old.
+Multiplier: Standard 1.0x.
+
+Example:
+
+Old: db_password = "K8!s#2pZ" (Importance = 12)
+New: db_password = "123" (Importance = 4)
+Lost = (12 - 4) × 2.0 = 16 penalty points
+
+Engine 3 : The Deletion Engine (2.0x to 10.0x — The Forensic Shield)
+
+Destroying data is strictly riskier than adding data. The engine applies an Asymmetric Penalty:
+
+Sensitive Data Destruction: If keywords like "api_key", "password", or patterns (Credit Cards/SSNs) are detected.
+Penalty: 10.0x Massive Multiplier.
+Information Loss Scaling:
+Entropy > 3.5 (Complex Code/Math): 3.0x Multiplier.
+Entropy > 2.0 (Sentences): 2.5x Multiplier.
+Entropy < 2.0 (Basic Data): 2.0x Multiplier.
+
+STEP D : Storage Lifecycle (Lego-Block Deduplication)
+Once the risk is calculated, we need to save the file. But we don't just dump the whole file every time — that would waste tons of disk space.
+
+The 3 Parts:
+1. The Chop Shop (Chunking) Binary files (.docx, .xlsx) are split into 512KB pieces called "chunks."
+
+A 2MB Word doc becomes 4 chunks.
+Each chunk gets its own SHA-256 hash.
+2. Deduplication (The Smart Part) Before saving a chunk, we check: "Does a chunk with this exact hash already exist?"
+
+If YES → Don't save it again. Reuse the existing one.
+If NO → Save it as a new chunk.
+Why this is powerful: If you edit 1 paragraph in a 10MB Word doc, only 1 chunk changes. The other 19 chunks are identical → we save only 512KB instead of 10MB.
+
+3. The Recipe Instead of storing the full file, we store a small list of chunk hashes (the "recipe") in the .json metadata. When we need to restore, we just follow the recipe and stitch the chunks back together.
+
+STEP E : Retention & Hygiene (The Broom)
+1. 7-Day Safety Net — Keep 100% of versions. Zero deletion.
+
+2. 7 to 30 Days — Keep all versions (can be refined in future).
+
+3. 30-Day Thinning — Keep only 1 version per day. The rest are pruned.
+
+4. 365-Day Hard Delete — Everything older than 1 year is permanently deleted.
+
+5. Startup Cache Purge — Wipes the cache/ folder on every app start.
+
+6. Chunk Scavenger — Deletes orphaned Lego chunks that no version references anymore.
+
+STEP F : Intent & Severity Tagging 
+
+Intent Extraction:
+If 10.0x alarm tripped -> "Sensitive Data Deletion"
+Else if delete_score > add_score -> "Deletion Heavy"
+Else -> "Addition/Modification"
+
+Severity Aggregation:
+Major: change_score > total_lines × 20 OR Sensitive data was deleted. (Triggers Red Badge).
+Moderate: change_score > total_lines × 10. (Triggers Yellow Badge).
+Minor: Everything below Moderate threshold. (Triggers Green Badge).
+
+Real-World Example: Excel Data Sheet
+Edit: A user deletes a complex formula =VLOOKUP(A1, B2:Z100, 5, FALSE) and replaces it with the static number 100.
+
+Excel Booster: Sees the = sign. Boosts base importance by 5.0x.
+Modification Engine: Sees the replacement. Compares the high-entropy formula to the low-entropy static number.
+Penalty: Triggers the 2.0x Information Downgrade Penalty.
+Result: Triggers a "Major Risk" warning because critical logic was lost.
+Storage: The edit is saved as a 1KB JSON "Recipe" instead of a 10MB Word file.
+
+Step 5: True Stability Analysis
+stability_analyzer.py compares the size of the semantic structures (not the raw unreadable binary zips). It returns a mathematical percentage (e.g., 0.98 for 98% stable) indicating how much the core integrity of the document fluctuated.
+
+Step 6: Dynamic Summarization
+The engine dynamically builds a highly descriptive, human-readable summary. If one sheet was affected, it extracts the exact name (e.g., Sheet 'Q3 Financials' modified (50 cells changed)). If massive changes occurred, it aggregates them (e.g., 1 sheet added, 2 sheets modified (150 cells changed)).
+
+Step 7: Atomic Storage (The 3-Part Snapshot)
+snapshot_manager.py generates a collision-proof UTC timestamp ID. It saves THREE distinct files into the <file_hash> folder:
+<timestamp>.json: The Metadata (Summary, Risk Score, Stability, Intent, and exact Diff Payload).
+<timestamp>.structure.json: The raw extracted structural grid so the parser doesn't have to extract the binary next time.
+<timestamp>.<ext>: Saved directly for text files, or stored as Lego-Block chunks for binary files. Skipped entirely if deduplication detects an identical version.
+
+Step 8: The Ultimate Safety Net (Rollback Backup)
+If the user ever clicks "Restore" in the UI to go back in time, rollback_manager.py intervenes.
+Integrity Check: It checks the SHA-256 hash of the old snapshot to ensure the file hasn't corrupted over time.
+The Safety Clone: Right before overwriting the user's live active file, it physically copies their current unsaved work into a new file named filename.ext.backup directly in their local folder. This guarantees 0% data loss if they accidentally trigger a restore.
+
+Step 9: Real-Time UI Sync
+The Python backend streams the success payload back to Node.js. The Electron UI dynamically updates the visual timeline, immediately displaying the exact cell count, the custom sheet name, the Red/Green Risk Badges, and the human-readable summary!
