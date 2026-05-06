@@ -82,13 +82,13 @@
 }
 
 .add-files-btn {
-  background: var(--primary-blue);
+   background: var(--primary-blue);
   color: white; border: none;
   padding: 9px 18px; border-radius: 6px;
   font-size: 0.9rem; font-weight: 500; cursor: pointer;
   display: flex; align-items: center; gap: 8px;
   transition: all 0.2s ease;
-  box-shadow: 0 3px 10px rgba(65,105,225,0.3);
+   box-shadow: 0 3px 10px rgba(65,105,225,0.3);
 }
 .add-files-btn:hover { transform: translateY(-2px); box-shadow: 0 5px 14px rgba(65,105,225,0.4); }
 
@@ -121,6 +121,58 @@
   background: #252526; border-radius: 8px;
   border-left: 4px solid #636e72;
   animation: fadeIn 0.3s ease;
+}
+
+/* ─── QR Quick Connect ─────────────────────────────────────── */
+.sync-qr-card {
+  display: flex; justify-content: space-between; align-items: center;
+  gap: 16px;
+  background: linear-gradient(135deg, #23242a, #1b1d22);
+  border: 1px solid #30323a;
+  border-radius: 12px;
+  padding: 16px 18px;
+  margin-bottom: 16px;
+}
+
+.sync-qr-left {
+  display: flex; flex-direction: column; gap: 6px;
+}
+
+.sync-qr-title {
+  font-size: 0.95rem; font-weight: 700; color: #e6e6e6;
+}
+
+.sync-qr-subtitle {
+  font-size: 0.8rem; color: #9aa0a6;
+}
+
+.sync-qr-address {
+  font-family: 'Cascadia Code', 'Fira Code', monospace;
+  font-size: 0.9rem; color: #a29bfe;
+  background: rgba(108,92,231,0.15);
+  padding: 6px 10px; border-radius: 8px; display: inline-block;
+}
+
+.sync-qr-error {
+  font-size: 0.8rem; color: #e17055;
+}
+
+.sync-qr-refresh {
+  margin-top: 4px;
+  align-self: flex-start;
+  background: #2b2d35; border: 1px solid #3a3d46; color: #cfcfcf;
+  padding: 6px 10px; border-radius: 6px; cursor: pointer;
+  font-size: 0.78rem;
+}
+.sync-qr-refresh:hover { background: #343742; color: #fff; }
+
+.sync-qr-code {
+  width: 150px; height: 150px; display: flex; align-items: center; justify-content: center;
+  background: #ffffff; border-radius: 10px; border: 1px solid #e2e2e2;
+}
+
+.sync-qr-placeholder {
+  color: #666; font-size: 0.8rem; text-align: center;
 }
 
 .sync-status-dot {

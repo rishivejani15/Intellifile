@@ -54,7 +54,17 @@ const VersionCard = ({ version, filePath, onRefresh, onCompareClick, isSelecting
             return ts;
         }
     };
-
+    const getIntentClass = (intent) => {
+        if (!intent) return '';
+        const i = intent.toLowerCase();
+        if (i.includes('heavy deletion')) return 'intent-heavy-deletion';
+        if (i.includes('moderate deletion')) return 'intent-moderate-deletion';
+        if (i.includes('light deletion')) return 'intent-light-deletion';
+        if (i.includes('sensitive')) return 'intent-sensitive';
+        if (i.includes('addition')) return 'intent-addition';
+        return '';
+    };
+    
     return (
         <div className={`version-card ${isSelecting ? 'selecting' : ''}`}>
             <div className="version-header">
@@ -64,7 +74,9 @@ const VersionCard = ({ version, filePath, onRefresh, onCompareClick, isSelecting
 
             <div className="version-intent-row">
 
-                <span className="intent-label">{isBaseline ? 'Original Version' : (version.intent || 'Update')}</span>
+                <span className={`intent-label ${isBaseline ? '' : getIntentClass(version.intent)}`}>
+                    {isBaseline ? 'Original Version' : (version.intent || 'Update')}
+                </span>
                 <RiskBadge level={isBaseline ? 'Low' : version.risk_level} />
             </div>
 

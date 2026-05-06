@@ -17,21 +17,12 @@ def compare_word_structures(old_struct, new_struct):
             for i in range(i1, i2):
                 para_diff.append({"type": "equal", "text": old_paras[i]})
         elif tag == 'replace':
-            # Detect if it's a modification (same number of paragraphs replaced)
-            # or a block replacement.
+            # Detect modifications (one-to-one) or block changes
             for i, j in zip(range(i1, i2), range(j1, j2)):
                 old_text = old_paras[i]
                 new_text = new_paras[j]
                 
-                # SHIELD: Ignore legacy placeholders from old versions
-                if old_text == "[EMPTY LINE]" and new_text:
-                    para_diff.append({"type": "added", "text": new_text, "words_added": len(new_text.split())})
-                    continue
-                if old_text == "" and i == 0 and new_text:
-                    para_diff.append({"type": "added", "text": new_text, "words_added": len(new_text.split())})
-                    continue
-
-                # Word-level sub-diff
+                # Word-level sub-diff for modification counts
                 old_words = old_text.split()
                 new_words = new_text.split()
                 w_sm = difflib.SequenceMatcher(None, old_words, new_words)
@@ -54,57 +45,31 @@ def compare_word_structures(old_struct, new_struct):
                     "words_added": words_added,
                     "words_removed": words_removed
                 })
-                
-            # Handle any leftover paragraphs if ranges were unequal
+            
+            # Handle trailing items in the replacement block
             if (i2 - i1) > (j2 - j1):
                 for i in range(i1 + (j2 - j1), i2):
-                    text = old_paras[i]
-                    para_diff.append({
-                        "type": "removed", 
-                        "text": text,
-                        "words_removed": len(text.split())
-                    })
+                    para_diff.append({"type": "removed", "text": old_paras[i]})
             elif (j2 - j1) > (i2 - i1):
                 for j in range(j1 + (i2 - i1), j2):
-                    text = new_paras[j]
-                    para_diff.append({
-                        "type": "added", 
-                        "text": text,
-                        "words_added": len(text.split())
-                    })
+                    para_diff.append({"type": "added", "text": new_paras[j]})
                     
         elif tag == 'delete':
             for i in range(i1, i2):
-                text = old_paras[i]
-                para_diff.append({
-                    "type": "removed", 
-                    "text": text,
-                    "words_removed": len(text.split())
-                })
+                para_diff.append({"type": "removed", "text": old_paras[i]})
         elif tag == 'insert':
             for j in range(j1, j2):
-                text = new_paras[j]
-                para_diff.append({
-                    "type": "added", 
-                    "text": text,
-                    "words_added": len(text.split())
-                })
+                para_diff.append({"type": "added", "text": new_paras[j]})
 
-    # Simple comparison for headings and tables (can be expanded later if needed)
     removed_headings = [h for h in old_struct.get("headings", []) if h not in new_struct.get("headings", [])]
     added_headings = [h for h in new_struct.get("headings", []) if h not in old_struct.get("headings", [])]
     table_delta = len(new_struct.get("tables", [])) - len(old_struct.get("tables", []))
-
-    has_macros = new_struct.get("has_macros", False)
-    macro_changed = has_macros != old_struct.get("has_macros", False)
 
     return {
         "para_diff": para_diff,
         "removed_headings": removed_headings,
         "added_headings": added_headings,
         "table_delta": table_delta,
-        "has_macros": has_macros,
-        "macro_changed": macro_changed,
         "is_structured": True,
         "format": "word"
     }

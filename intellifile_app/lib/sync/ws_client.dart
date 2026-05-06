@@ -23,6 +23,7 @@ class WsClient {
   Timer? _reconnectTimer;
   int _reconnectAttempts = 0;
   bool _shouldReconnect = true;
+  bool _isDisposed = false;
 
   /// Messages queued while disconnected — sent on reconnect.
   final _pendingMessages = <Map<String, dynamic>>[];
@@ -179,11 +180,13 @@ class WsClient {
   void _setState(WsConnectionState newState) {
     if (_state != newState) {
       _state = newState;
+      if (_isDisposed || _stateController.isClosed) return;
       _stateController.add(newState);
     }
   }
 
   void dispose() {
+    _isDisposed = true;
     _shouldReconnect = false;
     _reconnectTimer?.cancel();
     _channel?.sink.close();

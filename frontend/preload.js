@@ -66,6 +66,10 @@ contextBridge.exposeInMainWorld('intellifile', {
     ipcRenderer.on('index-progress', handler);
     return () => ipcRenderer.off('index-progress', handler);
   },
+  getLocalSyncAddress: () => {
+    return ipcRenderer.invoke('get-local-sync-address');
+  },
+  
   onIndexComplete: (callback) => {
     const handler = (_event, data) => callback(data);
     ipcRenderer.on('index-complete', handler);

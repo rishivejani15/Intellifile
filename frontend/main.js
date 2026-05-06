@@ -62,7 +62,7 @@ if (!(venvCandidates.some((p) => fs.existsSync(p)))) {
 console.log('[Python] Using executable:', PYTHON_EXECUTABLE);
 
 // Check if running in development mode (force true for now since React dev server is running)
-const isDev = false;
+const isDev = true;
 
 // Supported file extensions
 const EDITABLE_EXTENSIONS = [
@@ -370,6 +370,10 @@ function startWatchingDirectory(directoryPath) {
     const watcher = chokidar.watch(directoryPath, {
       ignoreInitial: true,
       depth: 0,
+      usePolling: true, // Use polling for Windows file system stability
+    interval: 300,    // Check every 300ms
+    binaryInterval: 300,
+    ignorePermissionErrors: true,
       persistent: true,
       awaitWriteFinish: { stabilityThreshold: 700, pollInterval: 100 },
     });

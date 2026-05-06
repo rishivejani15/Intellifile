@@ -78,6 +78,8 @@ class SyncManager extends ChangeNotifier {
   SyncStatus _status = SyncStatus.idle;
   String _statusMessage = 'Initializing...';
   String? _connectedAddress;
+  String? _lastLanAddress;
+  String? _lastConnectionType;
   final List<SyncedFile> _files = [];
   final List<String> _syncLog = [];
   int _pendingSyncs = 0;
@@ -93,6 +95,8 @@ class SyncManager extends ChangeNotifier {
   SyncStatus get status => _status;
   String get statusMessage => _statusMessage;
   String? get connectedAddress => _connectedAddress;
+  String? get lastLanAddress => _lastLanAddress;
+  String? get lastConnectionType => _lastConnectionType;
   List<SyncedFile> get files => List.unmodifiable(_files);
   List<String> get syncLog => List.unmodifiable(_syncLog);
   int get pendingSyncs => _pendingSyncs;
@@ -138,31 +142,51 @@ class SyncManager extends ChangeNotifier {
     }
     debugPrint('[sync-proof] Sync Folder Absolute Path: $_syncFolder');
 
+    await _refreshFileList();
+
     await _rebindTransport(WsSyncTransport(onMessage: _handleRawMessage));
 
-    // Discover PC on LAN
-    _connectionProfile = _ConnectionProfile.lan;
-    _setStatus(SyncStatus.discovering, _disconnectedMessageForProfile());
-    _mdns.onPcFound.listen((address) async {
-      if (_connectionProfile != _ConnectionProfile.lan) return;
-      if (!(_connection?.isConnected ?? false)) {
-        _connectedAddress = address;
-        await _connection?.connect(LanConnectionTarget(address));
-        // Handshake is initiated after receiving server's handshake message
-      }
-    });
-
-    await _mdns.start();
-
-    // Load saved remote settings
+    // Load saved connection settings
     final prefs = await SharedPreferences.getInstance();
     final signalingUrl = prefs.getString('remote_signaling_url');
     final sessionId = prefs.getString('remote_session_id');
     final isInitiator = prefs.getBool('remote_is_initiator');
+    _lastLanAddress = prefs.getString('lan_address');
+    _lastConnectionType = prefs.getString('last_connection_type');
 
-    if (signalingUrl != null && sessionId != null && isInitiator != null) {
+    final preferRemote = _lastConnectionType == 'remote';
+    _connectionProfile = preferRemote
+        ? _ConnectionProfile.remote
+        : _ConnectionProfile.lan;
+    _setStatus(SyncStatus.discovering, _disconnectedMessageForProfile());
+
+    final hasSavedLan = _lastLanAddress != null && _lastLanAddress!.isNotEmpty;
+    if (_connectionProfile == _ConnectionProfile.lan && !hasSavedLan) {
+      _mdns.onPcFound.listen((address) async {
+        if (_connectionProfile != _ConnectionProfile.lan) return;
+        if (!(_connection?.isConnected ?? false)) {
+          _connectedAddress = address;
+          await _connection?.connect(LanConnectionTarget(address));
+          // Handshake is initiated after receiving server's handshake message
+        }
+      });
+
+      await _mdns.start();
+    }
+
+    if (preferRemote &&
+        signalingUrl != null &&
+        sessionId != null &&
+        isInitiator != null) {
       _addLog('Found saved remote connection. Auto-connecting...');
       connectRemotely(signalingUrl, sessionId, isInitiator).catchError((e) {
+        debugPrint('[sync-error] Auto-connect failed: $e');
+      });
+    } else if (!preferRemote &&
+        _lastLanAddress != null &&
+        _lastLanAddress!.isNotEmpty) {
+      _addLog('Found saved LAN address. Auto-connecting...');
+      connectManually(_lastLanAddress!).catchError((e) {
         debugPrint('[sync-error] Auto-connect failed: $e');
       });
     }
@@ -176,6 +200,12 @@ class SyncManager extends ChangeNotifier {
   /// Connect to a specific address manually (fallback if mDNS fails).
   Future<void> connectManually(String address) async {
     _connectionProfile = _ConnectionProfile.lan;
+    await _mdns.stop();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('lan_address', address);
+    await prefs.setString('last_connection_type', 'lan');
+    _lastLanAddress = address;
+    _lastConnectionType = 'lan';
     await _rebindTransport(WsSyncTransport(onMessage: _handleRawMessage));
     _connectedAddress = address;
     await _connection?.connect(LanConnectionTarget(address));
@@ -196,8 +226,11 @@ class SyncManager extends ChangeNotifier {
     await prefs.setString('remote_signaling_url', signalingUri);
     await prefs.setString('remote_session_id', sessionId);
     await prefs.setBool('remote_is_initiator', isInitiator);
+    await prefs.setString('last_connection_type', 'remote');
+    _lastConnectionType = 'remote';
 
     _connectionProfile = _ConnectionProfile.remote;
+    await _mdns.stop();
     await _rebindTransport(WebRtcSyncTransport(onMessage: _handleRawMessage));
 
     final signalingHost = Uri.tryParse(signalingUri)?.host;
@@ -282,6 +315,9 @@ class SyncManager extends ChangeNotifier {
       );
       _isProcessingSync = false;
       _isProcessingQueue = false;
+      if (_messageQueue.isNotEmpty) {
+        unawaited(_processQueue());
+      }
     }
   }
 

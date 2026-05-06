@@ -11,3 +11,7 @@ __pycache__/
 *.pyo
 *.pyd
 
+release/
+
+python/
+frontend/python-standalone.tar.gz

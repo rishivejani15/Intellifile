@@ -158,6 +158,36 @@ const VersionTimeline = ({ filePath }) => {
     setCompareA(null);
     setCompareB(null);
   };
+// const handleCleanup = async () => {
+//         const confirmed = window.confirm(
+//             "IntelliFile Smart Cleanup\n\n" +
+//             "This will apply the following maintenance to save disk space:\n" +
+//             "• PURGE orphaned 'Lego Blocks' (Chunks) and Cache.\n" +
+//             "• KEEP all versions for the last 7 days.\n" +
+//             "• KEEP only 1 version per day for versions older than 30 days.\n" +
+//             "• DELETE all versions older than 1 year.\n\n" +
+//             "Do you want to proceed with the total cleanup?"
+//         );
+
+//         if (!confirmed) return;
+
+//         setLoading(true);
+//         try {
+//             const res = await runSmartCleanup(filePath);
+//             if (res && res.success) {
+//                 const itemsCleaned = res.maintenance_count || 0;
+//                 alert(`Cleanup Complete!\n\nHistory: Deleted ${res.deleted_versions} versions.\nStorage: Cleaned ${itemsCleaned} background items.\nFreed up ${res.freed_mb} MB of space.`);
+//                 fetchVersions();
+//             } else {
+//                 alert("Cleanup failed: " + (res?.error || "Unknown error"));
+//             }
+//         } catch (err) {
+//             alert("Error during cleanup: " + err.message);
+//         } finally {
+//             setLoading(false);
+//         }
+//     };
+
 
   if (!filePath) {
     return null;

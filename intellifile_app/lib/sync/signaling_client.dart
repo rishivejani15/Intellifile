@@ -17,6 +17,7 @@ class SignalingClient {
   StreamSubscription<dynamic>? _subscription;
   final _messagesController =
       StreamController<Map<String, dynamic>>.broadcast();
+  bool _isDisposed = false;
 
   // ── Reconnection state ────────────────────────────────────────────
   String? _uri;
@@ -71,7 +72,9 @@ class SignalingClient {
           try {
             final data = jsonDecode(raw as String);
             if (data is Map<String, dynamic>) {
-              _messagesController.add(data);
+              if (!_isDisposed && !_messagesController.isClosed) {
+                _messagesController.add(data);
+              }
             }
           } catch (e) {
             debugPrint('[signaling] Failed to parse signaling message: $e');
@@ -98,10 +101,14 @@ class SignalingClient {
   void _handleDisconnect() {
     if (_shouldReconnect && _reconnectAttempts < _maxReconnectAttempts) {
       // Notify listeners that we're reconnecting (not permanently dead)
-      _messagesController.add({'type': 'signaling-reconnecting'});
+      if (!_isDisposed && !_messagesController.isClosed) {
+        _messagesController.add({'type': 'signaling-reconnecting'});
+      }
       _scheduleReconnect();
     } else {
-      _messagesController.add({'type': 'disconnected'});
+      if (!_isDisposed && !_messagesController.isClosed) {
+        _messagesController.add({'type': 'disconnected'});
+      }
     }
   }
 
@@ -127,7 +134,9 @@ class SignalingClient {
       await _doConnect();
       // If reconnected successfully, notify listeners so they can re-join
       if (_channel != null) {
-        _messagesController.add({'type': 'signaling-reconnected'});
+        if (!_isDisposed && !_messagesController.isClosed) {
+          _messagesController.add({'type': 'signaling-reconnected'});
+        }
       }
     });
   }
@@ -176,10 +185,13 @@ class SignalingClient {
     await channel?.sink.close();
 
     _pendingMessages.clear();
-    _messagesController.add({'type': 'disconnected'});
+    if (!_isDisposed && !_messagesController.isClosed) {
+      _messagesController.add({'type': 'disconnected'});
+    }
   }
 
   Future<void> dispose() async {
+    _isDisposed = true;
     _shouldReconnect = false;
     _reconnectTimer?.cancel();
     await disconnect();

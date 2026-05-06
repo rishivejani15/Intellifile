@@ -4,6 +4,7 @@
 // synced files with full actions, and sync activity log.
 
 import 'package:flutter/material.dart';
+import 'package:mobile_scanner/mobile_scanner.dart';
 import '../sync/sync_manager.dart';
 import '../widgets/sync_status_bar.dart';
 import '../widgets/file_list_tile.dart';
@@ -31,6 +32,10 @@ class _HomeScreenState extends State<HomeScreen>
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
+    final lastLan = widget.syncManager.lastLanAddress;
+    if (lastLan != null && lastLan.isNotEmpty) {
+      _manualIpController.text = lastLan;
+    }
     widget.syncManager.addListener(_onSyncUpdate);
   }
 
@@ -46,6 +51,38 @@ class _HomeScreenState extends State<HomeScreen>
 
   void _onSyncUpdate() {
     if (mounted) setState(() {});
+  }
+
+  String? _extractLanAddress(String raw) {
+    final trimmed = raw.trim();
+    if (trimmed.isEmpty) return null;
+
+    final uri = Uri.tryParse(trimmed);
+    if (uri != null) {
+      if (uri.scheme == 'intellifile') {
+        final addr = uri.queryParameters['addr'];
+        if (addr != null && addr.isNotEmpty) return addr;
+      }
+
+      final host = uri.host;
+      if (host.isNotEmpty) {
+        final port = uri.hasPort ? uri.port : 8765;
+        return '$host:$port';
+      }
+    }
+
+    final ipPort = RegExp(r'^(\d{1,3}\.){3}\d{1,3}:\d{2,5}$');
+    if (ipPort.hasMatch(trimmed)) return trimmed;
+
+    return null;
+  }
+
+  Future<String?> _scanLanQr(BuildContext context) async {
+    final raw = await Navigator.of(
+      context,
+    ).push<String>(MaterialPageRoute(builder: (_) => const QrScanScreen()));
+    if (raw == null) return null;
+    return _extractLanAddress(raw);
   }
 
   @override
@@ -413,6 +450,54 @@ class _HomeScreenState extends State<HomeScreen>
                               ),
                               keyboardType: TextInputType.url,
                             ),
+                            const SizedBox(height: 10),
+                            SizedBox(
+                              width: double.infinity,
+                              height: 44,
+                              child: OutlinedButton.icon(
+                                onPressed: () async {
+                                  final address = await _scanLanQr(context);
+                                  if (address == null || address.isEmpty) {
+                                    if (!context.mounted) return;
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content: Text('Invalid QR code'),
+                                      ),
+                                    );
+                                    return;
+                                  }
+
+                                  _manualIpController.text = address;
+                                  try {
+                                    await widget.syncManager.connectManually(
+                                      address,
+                                    );
+                                    if (context.mounted) {
+                                      Navigator.pop(context);
+                                    }
+                                  } catch (_) {
+                                    if (!context.mounted) return;
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content: Text('Connection failed'),
+                                      ),
+                                    );
+                                  }
+                                },
+                                style: OutlinedButton.styleFrom(
+                                  side: const BorderSide(
+                                    color: Color(0xFF6C5CE7),
+                                  ),
+                                  foregroundColor: Colors.white,
+                                  backgroundColor: const Color(0xFF111127),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                ),
+                                icon: const Icon(Icons.qr_code_scanner),
+                                label: const Text('Scan QR'),
+                              ),
+                            ),
                           ] else ...[
                             TextField(
                               controller: _signalingUrlController,
@@ -555,5 +640,67 @@ class _HomeScreenState extends State<HomeScreen>
       _manualIpController.clear();
       _sessionIdController.clear();
     }
+  }
+}
+
+class QrScanScreen extends StatefulWidget {
+  const QrScanScreen({super.key});
+
+  @override
+  State<QrScanScreen> createState() => _QrScanScreenState();
+}
+
+class _QrScanScreenState extends State<QrScanScreen> {
+  final MobileScannerController _controller = MobileScannerController();
+  bool _handled = false;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Scan QR'),
+        backgroundColor: const Color(0xFF1A1A2E),
+      ),
+      body: Stack(
+        children: [
+          MobileScanner(
+            controller: _controller,
+            onDetect: (capture) {
+              if (_handled) return;
+              final barcode = capture.barcodes.isNotEmpty
+                  ? capture.barcodes.first
+                  : null;
+              final raw = barcode?.rawValue;
+              if (raw == null || raw.isEmpty) return;
+              _handled = true;
+              Navigator.of(context).pop(raw);
+            },
+          ),
+          Positioned(
+            left: 16,
+            right: 16,
+            bottom: 24,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              decoration: BoxDecoration(
+                color: Colors.black.withOpacity(0.6),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Text(
+                'Point the camera at the QR code on your PC',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: Colors.white),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }

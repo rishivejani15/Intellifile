@@ -9,6 +9,7 @@ class WsSyncTransport implements SyncConnection {
   StreamSubscription<WsConnectionState>? _stateSubscription;
 
   SyncConnectionState _state = SyncConnectionState.disconnected;
+  bool _isDisposed = false;
 
   WsSyncTransport({
     required Future<void> Function(Map<String, dynamic>) onMessage,
@@ -43,6 +44,7 @@ class WsSyncTransport implements SyncConnection {
 
   @override
   void dispose() {
+    _isDisposed = true;
     _stateSubscription?.cancel();
     _stateSubscription = null;
     _client.dispose();
@@ -63,6 +65,7 @@ class WsSyncTransport implements SyncConnection {
   void _setState(SyncConnectionState next) {
     if (_state == next) return;
     _state = next;
+    if (_isDisposed || _stateController.isClosed) return;
     _stateController.add(_state);
   }
 }

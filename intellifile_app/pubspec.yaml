@@ -30,6 +30,7 @@ dependencies:
   open_filex: ^4.7.0             # Open files with system app
   share_plus: ^10.1.4            # Share files via OS share sheet
   shared_preferences: ^2.5.5
+  mobile_scanner: ^5.2.3         # QR code scanning
 
 dev_dependencies:
   flutter_test:

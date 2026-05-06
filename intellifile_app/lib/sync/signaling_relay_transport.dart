@@ -32,6 +32,7 @@ class SignalingRelaySyncTransport implements SyncConnection {
   StreamSubscription<Map<String, dynamic>>? _signalingSub;
 
   SyncConnectionState _state = SyncConnectionState.disconnected;
+  bool _isDisposed = false;
   String? _sessionId;
   bool _isInitiator = false;
   bool _peerJoined = false;
@@ -96,6 +97,7 @@ class SignalingRelaySyncTransport implements SyncConnection {
 
   @override
   void dispose() {
+    _isDisposed = true;
     disconnect();
     _stateController.close();
     _signaling.dispose();
@@ -195,6 +197,7 @@ class SignalingRelaySyncTransport implements SyncConnection {
   void _setState(SyncConnectionState next) {
     if (_state == next) return;
     _state = next;
+    if (_isDisposed || _stateController.isClosed) return;
     _stateController.add(_state);
   }
 }

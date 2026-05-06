@@ -10,6 +10,7 @@ __pycache__/
 *.pyd
 .venv/
 venv/
+.build-venv/
 
 # Frontend
 frontend/node_modules/

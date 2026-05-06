@@ -171,7 +171,35 @@ async def _resolve_and_send(
     local_path = os.path.join(SYNC_FOLDER, filepath)
 
     if change_type == "deleted":
-        # File exists on PC but not on mobile — send it
+        # File exists on PC but not on mobile — decide with vector clocks
+        remote_clock = mobile_clocks.get(filepath, {})
+        verdict = local_clock.compare(remote_clock)
+
+        if verdict == "remote_wins":
+            # Mobile deletion is newer — delete locally
+            if os.path.exists(local_path):
+                os.remove(local_path)
+
+            local_clock.merge(remote_clock)
+            save_clock(DB_PATH, filepath, local_clock)
+
+            cached_tree = load_merkle_cache(DB_PATH)
+            if filepath in cached_tree:
+                del cached_tree[filepath]
+                save_merkle_cache(DB_PATH, cached_tree)
+
+            log.info("Accepted mobile delete (local removed): %s", filepath)
+            return
+
+        if verdict == "conflict":
+            await ws.send_json({
+                "type": "conflict",
+                "filepath": filepath,
+            })
+            log.info("Conflict detected: %s", filepath)
+            return
+
+        # Local wins or identical — send file to mobile
         if os.path.exists(local_path):
             remote_cs = mobile_block_checksums.get(filepath, {})
             local_clock.tick()
@@ -184,7 +212,28 @@ async def _resolve_and_send(
         return
 
     if change_type == "added":
-        # File exists on mobile but not on PC — request it
+        # File exists on mobile but not on PC — decide with vector clocks
+        remote_clock = mobile_clocks.get(filepath, {})
+        verdict = local_clock.compare(remote_clock)
+
+        if verdict == "local_wins":
+            await ws.send_json({
+                "type":     "delete",
+                "filepath": filepath,
+                "clock":    local_clock.clock,
+            })
+            log.info("Sent delete to mobile (local delete wins): %s", filepath)
+            return
+
+        if verdict == "conflict":
+            await ws.send_json({
+                "type": "conflict",
+                "filepath": filepath,
+            })
+            log.info("Conflict detected: %s", filepath)
+            return
+
+        # Remote wins or identical — request it
         local_cs = local_block_checksums.get(filepath, {})
         await ws.send_json({
             "type":             "request_delta",

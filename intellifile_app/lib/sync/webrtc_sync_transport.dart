@@ -20,6 +20,7 @@ class WebRtcSyncTransport implements SyncConnection {
   final List<Map<String, dynamic>> _pendingMessages = [];
 
   SyncConnectionState _state = SyncConnectionState.disconnected;
+  bool _isDisposed = false;
   String? _sessionId;
   String? _signalingUri;
   bool _isInitiator = false;
@@ -118,6 +119,7 @@ class WebRtcSyncTransport implements SyncConnection {
 
   @override
   void dispose() {
+    _isDisposed = true;
     _iceRestartTimer?.cancel();
     disconnect();
     _stateController.close();
@@ -297,8 +299,8 @@ class WebRtcSyncTransport implements SyncConnection {
     // ── Peer lifecycle events ─────────────────────────────────────
     if (type == 'joined') {
       debugPrint('[webrtc] Joined session, peerCount=${message['peerCount']}');
-      final peerCount = message['peerCount'] is int 
-          ? message['peerCount'] 
+      final peerCount = message['peerCount'] is int
+          ? message['peerCount']
           : int.tryParse(message['peerCount']?.toString() ?? '1');
       if (peerCount != null && peerCount >= 2) {
         _setState(SyncConnectionState.connected);
@@ -396,6 +398,7 @@ class WebRtcSyncTransport implements SyncConnection {
   void _setState(SyncConnectionState next) {
     if (_state == next) return;
     _state = next;
+    if (_isDisposed || _stateController.isClosed) return;
     _stateController.add(_state);
   }
 }
