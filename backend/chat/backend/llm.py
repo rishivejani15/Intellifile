@@ -96,7 +96,12 @@ def init_models():
         )
         return
 
-    models_dir = os.path.join(_BACKEND_DIR,"models")
+    # Respect per-user / packaged model dir via core.paths
+    try:
+        from core.paths import get_models_dir
+        models_dir = get_models_dir()
+    except Exception:
+        models_dir = os.path.join(_BACKEND_DIR, "models")
     
     # Priority 1: 1.5B Model (Target for Lightning Speed)
     # Priority 2: 3B Model (Current fallback)

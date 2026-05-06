@@ -291,15 +291,31 @@ body {
   gap: 12px;
 }
 
-.toolbar-btn.primary {
+.toolbar-btn {
   padding: 6px 16px;
-  background: var(--primary-blue);
-  color: white;
-  border: none;
   border-radius: 4px;
   cursor: pointer;
   font-size: 13px;
   font-weight: 500;
+  transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease,
+    opacity 0.2s ease;
+}
+
+.toolbar-btn.primary {
+  background: var(--primary-blue);
+  color: white;
+  border: none;
+}
+
+.toolbar-btn.secondary {
+  background: transparent;
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+}
+
+.toolbar-btn.secondary:hover {
+  border-color: var(--primary-blue);
+  color: var(--primary-blue);
 }
 
 .toolbar-btn.primary:disabled {

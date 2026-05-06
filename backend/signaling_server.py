@@ -226,7 +226,7 @@ class SignalingHub:
         relay.pop("sessionId", None)  # strip any client-sent field too
         peer_count = await self._relay(session_id, ws, relay)
         log.debug(
-            "→ Relayed type=%s from %s to %d peer(s) in session=%s",
+            "-> Relayed type=%s from %s to %d peer(s) in session=%s",
             msg_type,
             ws.remote_address,
             peer_count,
@@ -396,7 +396,7 @@ class SignalingHub:
             data = json.dumps(payload)
             await ws.send(data)
             log.debug(
-                "→ [%s] type=%s (%d bytes)",
+                "-> [%s] type=%s (%d bytes)",
                 ws.remote_address,
                 payload.get("type", "?"),
                 len(data),

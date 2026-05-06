@@ -10,7 +10,9 @@ if _BACKEND_DIR not in sys.path:
 sys.stderr.write("[engine] Starting resilient process...\n")
 sys.stderr.flush()
 
-_DATA_DIR = os.path.join(_BACKEND_DIR, "data")
+from core.paths import get_data_dir
+
+_DATA_DIR = get_data_dir()
 os.makedirs(_DATA_DIR, exist_ok=True)
 try:
     from core.db import init_db
@@ -65,6 +67,18 @@ while True:
 
         if action == "search":
             try:
+                # Ensure embedding model is available before running semantic search
+                try:
+                    from core.model import is_model_loaded, MODEL_LOAD_ERROR
+                    if not is_model_loaded():
+                        err = MODEL_LOAD_ERROR or "Embedding model not available"
+                        print(json.dumps({"_id": req_id, "error": f"Embeddings unavailable: {err}"}), flush=True)
+                        continue
+                except Exception:
+                    # If model module isn't reachable, fail the request
+                    print(json.dumps({"_id": req_id, "error": "Embedding model check failed"}), flush=True)
+                    continue
+
                 from core.search import semantic_search
                 query = request.get("query", "").strip()
                 date_from = request.get("date_from")  # Unix timestamp or None
@@ -89,6 +103,17 @@ while True:
             try:
                 folder = request.get("folder")
                 allow_protected = bool(request.get("allow_protected"))
+                # Prevent long-running index when embedding model unavailable
+                try:
+                    from core.model import is_model_loaded, MODEL_LOAD_ERROR
+                    if not is_model_loaded():
+                        err = MODEL_LOAD_ERROR or "Embedding model not available"
+                        print(json.dumps({"_id": req_id, "error": f"Embeddings unavailable: {err}"}), flush=True)
+                        continue
+                except Exception:
+                    print(json.dumps({"_id": req_id, "error": "Embedding model check failed"}), flush=True)
+                    continue
+
                 from indexing.index_files import index_files_incremental
                 from indexing.update_faiss import update_faiss
                 from core.faiss_manager import load_index, invalidate_cache
@@ -143,6 +168,17 @@ while True:
                 from indexing.single_file_ingest import ingest_single_file
                 file_path = request.get("file_path")
                 allow_protected = bool(request.get("allow_protected"))
+                # Check model availability for embedding of single file
+                try:
+                    from core.model import is_model_loaded, MODEL_LOAD_ERROR
+                    if not is_model_loaded():
+                        err = MODEL_LOAD_ERROR or "Embedding model not available"
+                        print(json.dumps({"_id": req_id, "error": f"Embeddings unavailable: {err}"}), flush=True)
+                        continue
+                except Exception:
+                    print(json.dumps({"_id": req_id, "error": "Embedding model check failed"}), flush=True)
+                    continue
+
                 if file_path and os.path.exists(file_path):
                     result = ingest_single_file(file_path, allow_protected=allow_protected)
                     print(json.dumps({"_id": req_id, "status": "indexed", "file_path": file_path, "data": result}), flush=True)
@@ -150,6 +186,15 @@ while True:
                     print(json.dumps({"_id": req_id, "status": "skipped", "reason": "file_not_found", "file_path": file_path}), flush=True)
             except Exception as e:
                 print(json.dumps({"_id": req_id, "error": f"Single file indexing failed: {e}"}), flush=True)
+
+        elif action == "model_status":
+            try:
+                # Return whether embedding model is loaded and any load error
+                from core.model import is_model_loaded, MODEL_LOAD_ERROR
+                loaded = is_model_loaded()
+                print(json.dumps({"_id": req_id, "loaded": loaded, "error": MODEL_LOAD_ERROR}), flush=True)
+            except Exception as e:
+                print(json.dumps({"_id": req_id, "error": f"Model status check failed: {e}"}), flush=True)
 
         elif action == "delete_file":
             try:

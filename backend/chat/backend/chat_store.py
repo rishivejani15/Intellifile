@@ -9,10 +9,10 @@ import numpy as np
 from core.chunker import chunk_text
 from core.extractor import extract_text
 from core.model import MODEL, encode_query
+from core.paths import get_data_dir
 
 
-_BACKEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-_DATA_DIR = os.path.join(_BACKEND_DIR, "data")
+_DATA_DIR = get_data_dir()
 _CHAT_DB_PATH = os.path.join(_DATA_DIR, "chat_files.db")
 _CHAT_INDEX_PATH = os.path.join(_DATA_DIR, "chat_vectors.faiss")
 

@@ -83,7 +83,7 @@ def main():
 
         # Verify with a test encoding
         test_embedding = model.encode("test", normalize_embeddings=True)
-        print(f"      ✓ Embedding model loaded (dim: {len(test_embedding)}) → {_MODELS_DIR}")
+        print(f"      [OK] Embedding model loaded (dim: {len(test_embedding)}) -> {_MODELS_DIR}")
 
         # Export ONNX version for faster runtime inference (3-5x speedup)
         onnx_dir = os.path.join(_MODELS_DIR, "onnx-export", model_name.replace("/", "--"))
@@ -91,7 +91,7 @@ def main():
             f.endswith(".onnx") for _, _, fs in os.walk(onnx_dir) for f in fs
         )
         if onnx_exists:
-            print(f"      ✓ ONNX export already exists → {onnx_dir}")
+            print(f"      [OK] ONNX export already exists -> {onnx_dir}")
         else:
             print("      Exporting ONNX model for faster inference...")
             try:
@@ -104,12 +104,12 @@ def main():
                 )
                 os.makedirs(onnx_dir, exist_ok=True)
                 onnx_model.save_pretrained(onnx_dir)
-                print(f"      ✓ ONNX model exported → {onnx_dir}")
+                print(f"      [OK] ONNX model exported -> {onnx_dir}")
             except Exception as onnx_err:
-                print(f"      ⚠ ONNX export failed (will use PyTorch fallback): {onnx_err}")
+                print(f"      [!] ONNX export failed (will use PyTorch fallback): {onnx_err}")
 
     except Exception as e:
-        print(f"      ✗ Failed to load embedding model: {e}")
+        print(f"      [ERR] Failed to load embedding model: {e}")
         sys.exit(1)
 
     # ── Step 2: Qwen chat model (GGUF) ───────────────────────────────
@@ -125,23 +125,23 @@ def main():
 
     if os.path.exists(primary_path):
         size_mb = os.path.getsize(primary_path) / (1024 * 1024)
-        print(f"      ✓ {primary} already present ({size_mb:.0f} MB)")
+        print(f"      [OK] {primary} already present ({size_mb:.0f} MB)")
     else:
         print(f"      Downloading {primary} (~1 GB)...")
         try:
             _download_file(_QWEN_MODELS[primary], primary_path)
             size_mb = os.path.getsize(primary_path) / (1024 * 1024)
-            print(f"      ✓ Downloaded {primary} ({size_mb:.0f} MB)")
+            print(f"      [OK] Downloaded {primary} ({size_mb:.0f} MB)")
         except Exception as e:
-            print(f"      ✗ Failed to download {primary}: {e}")
-            print("      ⚠ Chat will be unavailable unless you manually place the GGUF file in:")
+            print(f"      [ERR] Failed to download {primary}: {e}")
+            print("      [!] Chat will be unavailable unless you manually place the GGUF file in:")
             print(f"        {_MODELS_DIR}")
 
     if os.path.exists(fallback_path):
         size_mb = os.path.getsize(fallback_path) / (1024 * 1024)
-        print(f"      ✓ {fallback} already present ({size_mb:.0f} MB)")
+        print(f"      [OK] {fallback} already present ({size_mb:.0f} MB)")
     else:
-        print(f"      ℹ Optional: {fallback} not found (higher quality, ~2 GB).")
+        print(f"      [i] Optional: {fallback} not found (higher quality, ~2 GB).")
         print("        To download it, run:")
         print(f'        python -c "from backend.setup_offline import _download_file; '
               f'_download_file(\'{_QWEN_MODELS[fallback]}\', \'{fallback_path.replace(chr(92), "/")}\') "')
@@ -150,7 +150,7 @@ def main():
     print()
     print("[3/3] Checking data files...")
 
-    data_dir = os.path.join(_BACKEND_DIR, "data")
+    data_dir = os.getenv("IF_DATA_DIR") or os.path.join(_BACKEND_DIR, "data")
     if not os.path.isdir(data_dir):
         data_dir = os.path.join(os.path.dirname(__file__), "..", "backend", "data")
     if not os.path.isdir(data_dir):
@@ -163,16 +163,16 @@ def main():
 
     if os.path.exists(faiss_path):
         size_mb = os.path.getsize(faiss_path) / (1024 * 1024)
-        print(f"      ✓ FAISS index found ({size_mb:.1f} MB)")
+        print(f"      [OK] FAISS index found ({size_mb:.1f} MB)")
     else:
-        print(f"      ⚠ FAISS index not found at {faiss_path}")
+        print(f"      [!] FAISS index not found at {faiss_path}")
         print("        Run the indexing pipeline first to create it.")
 
     if os.path.exists(db_path):
         size_mb = os.path.getsize(db_path) / (1024 * 1024)
-        print(f"      ✓ SQLite database found ({size_mb:.1f} MB)")
+        print(f"      [OK] SQLite database found ({size_mb:.1f} MB)")
     else:
-        print(f"      ⚠ SQLite database not found at {db_path}")
+        print(f"      [!] SQLite database not found at {db_path}")
         print("        Run the indexing pipeline first to create it.")
 
     print()

@@ -445,6 +445,9 @@ function startPython() {
   if (!pythonEnv.IF_INDEX_SCOPE) {
     pythonEnv.IF_INDEX_SCOPE = 'all';
   }
+  if (!pythonEnv.IF_DATA_DIR) {
+    pythonEnv.IF_DATA_DIR = path.join(app.getPath('userData'), 'data');
+  }
   pyProcess = spawn(PYTHON_EXECUTABLE, [scriptPath], {
     cwd: path.join(__dirname, '..'),
     stdio: ['pipe', 'pipe', 'pipe'],
@@ -536,9 +539,14 @@ function startChatBackend() {
       return;
     }
 
+    const chatEnv = { ...process.env };
+    if (!chatEnv.IF_DATA_DIR) {
+      chatEnv.IF_DATA_DIR = path.join(app.getPath('userData'), 'data');
+    }
     chatBackendProcess = spawn(PYTHON_EXECUTABLE, ['-m', 'uvicorn', 'backend.chat.backend.main:app', '--host', '127.0.0.1', '--port', '8000'], {
       cwd: path.join(__dirname, '..'),
-      stdio: ['ignore', 'pipe', 'pipe']
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: chatEnv,
     });
 
     chatBackendProcess.stdout.on('data', (d) => console.log('[ChatBackend stdout]', d.toString().trim()));
@@ -784,9 +792,14 @@ ipcMain.handle('indexing-preferences-get', async () => {
 });
 
 ipcMain.handle('indexing-preferences-set', async (_event, updates = {}) => {
-  if (typeof updates.allowProtectedIndexing === 'boolean') {
-    indexingPreferences.allowProtectedIndexing = updates.allowProtectedIndexing;
+  // Merge arbitrary preference keys and persist
+  try {
+    for (const k of Object.keys(updates)) {
+      indexingPreferences[k] = updates[k];
+    }
     saveIndexingPreferences();
+  } catch (e) {
+    console.warn('[Prefs] Failed to update preferences:', e && e.message ? e.message : e);
   }
   return { ...indexingPreferences };
 });
@@ -805,6 +818,16 @@ ipcMain.handle("index-device", async (_event, options = {}) => {
   return result;  // 30-min timeout for full device
 });
 
+ipcMain.handle('model-status', async () => {
+  // Ask Python engine whether embedding model is loaded
+  try {
+    const res = await sendToPython({ action: 'model_status' }, 10000);
+    return res || { loaded: false };
+  } catch (e) {
+    return { loaded: false, error: e && e.message ? e.message : String(e) };
+  }
+});
+
 // Versioning via Python engine
 ipcMain.handle('get-versions', async (_event, filePath) => {
   return sendToPython({
@@ -812,6 +835,59 @@ ipcMain.handle('get-versions', async (_event, filePath) => {
     file_path: filePath,
   });
 });
+
+  // Download embedding/chat models (runs setup_offline.py with downloads enabled)
+  ipcMain.handle('download-model', async () => {
+    return new Promise((resolve) => {
+      try {
+        const scriptPath = path.join(__dirname, '..', 'backend', 'setup_offline.py');
+        const env = { ...process.env, IF_ALLOW_MODEL_DOWNLOAD: '1' };
+        // Prefer per-user models dir inside app userData
+        env.IF_MODELS_DIR = path.join(app.getPath('userData'), 'models');
+        const dl = spawn(PYTHON_EXECUTABLE, [scriptPath], {
+          cwd: path.join(__dirname, '..'),
+          env,
+          stdio: ['ignore', 'pipe', 'pipe']
+        });
+
+        dl.stdout.on('data', (d) => {
+          const s = d.toString();
+          if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('model-download-log', s);
+        });
+        dl.stderr.on('data', (d) => {
+          const s = d.toString();
+          if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('model-download-log', s);
+        });
+
+        dl.on('close', (code) => {
+          // If download succeeded, restart python engine and chat backend so new models load
+          if (code === 0) {
+            try {
+              console.log('[ModelDownload] Restarting Python engine to load new models');
+              if (pyProcess) {
+                try { pyProcess.kill(); } catch (e) { /* ignore */ }
+                pyProcess = null;
+              }
+              if (chatBackendProcess) {
+                try { chatBackendProcess.kill(); } catch (e) { /* ignore */ }
+                chatBackendProcess = null;
+              }
+              // Small delay to let OS release handles
+              setTimeout(() => {
+                startPython();
+                startChatBackend();
+              }, 800);
+            } catch (e) {
+              console.error('[ModelDownload] Failed to restart engine:', e);
+            }
+          }
+          resolve({ success: code === 0, code });
+        });
+      } catch (e) {
+        resolve({ success: false, error: e && e.message ? e.message : String(e) });
+      }
+    });
+  });
 
 ipcMain.handle('versions-list', async (_event, filePath) => {
   const result = await sendToPython({

@@ -3,6 +3,7 @@ import './App.css';
 import FileExplorer from './components/FileExplorer/FileExplorer';
 import ChatSidebar from './components/ChatSidebar';
 import SyncManager from './components/Sync/SyncManager';
+import ModelDownloadModal from './components/ModelDownloadModal';
 
 const ipcRenderer = window.electron?.ipcRenderer;
 
@@ -13,9 +14,23 @@ function App() {
   const [versioningFile, setVersioningFile] = useState(null);
   const [showChatSidebar, setShowChatSidebar] = useState(false);
   const [selectedFileForChat, setSelectedFileForChat] = useState(null);
+  const [showModelModal, setShowModelModal] = useState(false);
 
   useEffect(() => {
     console.log('App mounted, ipcRenderer available:', !!ipcRenderer);
+    // Check whether embedding model is present and whether we've already shown the prompt
+    (async () => {
+      try {
+        const status = await window.intellifile.modelStatus();
+        const prefs = await window.intellifile.getIndexingPreferences();
+        const promptShown = prefs?.modelPromptShown;
+        if (status && status.loaded === false && !promptShown) {
+          setShowModelModal(true);
+        }
+      } catch (e) {
+        // ignore errors here
+      }
+    })();
   }, []);
 
   useEffect(() => {
@@ -45,6 +60,10 @@ function App() {
     if (selectedFile) {
       window.electron.ipcRenderer.send('open-file', selectedFile.path);
     }
+  };
+
+  const openModelDownloadModal = () => {
+    setShowModelModal(true);
   };
 
   const handleChatWithAI = (file) => {
@@ -92,6 +111,12 @@ function App() {
                 >
                   Open in External Editor
                 </button>
+                <button
+                  className="toolbar-btn secondary"
+                  onClick={openModelDownloadModal}
+                >
+                  Download AI models
+                </button>
                 <span className="toolbar-hint">
                   {selectedFile ? 'Saving will trigger AI versioning.' : 'Select a file.'}
                 </span>
@@ -115,6 +140,7 @@ function App() {
       {showChatSidebar && selectedFileForChat && (
         <ChatSidebar file={selectedFileForChat} onClose={closeChatSidebar} />
       )}
+      <ModelDownloadModal visible={showModelModal} onClose={() => setShowModelModal(false)} />
     </div>
   );
 }

@@ -37,7 +37,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-DATA_DIR = os.path.join(_BACKEND_DIR, "data")
+from core.paths import get_data_dir
+
+DATA_DIR = get_data_dir()
 UPLOAD_DIR = os.path.join(DATA_DIR, "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 

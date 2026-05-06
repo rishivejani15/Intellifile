@@ -8,15 +8,18 @@
     "start": "concurrently \"npm run react-start\" \"npm run electron-start\"",
     "react-start": "react-scripts start",
     "build": "react-scripts build",
+    "dist": "electron-builder",
+    "pack": "electron-builder --dir",
     "electron-start": "wait-on http://localhost:3000 && electron .",
     "electron-dev": "electron .",
     "backend": "cd.. && cd backend && python app.py",
     "dev": "concurrently \"npm run backend\" \"npm start\""
   },
   "dependencies": {
-    "axios": "^1.4.0",
     "archiver": "^7.0.1",
+    "axios": "^1.4.0",
     "fs": "^0.0.1-security",
+    "node-pre-gyp": "^0.17.0",
     "react": "^18.2.0",
     "react-diff-view": "^3.3.2",
     "react-dom": "^18.2.0",
@@ -28,6 +31,7 @@
   "devDependencies": {
     "concurrently": "^8.0.0",
     "electron": "^41.4.0",
+    "electron-builder": "^26.8.1",
     "wait-on": "^7.0.0"
   },
   "eslintConfig": {
@@ -46,5 +50,30 @@
       "last 1 firefox version",
       "last 1 safari version"
     ]
+  },
+  "build": {
+    "appId": "com.intellifile.app",
+    "productName": "IntelliFile",
+    "files": [
+      "build/**/*",
+      "main.js",
+      "preload.js",
+      "system_roots.js",
+      "sync_engine.js",
+      "debug_merkle.js"
+    ],
+    "extraResources": [
+      {
+        "from": "../backend",
+        "to": "backend",
+        "filter": [
+          "**/*",
+          "!models/**"
+        ]
+      }
+    ],
+    "win": {
+      "target": "nsis"
+    }
   }
 }

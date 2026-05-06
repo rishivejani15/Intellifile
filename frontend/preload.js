@@ -95,6 +95,17 @@ contextBridge.exposeInMainWorld('intellifile', {
   ingestFileForChat: (filePath) => {
     return ipcRenderer.invoke('chat-ingest-file', filePath);
   },
+  downloadModel: () => {
+    return ipcRenderer.invoke('download-model');
+  },
+  modelStatus: () => {
+    return ipcRenderer.invoke('model-status');
+  },
+  onModelDownloadLog: (callback) => {
+    const handler = (_event, line) => callback(line);
+    ipcRenderer.on('model-download-log', handler);
+    return () => ipcRenderer.off('model-download-log', handler);
+  },
   listVersions: (filePath) => {
     return ipcRenderer.invoke('versions-list', filePath);
   },
