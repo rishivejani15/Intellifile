@@ -205,4 +205,28 @@ contextBridge.exposeInMainWorld('intellifile', {
   getThumbnail: (filePath) => {
     return ipcRenderer.invoke('get-thumbnail', filePath);
   },
+
+  // ── Offline Setup & Logs ──
+  getLogs: () => {
+    return ipcRenderer.invoke('get-logs');
+  },
+  clearLogs: () => {
+    return ipcRenderer.invoke('clear-logs');
+  },
+  offlineSetupStatus: () => {
+    return ipcRenderer.invoke('offline-setup-status');
+  },
+  offlineSetupRun: () => {
+    return ipcRenderer.invoke('offline-setup-run');
+  },
+  onBackendLog: (callback) => {
+    const handler = (_event, log) => callback(log);
+    ipcRenderer.on('backend-log', handler);
+    return () => ipcRenderer.off('backend-log', handler);
+  },
+  onOfflineSetupProgress: (callback) => {
+    const handler = (_event, progress) => callback(progress);
+    ipcRenderer.on('offline-setup-progress', handler);
+    return () => ipcRenderer.off('offline-setup-progress', handler);
+  }
 });

@@ -10,9 +10,7 @@ if _BACKEND_DIR not in sys.path:
 sys.stderr.write("[engine] Starting resilient process...\n")
 sys.stderr.flush()
 
-from core.paths import get_data_dir
-
-_DATA_DIR = get_data_dir()
+_DATA_DIR = os.getenv("IF_DATA_DIR", os.path.join(_BACKEND_DIR, "data"))
 os.makedirs(_DATA_DIR, exist_ok=True)
 try:
     from core.db import init_db

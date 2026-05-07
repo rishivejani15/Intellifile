@@ -3,7 +3,8 @@ import './App.css';
 import FileExplorer from './components/FileExplorer/FileExplorer';
 import ChatSidebar from './components/ChatSidebar';
 import SyncManager from './components/Sync/SyncManager';
-import ModelDownloadModal from './components/ModelDownloadModal';
+import LogsPanel from './components/LogsPanel';
+import OfflineSetup from './components/OfflineSetup';
 
 const ipcRenderer = window.electron?.ipcRenderer;
 
@@ -14,7 +15,7 @@ function App() {
   const [versioningFile, setVersioningFile] = useState(null);
   const [showChatSidebar, setShowChatSidebar] = useState(false);
   const [selectedFileForChat, setSelectedFileForChat] = useState(null);
-  const [showModelModal, setShowModelModal] = useState(false);
+  const [setupComplete, setSetupComplete] = useState(false);
 
   useEffect(() => {
     console.log('App mounted, ipcRenderer available:', !!ipcRenderer);
@@ -96,6 +97,12 @@ function App() {
           >
             Sync
           </button>
+          <button
+            className={`tab-btn ${activeTab === 'logs' ? 'active' : ''}`}
+            onClick={() => setActiveTab('logs')}
+          >
+            Logs
+          </button>
         </div>
       </header>
 
@@ -131,8 +138,10 @@ function App() {
                 onCloseVersioning={() => setVersioningFile(null)}
               />
             </div>
-          ) : (
+          ) : activeTab === 'sync' ? (
             <SyncManager />
+          ) : (
+            <LogsPanel />
           )}
         </main>
       </div>
@@ -140,7 +149,8 @@ function App() {
       {showChatSidebar && selectedFileForChat && (
         <ChatSidebar file={selectedFileForChat} onClose={closeChatSidebar} />
       )}
-      <ModelDownloadModal visible={showModelModal} onClose={() => setShowModelModal(false)} />
+
+      {!setupComplete && <OfflineSetup onComplete={() => setSetupComplete(true)} />}
     </div>
   );
 }

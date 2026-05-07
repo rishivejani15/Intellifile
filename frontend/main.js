@@ -61,8 +61,71 @@ if (!(venvCandidates.some((p) => fs.existsSync(p)))) {
 
 console.log('[Python] Using executable:', PYTHON_EXECUTABLE);
 
-// Check if running in development mode (force true for now since React dev server is running)
-const isDev = false;
+const isDev = !app.isPackaged;
+
+let logBuffer = [];
+const MAX_LOG_LINES = 1000;
+
+function appendLog(category, message, isError = false) {
+  const timestamp = new Date().toISOString().split('T')[1].slice(0, -1);
+  const logEntry = { timestamp, category, message, isError };
+  
+  logBuffer.push(logEntry);
+  if (logBuffer.length > MAX_LOG_LINES) {
+    logBuffer.shift();
+  }
+  
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('backend-log', logEntry);
+  }
+}
+
+// Override console methods to capture them
+const originalConsoleLog = console.log;
+const originalConsoleError = console.error;
+const originalConsoleWarn = console.warn;
+
+console.log = function(...args) {
+  originalConsoleLog.apply(console, args);
+  if (args.length > 0 && typeof args[0] === 'string' && args[0].startsWith('[')) {
+    const match = args[0].match(/^\[(.*?)\]/);
+    if (match) {
+      appendLog(match[1], args.join(' ').replace(/^\[.*?\]\s*/, ''));
+    } else {
+      appendLog('Main', args.join(' '));
+    }
+  } else {
+    appendLog('Main', args.join(' '));
+  }
+};
+
+console.error = function(...args) {
+  originalConsoleError.apply(console, args);
+  if (args.length > 0 && typeof args[0] === 'string' && args[0].startsWith('[')) {
+    const match = args[0].match(/^\[(.*?)\]/);
+    if (match) {
+      appendLog(match[1], args.join(' ').replace(/^\[.*?\]\s*/, ''), true);
+    } else {
+      appendLog('Main', args.join(' '), true);
+    }
+  } else {
+    appendLog('Main', args.join(' '), true);
+  }
+};
+
+console.warn = function(...args) {
+  originalConsoleWarn.apply(console, args);
+  if (args.length > 0 && typeof args[0] === 'string' && args[0].startsWith('[')) {
+    const match = args[0].match(/^\[(.*?)\]/);
+    if (match) {
+      appendLog(match[1], args.join(' ').replace(/^\[.*?\]\s*/, ''), true);
+    } else {
+      appendLog('Main', args.join(' '), true);
+    }
+  } else {
+    appendLog('Main', args.join(' '), true);
+  }
+};
 
 // Supported file extensions
 const EDITABLE_EXTENSIONS = [
@@ -439,20 +502,31 @@ function stopWatchingDirectory(directoryPath) {
 }
 
 function startPython() {
-  const scriptPath = path.join(__dirname, "../backend/engine_server.py");
-  console.log('[Python] Starting engine from:', scriptPath);
-   const pythonEnv = { ...process.env };
+  const appDataDir = path.join(app.getPath('userData'), 'Intellifile');
+  const pythonEnv = { ...process.env };
   if (!pythonEnv.IF_INDEX_SCOPE) {
     pythonEnv.IF_INDEX_SCOPE = 'all';
   }
-  if (!pythonEnv.IF_DATA_DIR) {
-    pythonEnv.IF_DATA_DIR = path.join(app.getPath('userData'), 'data');
+  pythonEnv.IF_DATA_DIR = path.join(appDataDir, 'backend', 'data');
+  pythonEnv.IF_MODELS_DIR = path.join(appDataDir, 'backend', 'models');
+
+  if (isDev) {
+    const scriptPath = path.join(__dirname, "../backend/engine_server.py");
+    console.log('[Python] Starting engine from:', scriptPath);
+    pyProcess = spawn(PYTHON_EXECUTABLE, [scriptPath], {
+      cwd: path.join(__dirname, '..'),
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: pythonEnv,
+    });
+  } else {
+    const exePath = path.join(process.resourcesPath, "backend-dist", "engine", "engine.exe");
+    console.log('[Python] Starting frozen engine from:', exePath);
+    pyProcess = spawn(exePath, [], {
+      cwd: path.join(process.resourcesPath, "backend-dist"),
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: pythonEnv,
+    });
   }
-  pyProcess = spawn(PYTHON_EXECUTABLE, [scriptPath], {
-    cwd: path.join(__dirname, '..'),
-    stdio: ['pipe', 'pipe', 'pipe'],
-    env: pythonEnv,
-  });
 
   pyProcess.stdout.on("data", (data) => {
     const text = data.toString();
@@ -539,15 +613,23 @@ function startChatBackend() {
       return;
     }
 
-    const chatEnv = { ...process.env };
-    if (!chatEnv.IF_DATA_DIR) {
-      chatEnv.IF_DATA_DIR = path.join(app.getPath('userData'), 'data');
+    const appDataDir = path.join(app.getPath('userData'), 'Intellifile');
+    const pythonEnv = { ...process.env };
+    pythonEnv.IF_DATA_DIR = path.join(appDataDir, 'backend', 'data');
+    pythonEnv.IF_MODELS_DIR = path.join(appDataDir, 'backend', 'models');
+
+    if (isDev) {
+      chatBackendProcess = spawn(PYTHON_EXECUTABLE, ['-m', 'uvicorn', 'backend.chat.backend.main:app', '--host', '127.0.0.1', '--port', '8000'], {
+        cwd: path.join(__dirname, '..'),
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: pythonEnv
+      });
+    } else {
+      // For now, don't start the chat backend in prod if not packaged.
+      // We will need a chat.exe similar to engine.exe.
+      console.log('[ChatBackend] Prod mode - skipping chat backend for now unless chat.exe exists');
+      return;
     }
-    chatBackendProcess = spawn(PYTHON_EXECUTABLE, ['-m', 'uvicorn', 'backend.chat.backend.main:app', '--host', '127.0.0.1', '--port', '8000'], {
-      cwd: path.join(__dirname, '..'),
-      stdio: ['ignore', 'pipe', 'pipe'],
-      env: chatEnv,
-    });
 
     chatBackendProcess.stdout.on('data', (d) => console.log('[ChatBackend stdout]', d.toString().trim()));
     chatBackendProcess.stderr.on('data', (d) => console.error('[ChatBackend stderr]', d.toString().trim()));
@@ -1142,6 +1224,82 @@ ipcMain.on('open-file', (event, filePath) => {
 function registerIpcHandlers() {
   if (ipcHandlersRegistered) return;
   ipcHandlersRegistered = true;
+
+  // ── Offline Setup & Logs IPC ──
+  ipcMain.handle('get-logs', () => {
+    return logBuffer;
+  });
+
+  ipcMain.handle('clear-logs', () => {
+    logBuffer = [];
+    return true;
+  });
+
+  ipcMain.handle('offline-setup-status', async () => {
+    const appDataDir = path.join(app.getPath('userData'), 'Intellifile');
+    const modelsDir = path.join(appDataDir, 'backend', 'models');
+    // Check if models exist (at least one gguf and the sentence transformer folder)
+    let hasChatModel = false;
+    let hasEmbeddingModel = false;
+    try {
+      if (fs.existsSync(modelsDir)) {
+        const files = fs.readdirSync(modelsDir);
+        hasChatModel = files.some(f => f.endsWith('.gguf'));
+        hasEmbeddingModel = fs.existsSync(path.join(modelsDir, 'onnx-export')) || files.some(f => f.startsWith('models--BAAI'));
+      }
+    } catch (e) {
+      console.warn('[Setup] Error checking models:', e.message);
+    }
+    const needed = !hasChatModel || !hasEmbeddingModel;
+    return { needed, hasChatModel, hasEmbeddingModel };
+  });
+
+  let setupProcess = null;
+  ipcMain.handle('offline-setup-run', async (event) => {
+    if (setupProcess) return { success: false, error: 'Setup already running' };
+    
+    return new Promise((resolve) => {
+      const appDataDir = path.join(app.getPath('userData'), 'Intellifile');
+      let exePath;
+      if (isDev) {
+        exePath = PYTHON_EXECUTABLE;
+      } else {
+        exePath = path.join(process.resourcesPath, "backend-dist", "setup", "setup_offline.exe");
+      }
+
+      const args = isDev 
+        ? [path.join(__dirname, "../backend/setup_offline.py"), "--appdata-dir", appDataDir, "--json"]
+        : ["--appdata-dir", appDataDir, "--json"];
+
+      setupProcess = spawn(exePath, args, {
+        cwd: isDev ? path.join(__dirname, '..') : path.join(process.resourcesPath, "backend-dist")
+      });
+
+      setupProcess.stdout.on('data', (data) => {
+        const lines = data.toString().split('\n');
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          try {
+            const parsed = JSON.parse(line.trim());
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.webContents.send('offline-setup-progress', parsed);
+            }
+          } catch (e) {
+            console.log('[Setup Output]', line.trim());
+          }
+        }
+      });
+
+      setupProcess.stderr.on('data', (data) => {
+        console.error('[Setup Error]', data.toString().trim());
+      });
+
+      setupProcess.on('close', (code) => {
+        setupProcess = null;
+        resolve({ success: code === 0 });
+      });
+    });
+  });
 
   // IPC Handlers for file operations
   ipcMain.handle('list-directory', async (event, dirPath, options = {}) => {

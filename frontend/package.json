@@ -13,13 +13,44 @@
     "electron-start": "wait-on http://localhost:3000 && electron .",
     "electron-dev": "electron .",
     "backend": "cd.. && cd backend && python app.py",
-    "dev": "concurrently \"npm run backend\" \"npm start\""
+    "dev": "concurrently \"npm run backend\" \"npm start\"",
+    "dist": "electron-builder --win"
+  },
+  "build": {
+    "extends": null,
+    "appId": "com.intellifile.app",
+    "productName": "IntelliFile",
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "files": [
+      "package.json",
+      "main.js",
+      "preload.js",
+      "system_roots.js",
+      "sync_engine.js",
+      "build/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "../backend-dist/",
+        "to": "backend-dist",
+        "filter": ["**/*"]
+      }
+    ],
+    "directories": {
+      "output": "../dist"
+    }
   },
   "dependencies": {
     "archiver": "^7.0.1",
+    "archiver-utils": "^5.0.2",
     "axios": "^1.4.0",
-    "fs": "^0.0.1-security",
-    "node-pre-gyp": "^0.17.0",
+    "qrcode.react": "^4.2.0",
     "react": "^18.2.0",
     "react-diff-view": "^3.3.2",
     "react-dom": "^18.2.0",
@@ -31,7 +62,7 @@
   "devDependencies": {
     "concurrently": "^8.0.0",
     "electron": "^41.4.0",
-    "electron-builder": "^26.8.1",
+    "electron-builder": "^25.1.8",
     "wait-on": "^7.0.0"
   },
   "eslintConfig": {

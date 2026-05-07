@@ -18,9 +18,7 @@ except Exception:
 
 # Resolve backend directory and models cache directory
 _BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-from core.paths import get_models_dir
-
-_MODELS_DIR = get_models_dir()
+_MODELS_DIR = os.getenv("IF_MODELS_DIR", os.path.join(_BACKEND_DIR, 'models'))
 
 MODEL_NAME = os.getenv("IF_MODEL_PATH", "BAAI/bge-small-en-v1.5")
 

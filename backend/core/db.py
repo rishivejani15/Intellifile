@@ -1,9 +1,9 @@
 import os
 import sqlite3
 
-from core.paths import get_data_dir
-
-_DB_PATH = os.path.join(get_data_dir(), "files.db")
+# Resolve data directory relative to this file's location
+_BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_DB_PATH = os.path.join(os.getenv("IF_DATA_DIR", os.path.join(_BACKEND_DIR, 'data')), 'files.db')
 
 def get_connection():
     os.makedirs(os.path.dirname(_DB_PATH), exist_ok=True)

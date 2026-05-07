@@ -2,9 +2,9 @@ import faiss
 import os
 import sys
 
-from core.paths import get_data_dir
-
-INDEX_PATH = os.path.join(get_data_dir(), "vectors.faiss")
+# Resolve data directory relative to this file's location
+_BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+INDEX_PATH = os.path.join(os.getenv("IF_DATA_DIR", os.path.join(_BACKEND_DIR, 'data')), 'vectors.faiss')
 
 # ── In-memory singleton ──────────────────────────────────
 _cached_index = None
