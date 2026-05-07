@@ -642,13 +642,23 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
       }
 
       const deleted = Number(result?.deleted_versions || 0);
+      const maintenance = Number(result?.maintenance_count || 0);
       const freedMb = Number(result?.freed_mb || 0);
+      
+      let message = 'Cleanup complete: ';
       if (deleted > 0) {
-        alert(`Cleanup complete: removed ${deleted} version(s), freed ${freedMb.toFixed(2)} MB.`);
-      } else {
-        alert('Cleanup complete: 0 versions removed. Recent versions may be retained by policy.');
+        message += `removed ${deleted} version(s), `;
       }
-
+      if (maintenance > 0) {
+        message += `cleaned ${maintenance} cache files, `;
+      }
+      message += `freed ${freedMb.toFixed(2)} MB.`;
+      
+      if (deleted === 0 && maintenance === 0) {
+        message = 'Cleanup complete: No cleanup needed. Recent versions may be retained by policy.';
+      }
+      
+      alert(message);
       handleRefreshVersioningTimeline();
     } catch (err) {
       alert('Cleanup failed: ' + (err?.message || 'Unknown error'));

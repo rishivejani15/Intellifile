@@ -6,6 +6,7 @@ const { spawn } = require('child_process');
 const archiver = require('archiver');
 const unzipper = require('unzipper');
 const { registerSystemRoots, getSystemRoots } = require('./system_roots');
+const { SyncEngine } = require('./sync_engine');
 
 const PROJECT_ROOT = path.join(__dirname, '..');
 
@@ -145,6 +146,8 @@ let pyProcess;
 let chatBackendProcess;
 
 let syncServerProcess;
+let syncEngine;
+const SYNC_PORT = 8765;
 
 let pyReady = false;
 let pythonReadyForIndexing = false;
@@ -575,6 +578,146 @@ function isPortOpen(port, host = '127.0.0.1', timeout = 500) {
     socket.once('timeout', () => onDone(false));
     socket.connect(port, host, () => onDone(true));
   });
+}
+
+function getLocalIpv4() {
+  const nets = require('os').networkInterfaces();
+  const candidates = [];
+
+  for (const name of Object.keys(nets)) {
+    for (const net of nets[name] || []) {
+      const family = typeof net.family === 'string' ? net.family : String(net.family);
+      if (family !== 'IPv4' || net.internal) continue;
+      if (net.address && !net.address.startsWith('169.254.')) {
+        candidates.push({ name, address: net.address });
+      }
+    }
+  }
+
+  const privateRanges = [
+    /^10\./,
+    /^192\.168\./,
+    /^172\.(1[6-9]|2\d|3[0-1])\./,
+  ];
+
+  for (const range of privateRanges) {
+    const match = candidates.find((candidate) => range.test(candidate.address));
+    if (match) return { address: match.address, candidates };
+  }
+
+  return { address: candidates[0]?.address || null, candidates };
+}
+
+function startSyncServer() {
+  try {
+    if (syncServerProcess && !syncServerProcess.killed) {
+      console.log('[SyncServer] already running');
+      return;
+    }
+
+    return isPortOpen(SYNC_PORT, '127.0.0.1', 300).then((portOpen) => {
+      if (portOpen) {
+        console.log(`[SyncServer] port ${SYNC_PORT} already in use; assuming server is running`);
+        return;
+      }
+
+      const scriptPath = path.join(__dirname, '..', 'sync', 'server.py');
+      console.log('[SyncServer] Starting sync server from:', scriptPath);
+
+      syncServerProcess = spawn(PYTHON_EXECUTABLE, [scriptPath], {
+        cwd: path.join(__dirname, '..'),
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+
+      syncServerProcess.stdout.on('data', (d) => console.log('[SyncServer stdout]', d.toString().trim()));
+      syncServerProcess.stderr.on('data', (d) => console.error('[SyncServer stderr]', d.toString().trim()));
+      syncServerProcess.on('close', (code) => {
+        console.log('[SyncServer] exited with code:', code);
+        syncServerProcess = null;
+      });
+    });
+  } catch (err) {
+    console.error('[SyncServer] failed to start:', err && err.message ? err.message : err);
+    syncServerProcess = null;
+  }
+}
+
+function tryCreateSyncLink(srcPath, destPath) {
+  try {
+    fs.linkSync(srcPath, destPath);
+    return { ok: true, mode: 'hardlink' };
+  } catch (err) {
+    try {
+      fs.symlinkSync(srcPath, destPath, 'file');
+      return { ok: true, mode: 'symlink' };
+    } catch (err2) {
+      try {
+        fs.copyFileSync(srcPath, destPath);
+        return { ok: true, mode: 'copy' };
+      } catch (err3) {
+        const message = err3 && err3.message ? err3.message : String(err3);
+        return { ok: false, error: message };
+      }
+    }
+  }
+}
+
+function walkSyncFiles(dirPath, results = []) {
+  if (!fs.existsSync(dirPath)) return results;
+
+  for (const entry of fs.readdirSync(dirPath)) {
+    const fullPath = path.join(dirPath, entry);
+    try {
+      const stats = fs.statSync(fullPath);
+      if (stats.isDirectory()) {
+        walkSyncFiles(fullPath, results);
+      } else {
+        results.push({
+          name: path.relative(path.join(__dirname, '..', 'sync', 'intellifil_files'), fullPath).replace(/\\/g, '/'),
+          path: fullPath,
+          size: stats.size,
+          modified: stats.mtimeMs,
+        });
+      }
+    } catch (err) {
+      console.warn('[Sync] Failed to inspect file:', fullPath, err && err.message ? err.message : err);
+    }
+  }
+
+  return results;
+}
+
+function ensureSyncEngine() {
+  if (syncEngine) return syncEngine;
+
+  const syncDir = path.join(__dirname, '..', 'sync', 'intellifil_files');
+  syncEngine = new SyncEngine(syncDir);
+
+  syncEngine.on('status', (data) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('sync-status', data);
+    }
+  });
+
+  syncEngine.on('log', (msg) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('sync-log', msg);
+    }
+  });
+
+  syncEngine.on('files', (files) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('sync-files', files);
+    }
+  });
+
+  syncEngine.on('pending', (changes) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('sync-pending', changes);
+    }
+  });
+
+  return syncEngine;
 }
 // ── NLP Date Parser for search queries ──────────────────
 function parseDateFromQuery(rawQuery) {
@@ -1214,18 +1357,23 @@ function registerIpcHandlers() {
     }
   });
 
+  ipcMain.handle('get-local-sync-address', async () => {
+    const { address, candidates } = getLocalIpv4();
+    return {
+      success: !!address,
+      ip: address,
+      port: SYNC_PORT,
+      address: address ? `${address}:${SYNC_PORT}` : null,
+      candidates,
+    };
+  });
+
   // ── Sync: local file staging for cross-device sync
   ipcMain.handle('get-sync-files', async () => {
     try {
       const syncDir = path.join(__dirname, '..', 'sync', 'intellifil_files');
       if (!fs.existsSync(syncDir)) fs.mkdirSync(syncDir, { recursive: true });
-      const items = fs.readdirSync(syncDir).map(name => {
-        try {
-          const full = path.join(syncDir, name);
-          const st = fs.statSync(full);
-          return { name, path: full, size: st.size, modified: st.mtimeMs };
-        } catch (e) { return null; }
-      }).filter(Boolean);
+      const items = walkSyncFiles(syncDir).sort((a, b) => String(a.name).localeCompare(String(b.name)));
       return { success: true, items };
     } catch (err) {
       console.error('[Sync] get-sync-files error:', err && err.message ? err.message : err);
@@ -1241,6 +1389,7 @@ function registerIpcHandlers() {
       if (canceled || !filePaths || filePaths.length === 0) return { success: false, added: 0 };
       const syncDir = path.join(__dirname, '..', 'sync', 'intellifil_files');
       if (!fs.existsSync(syncDir)) fs.mkdirSync(syncDir, { recursive: true });
+      const errors = [];
       let added = 0;
       for (const src of filePaths) {
         const name = path.basename(src);
@@ -1254,12 +1403,19 @@ function registerIpcHandlers() {
             i++;
           }
         }
-        fs.copyFileSync(src, dest);
+        const linkResult = tryCreateSyncLink(src, dest);
+        if (!linkResult.ok) {
+          errors.push({ file: src, error: linkResult.error });
+          continue;
+        }
         added++;
       }
-      // notify renderer
-      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('sync-files');
-      return { success: true, added };
+
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('sync-files', walkSyncFiles(syncDir));
+      }
+
+      return { success: errors.length === 0, added, errors };
     } catch (err) {
       console.error('[Sync] select-files-for-sync error:', err && err.message ? err.message : err);
       return { success: false, added: 0, error: err && err.message ? err.message : String(err) };
@@ -1271,11 +1427,95 @@ function registerIpcHandlers() {
       const syncDir = path.join(__dirname, '..', 'sync', 'intellifil_files');
       const target = path.join(syncDir, fileName);
       if (fs.existsSync(target)) fs.unlinkSync(target);
-      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('sync-files');
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('sync-files', walkSyncFiles(syncDir));
       return { success: true };
     } catch (err) {
       console.error('[Sync] remove-sync-file error:', err && err.message ? err.message : err);
       return { success: false, error: err && err.message ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle('sync-connect', async (_event, opts) => {
+    try {
+      const engine = ensureSyncEngine();
+      const signalingUrl = opts?.signalingUrl;
+      const sessionId = opts?.sessionId;
+      const isInitiator = !!opts?.isInitiator;
+
+      if (!signalingUrl || !sessionId) {
+        return { success: false, error: 'signalingUrl and sessionId are required' };
+      }
+
+      await engine.connect(signalingUrl, sessionId, isInitiator);
+
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('sync-files', engine.getFiles());
+        mainWindow.webContents.send('sync-pending', engine.getPendingChanges());
+      }
+
+      return { success: true };
+    } catch (err) {
+      console.error('[Sync] sync-connect error:', err && err.message ? err.message : err);
+      return { success: false, error: err && err.message ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle('sync-disconnect', async () => {
+    try {
+      if (syncEngine) syncEngine.disconnect();
+      return { success: true };
+    } catch (err) {
+      console.error('[Sync] sync-disconnect error:', err && err.message ? err.message : err);
+      return { success: false, error: err && err.message ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle('sync-approve', async (_event, filepath) => {
+    try {
+      const engine = ensureSyncEngine();
+      engine.approvePendingChange(filepath);
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: err && err.message ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle('sync-reject', async (_event, filepath) => {
+    try {
+      const engine = ensureSyncEngine();
+      engine.rejectPendingChange(filepath);
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: err && err.message ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle('sync-approve-all', async () => {
+    try {
+      const engine = ensureSyncEngine();
+      engine.approveAllPending();
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: err && err.message ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle('sync-reject-all', async () => {
+    try {
+      const engine = ensureSyncEngine();
+      engine.rejectAllPending();
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: err && err.message ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle('sync-get-pending', async () => {
+    try {
+      const engine = ensureSyncEngine();
+      return { success: true, pending: engine.getPendingChanges() };
+    } catch (err) {
+      return { success: false, pending: [], error: err && err.message ? err.message : String(err) };
     }
   });
 
@@ -1946,6 +2186,8 @@ app.on('ready', () => {
   loadIndexingPreferences();
   registerIpcHandlers();
   startPython();
+  startSyncServer();
+  ensureSyncEngine();
   startChatBackend();
   createWindow();
 });
@@ -1983,6 +2225,24 @@ app.on('before-quit', () => {
     console.log('[ChatBackend] Killing API process');
     chatBackendProcess.kill();
     chatBackendProcess = null;
+  }
+
+  if (syncEngine) {
+    try {
+      syncEngine.disconnect();
+    } catch (err) {
+      console.warn('[SyncEngine] disconnect error:', err && err.message ? err.message : err);
+    }
+  }
+
+  if (syncServerProcess) {
+    console.log('[SyncServer] Killing sync server process');
+    try {
+      syncServerProcess.kill();
+    } catch (err) {
+      console.warn('[SyncServer] kill error:', err && err.message ? err.message : err);
+    }
+    syncServerProcess = null;
   }
 });
 
