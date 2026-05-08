@@ -13,7 +13,7 @@ a = Analysis(
     datas=extra_datas,
     hiddenimports=[
         'llama_cpp',
-        'torch',
+        'onnxruntime',
         'sentence_transformers',
         'faiss',
         'numpy',
@@ -28,7 +28,13 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=['matplotlib', 'tkinter', 'IPython', 'notebook', 'jupyter', 'pytest'],
+    excludes=[
+        'matplotlib', 'tkinter', 'IPython', 'notebook', 'jupyter', 'pytest',
+        # Strip PyTorch from the engine build (~1.5 GB saving)
+        # ONNX Runtime handles all inference in production
+        'torch', 'torchvision', 'torchaudio',
+        'torch.distributions', 'torch.testing',
+    ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,

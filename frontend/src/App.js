@@ -5,7 +5,6 @@ import ChatSidebar from './components/ChatSidebar';
 import SyncManager from './components/Sync/SyncManager';
 import LogsPanel from './components/LogsPanel';
 import OfflineSetup from './components/OfflineSetup';
-import ModelDownloadModal from './components/ModelDownloadModal';
 
 const ipcRenderer = window.electron?.ipcRenderer;
 
@@ -21,19 +20,6 @@ function App() {
 
   useEffect(() => {
     console.log('App mounted, ipcRenderer available:', !!ipcRenderer);
-    // Check whether embedding model is present and whether we've already shown the prompt
-    (async () => {
-      try {
-        const status = await window.intellifile.modelStatus();
-        const prefs = await window.intellifile.getIndexingPreferences();
-        const promptShown = prefs?.modelPromptShown;
-        if (status && status.loaded === false && !promptShown) {
-          setShowModelModal(true);
-        }
-      } catch (e) {
-        // ignore errors here
-      }
-    })();
   }, []);
 
   useEffect(() => {
@@ -65,9 +51,7 @@ function App() {
     }
   };
 
-  const openModelDownloadModal = () => {
-    setShowModelModal(true);
-  };
+
 
   const handleChatWithAI = (file) => {
     setSelectedFileForChat(file);
@@ -110,7 +94,7 @@ function App() {
 
       <div className="app-container">
         <main className="app-main">
-          {activeTab === 'explorer' ? (
+          <div style={{ display: activeTab === 'explorer' ? 'block' : 'none', height: '100%' }}>
             <div className="explorer-wrapper">
               <div className="explorer-toolbar">
                 <button
@@ -134,11 +118,15 @@ function App() {
                 onCloseVersioning={() => setVersioningFile(null)}
               />
             </div>
-          ) : activeTab === 'sync' ? (
+          </div>
+          
+          <div style={{ display: activeTab === 'sync' ? 'block' : 'none', height: '100%' }}>
             <SyncManager />
-          ) : (
+          </div>
+          
+          <div style={{ display: activeTab === 'logs' ? 'block' : 'none', height: '100%' }}>
             <LogsPanel />
-          )}
+          </div>
         </main>
       </div>
 
@@ -147,11 +135,6 @@ function App() {
       )}
 
       {!setupComplete && <OfflineSetup onComplete={() => setSetupComplete(true)} />}
-
-      <ModelDownloadModal 
-        visible={showModelModal} 
-        onClose={() => setShowModelModal(false)} 
-      />
     </div>
   );
 }

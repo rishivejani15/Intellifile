@@ -1,7 +1,7 @@
 {
-  "name": "semantic-merge-assistant",
+  "name": "intellifile",
   "version": "1.0.0",
-  "description": "AI-powered semantic merge assistant",
+  "description": "IntelliFile - AI-powered local file manager",
   "main": "main.js",
   "homepage": "./",
   "scripts": {

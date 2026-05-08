@@ -107,49 +107,31 @@ def main():
     os.makedirs(_MODELS_DIR, exist_ok=True)
 
     # ── Step 1: Embedding model (BGE) ────────────────────────────────
-    model_name = os.getenv("IF_MODEL_PATH", "BAAI/bge-small-en-v1.5")
-    _log(f"[1/3] Downloading embedding model: {model_name}")
+    # We use the Xenova repository which hosts the native ONNX version of bge-small-en-v1.5.
+    model_name = os.getenv("IF_MODEL_PATH", "Xenova/bge-small-en-v1.5")
+    _log(f"[1/3] Downloading embedding model: {model_name} (ONNX)")
     _log("      This may take a few minutes on first run...")
     _emit_json("step", step=1, total=3, name="Embedding Model", status="downloading")
 
     try:
-        from sentence_transformers import SentenceTransformer
+        from huggingface_hub import snapshot_download
 
-        # Download strictly into models folder
-        model = SentenceTransformer(model_name, cache_folder=_MODELS_DIR)
-
-        # Verify with a test encoding
-        test_embedding = model.encode("test", normalize_embeddings=True)
-        _log(f"      ✓ Embedding model loaded (dim: {len(test_embedding)}) → {_MODELS_DIR}")
-
-        # Export ONNX version for faster runtime inference (3-5x speedup)
-        onnx_dir = os.path.join(_MODELS_DIR, "onnx-export", model_name.replace("/", "--"))
-        onnx_exists = os.path.isdir(onnx_dir) and any(
-            f.endswith(".onnx") for _, _, fs in os.walk(onnx_dir) for f in fs
+        # Download directly as ONNX - no export, no PyTorch needed!
+        # We only download the necessary files to keep the footprint tiny
+        snapshot_download(
+            repo_id=model_name,
+            cache_dir=_MODELS_DIR,
+            allow_patterns=["*.onnx", "*.json", "tokenizer*"],
+            ignore_patterns=["*model_fp16*", "*model_int8*", "*model_quantized*"]
         )
-        if onnx_exists:
-            _log(f"      ✓ ONNX export already exists → {onnx_dir}")
-        else:
-            _log("      Exporting ONNX model for faster inference...")
-            _emit_json("step", step=1, total=3, name="ONNX Export", status="processing")
-            try:
-                onnx_model = SentenceTransformer(
-                    model_name,
-                    backend="onnx",
-                    model_kwargs={"provider": "CPUExecutionProvider"},
-                    cache_folder=_MODELS_DIR,
-                    device="cpu",
-                )
-                os.makedirs(onnx_dir, exist_ok=True)
-                onnx_model.save_pretrained(onnx_dir)
-                _log(f"      ✓ ONNX model exported → {onnx_dir}")
-            except Exception as onnx_err:
-                _log(f"      ⚠ ONNX export failed (will use PyTorch fallback): {onnx_err}")
+
+        _log(f"      [OK] ONNX embedding model downloaded directly")
+        _log(f"      [OK] Saved to -> {_MODELS_DIR}")
 
         _emit_json("step", step=1, total=3, name="Embedding Model", status="done")
 
     except Exception as e:
-        _log(f"      ✗ Failed to load embedding model: {e}")
+        _log(f"      [ERROR] Failed to setup embedding model (ONNX export is mandatory): {e}")
         _emit_json("error", message=str(e))
         sys.exit(1)
 
@@ -167,24 +149,24 @@ def main():
 
     if os.path.exists(primary_path):
         size_mb = os.path.getsize(primary_path) / (1024 * 1024)
-        _log(f"      ✓ {primary} already present ({size_mb:.0f} MB)")
+        _log(f"      [OK] {primary} already present ({size_mb:.0f} MB)")
     else:
         _log(f"      Downloading {primary} (~1 GB)...")
         try:
             _download_file(_QWEN_MODELS[primary], primary_path, name="Qwen Chat Model")
             size_mb = os.path.getsize(primary_path) / (1024 * 1024)
-            _log(f"      ✓ Downloaded {primary} ({size_mb:.0f} MB)")
+            _log(f"      [OK] Downloaded {primary} ({size_mb:.0f} MB)")
         except Exception as e:
-            _log(f"      ✗ Failed to download {primary}: {e}")
-            _log("      ⚠ Chat will be unavailable unless you manually place the GGUF file in:")
+            _log(f"      [ERROR] Failed to download {primary}: {e}")
+            _log("      [WARNING] Chat will be unavailable unless you manually place the GGUF file in:")
             _log(f"        {_MODELS_DIR}")
             _emit_json("error", message=f"Chat model download failed: {e}")
 
     if os.path.exists(fallback_path):
         size_mb = os.path.getsize(fallback_path) / (1024 * 1024)
-        _log(f"      ✓ {fallback} already present ({size_mb:.0f} MB)")
+        _log(f"      [OK] {fallback} already present ({size_mb:.0f} MB)")
     else:
-        _log(f"      ℹ Optional: {fallback} not found (higher quality, ~2 GB).")
+        _log(f"      [INFO] Optional: {fallback} not found (higher quality, ~2 GB).")
         _log("        To download it, run:")
         _log(f'        python -c "from backend.setup_offline import _download_file; '
              f'_download_file(\'{_QWEN_MODELS[fallback]}\', \'{fallback_path.replace(chr(92), "/")}\') "')
@@ -209,16 +191,16 @@ def main():
 
     if os.path.exists(faiss_path):
         size_mb = os.path.getsize(faiss_path) / (1024 * 1024)
-        _log(f"      ✓ FAISS index found ({size_mb:.1f} MB)")
+        _log(f"      [OK] FAISS index found ({size_mb:.1f} MB)")
     else:
-        _log(f"      ⚠ FAISS index not found at {faiss_path}")
+        _log(f"      [WARNING] FAISS index not found at {faiss_path}")
         _log("        Run the indexing pipeline first to create it.")
 
     if os.path.exists(db_path):
         size_mb = os.path.getsize(db_path) / (1024 * 1024)
-        _log(f"      ✓ SQLite database found ({size_mb:.1f} MB)")
+        _log(f"      [OK] SQLite database found ({size_mb:.1f} MB)")
     else:
-        _log(f"      ⚠ SQLite database not found at {db_path}")
+        _log(f"      [WARNING] SQLite database not found at {db_path}")
         _log("        Run the indexing pipeline first to create it.")
 
     if not _json_mode: print()

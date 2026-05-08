@@ -8,13 +8,16 @@ a = Analysis(
     binaries=[],
     datas=[],
     hiddenimports=[
-        'torch',
-        'sentence_transformers'
+        'sentence_transformers',
+        'onnxruntime'
     ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=['matplotlib', 'tkinter', 'IPython', 'notebook', 'jupyter', 'pytest'],
+    excludes=[
+        'matplotlib', 'tkinter', 'IPython', 'notebook', 'jupyter', 'pytest',
+        'torch', 'torchvision', 'torchaudio', 'torch.distributions', 'torch.testing'
+    ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,

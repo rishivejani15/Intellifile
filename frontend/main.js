@@ -504,7 +504,7 @@ function stopWatchingDirectory(directoryPath) {
 }
 
 function startPython() {
-  const appDataDir = path.join(app.getPath('userData'), 'Intellifile');
+  const appDataDir = app.getPath('userData');
   const pythonEnv = { ...process.env };
   if (!pythonEnv.IF_INDEX_SCOPE) {
     pythonEnv.IF_INDEX_SCOPE = 'all';
@@ -591,6 +591,9 @@ function startPython() {
       resolve({ error: 'Python engine crashed' });
     }
     pendingRequests.clear();
+    autoIndexRequested = false;
+    indexInProgress = false;
+    pythonReadyForIndexing = false;
   });
 }
 
@@ -618,7 +621,7 @@ function startChatBackend() {
       return;
     }
 
-    const appDataDir = path.join(app.getPath('userData'), 'Intellifile');
+    const appDataDir = app.getPath('userData');
     const pythonEnv = { ...process.env };
     pythonEnv.IF_DATA_DIR = path.join(appDataDir, 'backend', 'data');
     pythonEnv.IF_MODELS_DIR = path.join(appDataDir, 'backend', 'models');
@@ -1276,7 +1279,7 @@ function registerIpcHandlers() {
   });
 
   ipcMain.handle('offline-setup-status', async () => {
-    const appDataDir = path.join(app.getPath('userData'), 'Intellifile');
+    const appDataDir = app.getPath('userData');
     const modelsDir = path.join(appDataDir, 'backend', 'models');
     // Check if models exist (at least one gguf and the sentence transformer folder)
     let hasChatModel = false;
@@ -1299,7 +1302,7 @@ function registerIpcHandlers() {
     if (setupProcess) return { success: false, error: 'Setup already running' };
     
     return new Promise((resolve) => {
-      const appDataDir = path.join(app.getPath('userData'), 'Intellifile');
+      const appDataDir = app.getPath('userData');
       let exePath;
       if (isDev) {
         exePath = PYTHON_EXECUTABLE;
@@ -1336,7 +1339,19 @@ function registerIpcHandlers() {
 
       setupProcess.on('close', (code) => {
         setupProcess = null;
-        resolve({ success: code === 0 });
+        if (code === 0) {
+          console.log('[Setup] Setup completed successfully. Restarting Python engine to load models...');
+          if (pyProcess) {
+            pyProcess.kill(); // The 'close' listener in startPython will handle cleanup
+          }
+          // Give it a tiny delay to ensure the port/locks are released
+          setTimeout(() => {
+            startPython();
+            resolve({ success: true });
+          }, 1000);
+        } else {
+          resolve({ success: false });
+        }
       });
     });
   });
