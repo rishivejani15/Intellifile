@@ -187,12 +187,46 @@ while True:
 
         elif action == "model_status":
             try:
-                # Return whether embedding model is loaded and any load error
                 from core.model import is_model_loaded, MODEL_LOAD_ERROR
                 loaded = is_model_loaded()
                 print(json.dumps({"_id": req_id, "loaded": loaded, "error": MODEL_LOAD_ERROR}), flush=True)
             except Exception as e:
                 print(json.dumps({"_id": req_id, "error": f"Model status check failed: {e}"}), flush=True)
+
+        elif action == "chat_ingest":
+            try:
+                from chat.backend.llm import ingest_file as chat_ingest_file
+                file_path = request.get("file_path")
+                if file_path and os.path.exists(file_path):
+                    result = chat_ingest_file(file_path)
+                    print(json.dumps({"_id": req_id, "success": True, "data": result}), flush=True)
+                else:
+                    print(json.dumps({"_id": req_id, "error": f"File not found: {file_path}"}), flush=True)
+            except Exception as e:
+                print(json.dumps({"_id": req_id, "error": f"Chat ingest failed: {e}"}), flush=True)
+
+        elif action == "chat_clear":
+            try:
+                from chat.backend.chat_store import reset_chat_store
+                from chat.backend.llm import reset_chat_history
+                reset_chat_store()
+                reset_chat_history()
+                print(json.dumps({"_id": req_id, "success": True}), flush=True)
+            except Exception as e:
+                print(json.dumps({"_id": req_id, "error": f"Chat clear failed: {e}"}), flush=True)
+
+        elif action == "chat":
+            try:
+                # Import LLM chat functions locally to avoid heavy load on boot
+                from chat.backend.llm import chat
+                query = request.get("query", "")
+                answer_parts = list(chat(query, chunks=None, stream=False))
+                answer = "".join(answer_parts).strip()
+                if not answer:
+                    answer = "I could not generate an answer."
+                print(json.dumps({"_id": req_id, "success": True, "response": answer}), flush=True)
+            except Exception as e:
+                print(json.dumps({"_id": req_id, "error": f"Chat failed: {e}"}), flush=True)
 
         elif action == "delete_file":
             try:

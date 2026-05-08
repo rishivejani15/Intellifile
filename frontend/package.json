@@ -8,7 +8,6 @@
     "start": "concurrently \"npm run react-start\" \"npm run electron-start\"",
     "react-start": "react-scripts start",
     "build": "react-scripts build",
-    "dist": "electron-builder",
     "pack": "electron-builder --dir",
     "electron-start": "wait-on http://localhost:3000 && electron .",
     "electron-dev": "electron .",
@@ -20,6 +19,9 @@
     "extends": null,
     "appId": "com.intellifile.app",
     "productName": "IntelliFile",
+    "extraMetadata": {
+      "main": "main.js"
+    },
     "win": {
       "target": "nsis"
     },
@@ -81,30 +83,5 @@
       "last 1 firefox version",
       "last 1 safari version"
     ]
-  },
-  "build": {
-    "appId": "com.intellifile.app",
-    "productName": "IntelliFile",
-    "files": [
-      "build/**/*",
-      "main.js",
-      "preload.js",
-      "system_roots.js",
-      "sync_engine.js",
-      "debug_merkle.js"
-    ],
-    "extraResources": [
-      {
-        "from": "../backend",
-        "to": "backend",
-        "filter": [
-          "**/*",
-          "!models/**"
-        ]
-      }
-    ],
-    "win": {
-      "target": "nsis"
-    }
   }
 }

@@ -81,6 +81,42 @@ def _filename_search(query, top_k):
         conn.close()
 
 
+def _date_range_search(top_k, date_from=None, date_to=None):
+    """Direct SQL query for files within a creation-date range.
+    
+    Used when the user issues a date-only query (e.g. 'files of august 2022')
+    with no semantic keywords, so FAISS/FTS5 have nothing to match on.
+    """
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        conditions = []
+        params = []
+        if date_from is not None:
+            conditions.append("created_time >= ?")
+            params.append(date_from)
+        if date_to is not None:
+            conditions.append("created_time <= ?")
+            params.append(date_to)
+
+        where = " AND ".join(conditions) if conditions else "1=1"
+        cur.execute(
+            f"""SELECT path, created_time FROM files
+                WHERE {where}
+                ORDER BY created_time DESC
+                LIMIT ?""",
+            params + [top_k],
+        )
+        return [
+            {"path": row[0], "score": 1.0, "created_time": row[1]}
+            for row in cur.fetchall()
+        ]
+    except Exception:
+        return []
+    finally:
+        conn.close()
+
+
 def semantic_search(query, top_k=20, min_similarity=0.15, date_from=None, date_to=None):
     """
     Hybrid search: FAISS semantic + FTS5 keyword + filename match,
@@ -91,6 +127,15 @@ def semantic_search(query, top_k=20, min_similarity=0.15, date_from=None, date_t
 
     Returns list of dicts: {path, score, created_time} sorted by relevance.
     """
+
+    # ── Fast path: date-only query (no keywords to search) ──
+    # When the user asks "files of august 2022" the NLP parser strips
+    # everything, leaving an empty query string.  FAISS and FTS5 cannot
+    # match on an empty string, so we fall through to a direct SQL
+    # date-range lookup instead.
+    if not query.strip() and (date_from is not None or date_to is not None):
+        return _date_range_search(top_k, date_from=date_from, date_to=date_to)
+
     fetch_k = top_k * 5  # over-fetch for better fusion
 
     sem_hits = _faiss_search(query, fetch_k, min_sim=min_similarity)
@@ -124,15 +169,17 @@ def semantic_search(query, top_k=20, min_similarity=0.15, date_from=None, date_t
     conn = get_connection()
     cur = conn.cursor()
 
-    placeholders = ",".join("?" * len(all_ids))
-    cur.execute(
-        f"""SELECT chunks.id, files.path, files.created_time
-            FROM chunks
-            JOIN files ON chunks.file_id = files.id
-            WHERE chunks.id IN ({placeholders})""",
-        all_ids,
-    )
-    rows = cur.fetchall()
+    rows = []
+    if all_ids:
+        placeholders = ",".join("?" * len(all_ids))
+        cur.execute(
+            f"""SELECT chunks.id, files.path, files.created_time
+                FROM chunks
+                JOIN files ON chunks.file_id = files.id
+                WHERE chunks.id IN ({placeholders})""",
+            all_ids,
+        )
+        rows = cur.fetchall()
 
     # ── Also load created_time for filename-matched files ──
     file_created = {}

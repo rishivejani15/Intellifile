@@ -1,13 +1,18 @@
 # -*- mode: python ; coding: utf-8 -*-
+from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs
 
 block_cipher = None
+
+extra_datas = collect_data_files('llama_cpp')
+extra_binaries = collect_dynamic_libs('llama_cpp')
 
 a = Analysis(
     ['engine_server.py'],
     pathex=[],
-    binaries=[],
-    datas=[],
+    binaries=extra_binaries,
+    datas=extra_datas,
     hiddenimports=[
+        'llama_cpp',
         'torch',
         'sentence_transformers',
         'faiss',

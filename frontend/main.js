@@ -217,6 +217,8 @@ let pendingRequests = new Map();  // requestId -> { resolve, timeout }
 let requestCounter = 0;
 let autoIndexRequested = false;
 let indexInProgress = false;
+let lastIndexMessage = '';
+let lastIndexStatus = null;
 let fileWatchers = new Map();
 let directoryWatchers = new Map();
 let fileContents = new Map();
@@ -553,8 +555,11 @@ function startPython() {
         const id = parsed._id;
 
         // Forward progress messages to the renderer
-        if (parsed.type === 'progress' && mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send('index-progress', parsed);
+        if (parsed.type === 'progress') {
+          lastIndexStatus = parsed;
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('index-progress', parsed);
+          }
         }
 
         if (id && pendingRequests.has(id)) {
@@ -852,6 +857,26 @@ function parseDateFromQuery(rawQuery) {
   };
 }
 
+ipcMain.handle('ingest-file', async (event, filePath) => {
+  return sendToPython({ action: 'chat_ingest', file_path: filePath });
+});
+
+ipcMain.handle('chat-ingest-file', async (event, filePath) => {
+  return sendToPython({ action: 'chat_ingest', file_path: filePath });
+});
+
+ipcMain.handle('chat', async (event, query) => {
+  return sendToPython({ action: 'chat', query: query });
+});
+
+ipcMain.handle('chat-ask', async (event, query) => {
+  return sendToPython({ action: 'chat', query: query });
+});
+
+ipcMain.handle('clear-faiss', async () => {
+  return sendToPython({ action: 'chat_clear' });
+});
+
 ipcMain.handle("search", async (_, query) => {
   console.log('[IPC] search called, pyReady:', pyReady, 'query:', query);
   const { cleanQuery, dateFrom, dateTo } = parseDateFromQuery(query);
@@ -866,7 +891,12 @@ ipcMain.handle("search", async (_, query) => {
 
 ipcMain.handle("search-status", async () => {
   console.log('[IPC] search-status called, pyReady:', pyReady);
-  return { ready: pyReady };
+  return { 
+    ready: pyReady, 
+    indexing: indexInProgress,
+    lastIndexMessage,
+    lastIndexStatus 
+  };
 });
 
 ipcMain.handle('indexing-preferences-get', async () => {
@@ -1197,6 +1227,16 @@ let mainWindow;
 let ipcHandlersRegistered = false;
 
 function notifyIndexComplete(payload) {
+  lastIndexStatus = null;
+  const skipped = Number(payload?.data?.skipped_total || payload?.skipped_total || 0);
+  if (payload && payload.error) {
+    lastIndexMessage = `Indexing failed: ${payload.error}`;
+  } else if (skipped > 0) {
+    lastIndexMessage = `Index updated (skipped ${skipped} protected ${skipped === 1 ? 'item' : 'items'})`;
+  } else {
+    lastIndexMessage = 'Index updated';
+  }
+
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('index-complete', payload || {});
   }

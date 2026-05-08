@@ -1,3 +1,4 @@
+--extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu
 faiss-cpu 
 sentence-transformers 
 pypdf 
@@ -17,3 +18,4 @@ uvicorn
 pydantic-settings
 pydantic
 sentence-transformers[onnx] 
+llama-cpp-python

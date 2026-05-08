@@ -5,6 +5,7 @@ import ChatSidebar from './components/ChatSidebar';
 import SyncManager from './components/Sync/SyncManager';
 import LogsPanel from './components/LogsPanel';
 import OfflineSetup from './components/OfflineSetup';
+import ModelDownloadModal from './components/ModelDownloadModal';
 
 const ipcRenderer = window.electron?.ipcRenderer;
 
@@ -16,6 +17,7 @@ function App() {
   const [showChatSidebar, setShowChatSidebar] = useState(false);
   const [selectedFileForChat, setSelectedFileForChat] = useState(null);
   const [setupComplete, setSetupComplete] = useState(false);
+  const [showModelModal, setShowModelModal] = useState(false);
 
   useEffect(() => {
     console.log('App mounted, ipcRenderer available:', !!ipcRenderer);
@@ -118,12 +120,6 @@ function App() {
                 >
                   Open in External Editor
                 </button>
-                <button
-                  className="toolbar-btn secondary"
-                  onClick={openModelDownloadModal}
-                >
-                  Download AI models
-                </button>
                 <span className="toolbar-hint">
                   {selectedFile ? 'Saving will trigger AI versioning.' : 'Select a file.'}
                 </span>
@@ -151,6 +147,11 @@ function App() {
       )}
 
       {!setupComplete && <OfflineSetup onComplete={() => setSetupComplete(true)} />}
+
+      <ModelDownloadModal 
+        visible={showModelModal} 
+        onClose={() => setShowModelModal(false)} 
+      />
     </div>
   );
 }

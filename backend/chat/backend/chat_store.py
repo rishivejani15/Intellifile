@@ -265,3 +265,13 @@ def search_chat_chunks(query: str, top_k: int = 5, min_similarity: float = 0.18)
 def get_chat_index_size() -> int:
     idx = load_chat_index()
     return int(idx.ntotal) if idx is not None else 0
+
+def get_first_chat_chunks(top_n: int = 3) -> List[Tuple[str, float]]:
+    conn = get_chat_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT text FROM chunks ORDER BY chunk_index ASC LIMIT ?", (top_n,))
+    rows = cur.fetchall()
+    conn.close()
+    
+    # Return with a dummy high score of 1.0 since these are fallback chunks
+    return [(text, 1.0) for text, in rows]

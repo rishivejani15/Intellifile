@@ -722,9 +722,26 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
     const checkEngine = async () => {
       try {
         const status = await window.intellifile?.searchStatus();
-        if (status && status.ready) {
-          setEngineReady(true);
-          console.log('[FileExplorer] ✅ Engine ready');
+        if (status) {
+          if (status.ready) {
+            setEngineReady(true);
+            console.log('[FileExplorer] ✅ Engine ready');
+          }
+          if (typeof status.indexing === 'boolean') {
+            setIndexing(status.indexing);
+          }
+          if (status.lastIndexMessage) {
+            setIndexMessage(status.lastIndexMessage);
+          }
+          if (status.lastIndexStatus) {
+            setIndexPhase(status.lastIndexStatus.phase || '');
+            setIndexDetail(status.lastIndexStatus.detail || '');
+            setIndexPct(typeof status.lastIndexStatus.pct === 'number' ? status.lastIndexStatus.pct : null);
+          }
+          
+          if (!status.ready) {
+            setTimeout(checkEngine, 2000);
+          }
         } else {
           setTimeout(checkEngine, 2000);
         }
@@ -759,7 +776,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
       if (payload && payload.error) {
         setIndexMessage(`Indexing failed: ${payload.error}`);
       } else {
-        const skipped = Number(payload?.skipped_total || 0);
+        const skipped = Number(payload?.data?.skipped_total || payload?.skipped_total || 0);
         if (skipped > 0) {
           setIndexMessage(`Index updated (skipped ${skipped} protected ${skipped === 1 ? 'item' : 'items'})`);
         } else {
