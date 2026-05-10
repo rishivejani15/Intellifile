@@ -1,7 +1,7 @@
 import os
 import concurrent.futures
 
-# ONLY human-readable document formats — no code, no system files
+# Only human-readable document formats — no code, no system files
 SUPPORTED_EXT = (
     ".pdf",
     ".docx",
@@ -9,28 +9,6 @@ SUPPORTED_EXT = (
     ".pptx",
     ".csv",
     ".xlsx", ".xls",
-)
-
-# Skip code files for any programming language
-CODE_EXT = (
-    ".py", ".pyi", ".ipynb",
-    ".js", ".jsx", ".ts", ".tsx",
-    ".java", ".kt", ".kts",
-    ".c", ".h", ".cc", ".cpp", ".hpp",
-    ".cs",
-    ".go",
-    ".rs",
-    ".rb",
-    ".php",
-    ".swift",
-    ".m", ".mm",
-    ".scala",
-    ".lua",
-    ".dart",
-    ".r", ".jl",
-    ".sh", ".bash", ".zsh",
-    ".ps1", ".bat", ".cmd",
-    ".sql",
 )
 
 # Skip common junk/temporary/system-like files even in user folders
@@ -65,9 +43,21 @@ def _is_supported_file(filename):
         return False
     if name.endswith(SKIP_EXT):
         return False
-    if name.endswith(CODE_EXT):
-        return False
     return name.endswith(SUPPORTED_EXT)
+
+
+def is_indexable_document(path):
+    """Return True when a path is eligible for content indexing."""
+    if not path:
+        return False
+
+    lower_path = str(path).lower()
+    filename = os.path.basename(lower_path)
+    if not _is_supported_file(filename):
+        return False
+
+    ext = os.path.splitext(filename)[1].lower()
+    return ext in SUPPORTED_EXT
 
 
 def _has_system_attrs(stat_result):

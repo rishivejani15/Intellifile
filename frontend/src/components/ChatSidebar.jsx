@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import './ChatSidebar.css';
+import { showErrorToast, showToast } from '../utils/toast';
 
 function ChatSidebar({ file, onClose }) {
   const [messages, setMessages] = useState([]);
@@ -25,16 +26,26 @@ function ChatSidebar({ file, onClose }) {
         } else if (result && typeof result === 'object') {
           if (result.error) {
             statusMessage = `Failed to ingest file: ${result.error}`;
+            showErrorToast('Could not ingest file.', result.error || 'The file could not be prepared for chat.', 'Close the file in other apps and try again.');
           } else {
             statusMessage = `File "${file.name}" has been ingested. You can now ask me questions about it!`;
+            showToast('File ready for chat.', {
+              type: 'success',
+              message: `"${file.name}" has been added to the chat context.`,
+            });
           }
         } else {
           statusMessage = `File "${file.name}" has been ingested. You can now ask me questions about it!`;
+          showToast('File ready for chat.', {
+            type: 'success',
+            message: `"${file.name}" has been added to the chat context.`,
+          });
         }
 
         setMessages([{ role: 'ai', content: statusMessage }]);
       } catch (error) {
-        setMessages([{ role: 'ai', content: `Failed to ingest file: ${error.message}` }]);
+      setMessages([{ role: 'ai', content: `Failed to ingest file: ${error.message}` }]);
+      showErrorToast('Could not ingest file.', error?.message || 'The file could not be prepared for chat.', 'Close the file in other apps and try again.');
       } finally {
         setIngesting(false);
       }
@@ -42,7 +53,7 @@ function ChatSidebar({ file, onClose }) {
     if (file?.path) {
       ingestFile();
     }
-  }, [file?.path]);
+  }, [file?.path, file?.name]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -68,6 +79,7 @@ function ChatSidebar({ file, onClose }) {
       } else if (response && typeof response === 'object') {
         if (response.error) {
           responseText = `Error: ${response.error}`;
+          showErrorToast('Chat request failed.', response.error || 'The chat engine rejected the message.', 'Try again after the model finishes loading.');
         } else if (response.response) {
           responseText = response.response;
         } else {
@@ -82,6 +94,7 @@ function ChatSidebar({ file, onClose }) {
     } catch (error) {
       const errorMessage = { role: 'ai', content: `Error: ${error.message || 'Failed to get response'}` };
       setMessages(prev => [...prev, errorMessage]);
+      showErrorToast('Chat request failed.', error?.message || 'Failed to get a response.', 'Check your connection or wait for the model to finish loading.');
     } finally {
       setLoading(false);
     }
@@ -91,7 +104,7 @@ function ChatSidebar({ file, onClose }) {
     try {
       await window.intellifile.clearFaiss();
     } catch (error) {
-      console.error('Error clearing FAISS:', error);
+      showErrorToast('Could not clear chat context.', error?.message || 'The local index could not be cleared.', 'Close and reopen the chat panel, then try again.');
     }
     onClose();
   };

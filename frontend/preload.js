@@ -99,6 +99,17 @@ contextBridge.exposeInMainWorld('intellifile', {
   ingestFileForChat: (filePath) => {
     return ipcRenderer.invoke('chat-ingest-file', filePath);
   },
+  downloadModel: () => {
+    return ipcRenderer.invoke('download-model');
+  },
+  modelStatus: () => {
+    return ipcRenderer.invoke('model-status');
+  },
+  onModelDownloadLog: (callback) => {
+    const handler = (_event, line) => callback(line);
+    ipcRenderer.on('model-download-log', handler);
+    return () => ipcRenderer.off('model-download-log', handler);
+  },
   listVersions: (filePath) => {
     return ipcRenderer.invoke('versions-list', filePath);
   },
@@ -186,8 +197,8 @@ contextBridge.exposeInMainWorld('intellifile', {
   getFileDetails: (filePath) => {
     return ipcRenderer.invoke('get-file-details', filePath);
   },
-  openTerminalHere: (dirPath) => {
-    return ipcRenderer.invoke('open-terminal-here', dirPath);
+  openTerminalHere: (dirPath, options = {}) => {
+    return ipcRenderer.invoke('open-terminal-here', dirPath, options);
   },
   openInVSCode: (targetPath) => {
     return ipcRenderer.invoke('open-in-vscode', targetPath);
@@ -198,4 +209,31 @@ contextBridge.exposeInMainWorld('intellifile', {
   getThumbnail: (filePath) => {
     return ipcRenderer.invoke('get-thumbnail', filePath);
   },
+
+  // ── Offline Setup & Logs ──
+  getLogs: () => {
+    return ipcRenderer.invoke('get-logs');
+  },
+  clearLogs: () => {
+    return ipcRenderer.invoke('clear-logs');
+  },
+  offlineSetupStatus: () => {
+    return ipcRenderer.invoke('offline-setup-status');
+  },
+  offlineSetupRun: () => {
+    return ipcRenderer.invoke('offline-setup-run');
+  },
+  resetOfflineSetup: () => {
+    return ipcRenderer.invoke('reset-offline-setup');
+  },
+  onBackendLog: (callback) => {
+    const handler = (_event, log) => callback(log);
+    ipcRenderer.on('backend-log', handler);
+    return () => ipcRenderer.off('backend-log', handler);
+  },
+  onOfflineSetupProgress: (callback) => {
+    const handler = (_event, progress) => callback(progress);
+    ipcRenderer.on('offline-setup-progress', handler);
+    return () => ipcRenderer.off('offline-setup-progress', handler);
+  }
 });

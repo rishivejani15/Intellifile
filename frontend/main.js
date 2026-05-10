@@ -1,5 +1,7 @@
 const { app, BrowserWindow, Menu, ipcMain, shell, dialog, clipboard, nativeImage } = require('electron');
+const { autoUpdater } = require('electron-updater');
 const path = require('path');
+const { pathToFileURL } = require('url');
 const fs = require('fs');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
@@ -12,6 +14,7 @@ const PROJECT_ROOT = path.join(__dirname, '..');
 
 const DEFAULT_INDEXING_PREFS = {
   allowProtectedIndexing: false,
+  offlineSetupCompleted: false,
 };
 
 let indexingPreferences = { ...DEFAULT_INDEXING_PREFS };
@@ -48,6 +51,39 @@ function getAllowProtectedIndexing() {
   return !!indexingPreferences.allowProtectedIndexing;
 }
 
+function getOfflineSetupMarkerPath() {
+  return path.join(app.getPath('userData'), 'offline-setup.done');
+}
+
+function markOfflineSetupComplete() {
+  try {
+    fs.writeFileSync(getOfflineSetupMarkerPath(), 'ok', 'utf-8');
+  } catch (err) {
+    console.warn('[Setup] Failed to write offline setup marker:', err.message || err);
+  }
+}
+
+function hasOfflineSetupCompleted() {
+  try {
+    return fs.existsSync(getOfflineSetupMarkerPath()) || !!indexingPreferences.offlineSetupCompleted;
+  } catch (err) {
+    return !!indexingPreferences.offlineSetupCompleted;
+  }
+}
+
+function getLogFilePath() {
+  return path.join(app.getPath('userData'), 'intellifile.log');
+}
+
+function persistLogEntry(logEntry) {
+  try {
+    const line = `[${logEntry.timestamp}] [${logEntry.category}]${logEntry.isError ? ' [ERROR]' : ''} ${logEntry.message}\n`;
+    fs.appendFileSync(getLogFilePath(), line, 'utf-8');
+  } catch (err) {
+    originalConsoleWarn('[Logs] Failed to write log file:', err.message || err);
+  }
+}
+
 const venvCandidates = [
   path.join(PROJECT_ROOT,'backend', '.venv', 'Scripts', 'python.exe'),
   path.join(PROJECT_ROOT,'backend' ,'.venv', 'Scripts', 'python.exe'),
@@ -62,8 +98,186 @@ if (!(venvCandidates.some((p) => fs.existsSync(p)))) {
 
 console.log('[Python] Using executable:', PYTHON_EXECUTABLE);
 
-// Check if running in development mode (force true for now since React dev server is running)
-const isDev = true;
+const isDev = !app.isPackaged;
+const CHAT_ENABLED = false;
+
+// Auto-updater configuration
+let updateAvailable = false;
+let updateDownloaded = false;
+const UPDATE_CHECK_STATE_FILE = 'github-update-check.json';
+
+function getLocalDateKey(date = new Date()) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function getUpdateCheckStatePath() {
+  return path.join(app.getPath('userData'), UPDATE_CHECK_STATE_FILE);
+}
+
+function getLastUpdateCheckDate() {
+  try {
+    const statePath = getUpdateCheckStatePath();
+    if (!fs.existsSync(statePath)) return null;
+    const raw = fs.readFileSync(statePath, 'utf-8');
+    const parsed = JSON.parse(raw);
+    return typeof parsed.lastCheckedDate === 'string' ? parsed.lastCheckedDate : null;
+  } catch (err) {
+    console.warn('[Updater] Failed to read last check state:', err.message || err);
+    return null;
+  }
+}
+
+function markUpdateCheckCompleted() {
+  try {
+    const statePath = getUpdateCheckStatePath();
+    const payload = {
+      lastCheckedDate: getLocalDateKey(),
+      lastCheckedAt: new Date().toISOString(),
+    };
+    fs.writeFileSync(statePath, JSON.stringify(payload, null, 2), 'utf-8');
+  } catch (err) {
+    console.warn('[Updater] Failed to persist last check state:', err.message || err);
+  }
+}
+
+function hasCheckedForUpdatesToday() {
+  return getLastUpdateCheckDate() === getLocalDateKey();
+}
+
+async function checkGitHubUpdatesOncePerDay({ force = false } = {}) {
+  if (isDev) {
+    return { success: true, skipped: true, reason: 'development-mode' };
+  }
+
+  if (!force && hasCheckedForUpdatesToday()) {
+    return { success: true, skipped: true, reason: 'already-checked-today' };
+  }
+
+  try {
+    const result = await autoUpdater.checkForUpdates();
+    markUpdateCheckCompleted();
+    return {
+      success: true,
+      updateAvailable: !!(result && result.updateInfo),
+      updateInfo: result ? result.updateInfo : null,
+    };
+  } catch (err) {
+    markUpdateCheckCompleted();
+    return { success: false, error: err.message || String(err) };
+  }
+}
+
+function initializeUpdater() {
+  if (isDev) {
+    console.log('[Updater] Disabled in development mode');
+    return;
+  }
+
+  try {
+    autoUpdater.checkForUpdatesAndNotify();
+
+    autoUpdater.on('update-available', (info) => {
+      updateAvailable = true;
+      console.log('[Updater] Update available:', info.version);
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('update-available', { version: info.version });
+      }
+    });
+
+    autoUpdater.on('update-downloaded', (info) => {
+      updateDownloaded = true;
+      console.log('[Updater] Update downloaded:', info.version);
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('update-downloaded', { version: info.version });
+      }
+    });
+
+    autoUpdater.on('error', (err) => {
+      console.error('[Updater] Error:', err.message || err);
+    });
+
+    checkGitHubUpdatesOncePerDay().then((result) => {
+      if (result && result.skipped) {
+        console.log('[Updater] Skipped daily GitHub version check:', result.reason);
+      } else if (result && result.success) {
+        console.log('[Updater] Daily GitHub version check completed');
+      } else if (result && !result.success) {
+        console.warn('[Updater] Daily GitHub version check failed:', result.error);
+      }
+    });
+  } catch (err) {
+    console.warn('[Updater] Initialization failed:', err.message || err);
+  }
+}
+
+let logBuffer = [];
+const MAX_LOG_LINES = 1000;
+
+function appendLog(category, message, isError = false) {
+  const timestamp = new Date().toISOString().split('T')[1].slice(0, -1);
+  const logEntry = { timestamp, category, message, isError };
+  
+  logBuffer.push(logEntry);
+  if (logBuffer.length > MAX_LOG_LINES) {
+    logBuffer.shift();
+  }
+
+  persistLogEntry(logEntry);
+  
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('backend-log', logEntry);
+  }
+}
+
+// Override console methods to capture them
+const originalConsoleLog = console.log;
+const originalConsoleError = console.error;
+const originalConsoleWarn = console.warn;
+
+console.log = function(...args) {
+  originalConsoleLog.apply(console, args);
+  if (args.length > 0 && typeof args[0] === 'string' && args[0].startsWith('[')) {
+    const match = args[0].match(/^\[(.*?)\]/);
+    if (match) {
+      appendLog(match[1], args.join(' ').replace(/^\[.*?\]\s*/, ''));
+    } else {
+      appendLog('Main', args.join(' '));
+    }
+  } else {
+    appendLog('Main', args.join(' '));
+  }
+};
+
+console.error = function(...args) {
+  originalConsoleError.apply(console, args);
+  if (args.length > 0 && typeof args[0] === 'string' && args[0].startsWith('[')) {
+    const match = args[0].match(/^\[(.*?)\]/);
+    if (match) {
+      appendLog(match[1], args.join(' ').replace(/^\[.*?\]\s*/, ''), true);
+    } else {
+      appendLog('Main', args.join(' '), true);
+    }
+  } else {
+    appendLog('Main', args.join(' '), true);
+  }
+};
+
+console.warn = function(...args) {
+  originalConsoleWarn.apply(console, args);
+  if (args.length > 0 && typeof args[0] === 'string' && args[0].startsWith('[')) {
+    const match = args[0].match(/^\[(.*?)\]/);
+    if (match) {
+      appendLog(match[1], args.join(' ').replace(/^\[.*?\]\s*/, ''), true);
+    } else {
+      appendLog('Main', args.join(' '), true);
+    }
+  } else {
+    appendLog('Main', args.join(' '), true);
+  }
+};
 
 // Supported file extensions
 const EDITABLE_EXTENSIONS = [
@@ -157,6 +371,8 @@ let pendingRequests = new Map();  // requestId -> { resolve, timeout }
 let requestCounter = 0;
 let autoIndexRequested = false;
 let indexInProgress = false;
+let lastIndexMessage = '';
+let lastIndexStatus = null;
 let fileWatchers = new Map();
 let directoryWatchers = new Map();
 let fileContents = new Map();
@@ -446,17 +662,38 @@ function stopWatchingDirectory(directoryPath) {
 }
 
 function startPython() {
-  const scriptPath = path.join(__dirname, "../backend/engine_server.py");
-  console.log('[Python] Starting engine from:', scriptPath);
-   const pythonEnv = { ...process.env };
+  const appDataDir = app.getPath('userData');
+  const pythonEnv = { ...process.env };
   if (!pythonEnv.IF_INDEX_SCOPE) {
     pythonEnv.IF_INDEX_SCOPE = 'all';
   }
-  pyProcess = spawn(PYTHON_EXECUTABLE, [scriptPath], {
-    cwd: path.join(__dirname, '..'),
-    stdio: ['pipe', 'pipe', 'pipe'],
-    env: pythonEnv,
-  });
+  pythonEnv.IF_DATA_DIR = path.join(appDataDir, 'backend', 'data');
+  pythonEnv.IF_MODELS_DIR = path.join(appDataDir, 'backend', 'models');
+
+  if (isDev) {
+    const scriptPath = path.join(__dirname, "../backend/engine_server.py");
+    console.log('[Python] Starting engine from:', scriptPath);
+    pyProcess = spawn(PYTHON_EXECUTABLE, [scriptPath], {
+      cwd: path.join(__dirname, '..'),
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: pythonEnv,
+    });
+  } else {
+    const exePath = path.join(process.resourcesPath, "backend-dist", "engine", "engine.exe");
+    console.log('[Python] Starting frozen engine from:', exePath);
+    pyProcess = spawn(exePath, [], {
+      cwd: path.join(process.resourcesPath, "backend-dist"),
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: pythonEnv,
+    });
+  }
+
+  // Increase max listeners to prevent memory leak warnings during indexing
+  if (pyProcess) {
+    pyProcess.setMaxListeners(100);
+    pyProcess.stdout?.setMaxListeners(100);
+    pyProcess.stderr?.setMaxListeners(100);
+  }
 
   pyProcess.stdout.on("data", (data) => {
     const text = data.toString();
@@ -483,8 +720,11 @@ function startPython() {
         const id = parsed._id;
 
         // Forward progress messages to the renderer
-        if (parsed.type === 'progress' && mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send('index-progress', parsed);
+        if (parsed.type === 'progress') {
+          lastIndexStatus = parsed;
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('index-progress', parsed);
+          }
         }
 
         if (id && pendingRequests.has(id)) {
@@ -516,6 +756,9 @@ function startPython() {
       resolve({ error: 'Python engine crashed' });
     }
     pendingRequests.clear();
+    autoIndexRequested = false;
+    indexInProgress = false;
+    pythonReadyForIndexing = false;
   });
 }
 
@@ -543,10 +786,23 @@ function startChatBackend() {
       return;
     }
 
-    chatBackendProcess = spawn(PYTHON_EXECUTABLE, ['-m', 'uvicorn', 'backend.chat.backend.main:app', '--host', '127.0.0.1', '--port', '8000'], {
-      cwd: path.join(__dirname, '..'),
-      stdio: ['ignore', 'pipe', 'pipe']
-    });
+    const appDataDir = app.getPath('userData');
+    const pythonEnv = { ...process.env };
+    pythonEnv.IF_DATA_DIR = path.join(appDataDir, 'backend', 'data');
+    pythonEnv.IF_MODELS_DIR = path.join(appDataDir, 'backend', 'models');
+
+    if (isDev) {
+      chatBackendProcess = spawn(PYTHON_EXECUTABLE, ['-m', 'uvicorn', 'backend.chat.backend.main:app', '--host', '127.0.0.1', '--port', '8000'], {
+        cwd: path.join(__dirname, '..'),
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: pythonEnv
+      });
+    } else {
+      // For now, don't start the chat backend in prod if not packaged.
+      // We will need a chat.exe similar to engine.exe.
+      console.log('[ChatBackend] Prod mode - skipping chat backend for now unless chat.exe exists');
+      return;
+    }
 
     chatBackendProcess.stdout.on('data', (d) => console.log('[ChatBackend stdout]', d.toString().trim()));
     chatBackendProcess.stderr.on('data', (d) => console.error('[ChatBackend stderr]', d.toString().trim()));
@@ -909,8 +1165,35 @@ function parseDateFromQuery(rawQuery) {
   };
 }
 
-ipcMain.handle("search", async (_, query) => {
-  console.log('[IPC] search called, pyReady:', pyReady, 'query:', query);
+ipcMain.handle('ingest-file', async (event, filePath) => {
+  if (!CHAT_ENABLED) return { success: false, error: 'Chat is disabled by policy.' };
+  return sendToPython({ action: 'chat_ingest', file_path: filePath });
+});
+
+ipcMain.handle('chat-ingest-file', async (event, filePath) => {
+  if (!CHAT_ENABLED) return { success: false, error: 'Chat is disabled by policy.' };
+  return sendToPython({ action: 'chat_ingest', file_path: filePath });
+});
+
+ipcMain.handle('chat', async (event, query) => {
+  if (!CHAT_ENABLED) return { success: false, error: 'Chat is disabled by policy.' };
+  return sendToPython({ action: 'chat', query: query });
+});
+
+ipcMain.handle('chat-ask', async (event, query) => {
+  if (!CHAT_ENABLED) return { success: false, error: 'Chat is disabled by policy.' };
+  return sendToPython({ action: 'chat', query: query });
+});
+
+ipcMain.handle('clear-faiss', async () => {
+  if (!CHAT_ENABLED) return { success: false, error: 'Chat is disabled by policy.' };
+  return sendToPython({ action: 'chat_clear' });
+});
+
+ipcMain.handle("search", async (_, payload) => {
+  const query = typeof payload === 'string' ? payload : payload?.query || '';
+  const rootFolder = typeof payload === 'object' && payload ? payload.rootFolder || payload.rootPath || null : null;
+  console.log('[IPC] search called, pyReady:', pyReady, 'query:', query, 'rootFolder:', rootFolder);
   const { cleanQuery, dateFrom, dateTo } = parseDateFromQuery(query);
   console.log('[IPC] parsed date filter:', { cleanQuery, dateFrom, dateTo });
   return sendToPython({
@@ -918,12 +1201,18 @@ ipcMain.handle("search", async (_, query) => {
     query: cleanQuery,
     date_from: dateFrom,
     date_to: dateTo,
+    root_folder: rootFolder,
   });
 });
 
 ipcMain.handle("search-status", async () => {
   console.log('[IPC] search-status called, pyReady:', pyReady);
-  return { ready: pyReady };
+  return { 
+    ready: pyReady, 
+    indexing: indexInProgress,
+    lastIndexMessage,
+    lastIndexStatus 
+  };
 });
 
 ipcMain.handle('indexing-preferences-get', async () => {
@@ -931,9 +1220,14 @@ ipcMain.handle('indexing-preferences-get', async () => {
 });
 
 ipcMain.handle('indexing-preferences-set', async (_event, updates = {}) => {
-  if (typeof updates.allowProtectedIndexing === 'boolean') {
-    indexingPreferences.allowProtectedIndexing = updates.allowProtectedIndexing;
+  // Merge arbitrary preference keys and persist
+  try {
+    for (const k of Object.keys(updates)) {
+      indexingPreferences[k] = updates[k];
+    }
     saveIndexingPreferences();
+  } catch (e) {
+    console.warn('[Prefs] Failed to update preferences:', e && e.message ? e.message : e);
   }
   return { ...indexingPreferences };
 });
@@ -952,6 +1246,16 @@ ipcMain.handle("index-device", async (_event, options = {}) => {
   return result;  // 30-min timeout for full device
 });
 
+ipcMain.handle('model-status', async () => {
+  // Ask Python engine whether embedding model is loaded
+  try {
+    const res = await sendToPython({ action: 'model_status' }, 10000);
+    return res || { loaded: false };
+  } catch (e) {
+    return { loaded: false, error: e && e.message ? e.message : String(e) };
+  }
+});
+
 // Versioning via Python engine
 ipcMain.handle('get-versions', async (_event, filePath) => {
   return sendToPython({
@@ -959,6 +1263,60 @@ ipcMain.handle('get-versions', async (_event, filePath) => {
     file_path: filePath,
   });
 });
+
+  // Download embedding/chat models (runs setup_offline.py with downloads enabled)
+  ipcMain.handle('download-model', async () => {
+    if (!CHAT_ENABLED) return { success: false, error: 'Chat is disabled by policy.' };
+    return new Promise((resolve) => {
+      try {
+        const scriptPath = path.join(__dirname, '..', 'backend', 'setup_offline.py');
+        const env = { ...process.env, IF_ALLOW_MODEL_DOWNLOAD: '1' };
+        // Prefer per-user models dir inside app userData
+        env.IF_MODELS_DIR = path.join(app.getPath('userData'), 'models');
+        const dl = spawn(PYTHON_EXECUTABLE, [scriptPath], {
+          cwd: path.join(__dirname, '..'),
+          env,
+          stdio: ['ignore', 'pipe', 'pipe']
+        });
+
+        dl.stdout.on('data', (d) => {
+          const s = d.toString();
+          if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('model-download-log', s);
+        });
+        dl.stderr.on('data', (d) => {
+          const s = d.toString();
+          if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('model-download-log', s);
+        });
+
+        dl.on('close', (code) => {
+          // If download succeeded, restart python engine and chat backend so new models load
+          if (code === 0) {
+            try {
+              console.log('[ModelDownload] Restarting Python engine to load new models');
+              if (pyProcess) {
+                try { pyProcess.kill(); } catch (e) { /* ignore */ }
+                pyProcess = null;
+              }
+              if (chatBackendProcess) {
+                try { chatBackendProcess.kill(); } catch (e) { /* ignore */ }
+                chatBackendProcess = null;
+              }
+              // Small delay to let OS release handles
+              setTimeout(() => {
+                startPython();
+                startChatBackend();
+              }, 800);
+            } catch (e) {
+              console.error('[ModelDownload] Failed to restart engine:', e);
+            }
+          }
+          resolve({ success: code === 0, code });
+        });
+      } catch (e) {
+        resolve({ success: false, error: e && e.message ? e.message : String(e) });
+      }
+    });
+  });
 
 ipcMain.handle('versions-list', async (_event, filePath) => {
   const result = await sendToPython({
@@ -1152,9 +1510,12 @@ async function extractZip(zipPath, destDir, onProgress) {
   }
 }
 
-// Calculate folder size recursively
-function calculateFolderSize(folderPath) {
+// Calculate folder size recursively (non-blocking with depth limit)
+function calculateFolderSize(folderPath, depth = 0, maxDepth = 2) {
   let totalSize = 0;
+
+  // Don't recurse too deep to avoid hanging on large directory trees
+  if (depth > maxDepth) return 0;
 
   try {
     const items = fs.readdirSync(folderPath);
@@ -1165,7 +1526,7 @@ function calculateFolderSize(folderPath) {
         const stats = fs.statSync(itemPath);
 
         if (stats.isDirectory()) {
-          totalSize += calculateFolderSize(itemPath);
+          totalSize += calculateFolderSize(itemPath, depth + 1, maxDepth);
         } else {
           totalSize += stats.size;
         }
@@ -1186,6 +1547,16 @@ let mainWindow;
 let ipcHandlersRegistered = false;
 
 function notifyIndexComplete(payload) {
+  lastIndexStatus = null;
+  const skipped = Number(payload?.data?.skipped_total || payload?.skipped_total || 0);
+  if (payload && payload.error) {
+    lastIndexMessage = `Indexing failed: ${payload.error}`;
+  } else if (skipped > 0) {
+    lastIndexMessage = `Index updated (skipped ${skipped} protected ${skipped === 1 ? 'item' : 'items'})`;
+  } else {
+    lastIndexMessage = 'Index updated';
+  }
+
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('index-complete', payload || {});
   }
@@ -1213,6 +1584,197 @@ ipcMain.on('open-file', (event, filePath) => {
 function registerIpcHandlers() {
   if (ipcHandlersRegistered) return;
   ipcHandlersRegistered = true;
+
+  // ── Offline Setup & Logs IPC ──
+  ipcMain.handle('get-logs', () => {
+    return logBuffer;
+  });
+
+  ipcMain.handle('clear-logs', () => {
+    logBuffer = [];
+    try {
+      fs.writeFileSync(getLogFilePath(), '', 'utf-8');
+    } catch (err) {
+      console.warn('[Logs] Failed to clear log file:', err.message || err);
+    }
+    return true;
+  });
+
+  ipcMain.handle('offline-setup-status', async () => {
+    const appDataDir = app.getPath('userData');
+    const modelsDir = path.join(appDataDir, 'backend', 'models');
+    // Check if models exist (at least one gguf and the sentence transformer folder)
+    let hasChatModel = false;
+    let hasEmbeddingModel = false;
+    try {
+      if (fs.existsSync(modelsDir)) {
+        const files = fs.readdirSync(modelsDir);
+        hasChatModel = files.some(f => f.endsWith('.gguf'));
+        hasEmbeddingModel = fs.existsSync(path.join(modelsDir, 'onnx-export')) || files.some(f => f.startsWith('models--BAAI'));
+      }
+    } catch (e) {
+      console.warn('[Setup] Error checking models:', e.message);
+    }
+    
+    const modelsExist = hasEmbeddingModel;
+    const setupCompleted = hasOfflineSetupCompleted();
+
+    if (modelsExist && !setupCompleted) {
+      markOfflineSetupComplete();
+    }
+
+    // Only show setup dialog if models don't exist AND setup hasn't been completed before
+    const needed = !modelsExist && !setupCompleted;
+    
+    return { needed, hasChatModel, hasEmbeddingModel, setupCompleted };
+  });
+
+  let setupProcess = null;
+  ipcMain.handle('offline-setup-run', async (event) => {
+    if (setupProcess) return { success: false, error: 'Setup already running' };
+
+    return new Promise((resolve) => {
+      const appDataDir = app.getPath('userData');
+      let exePath;
+      if (isDev) {
+        exePath = PYTHON_EXECUTABLE;
+      } else {
+        exePath = path.join(process.resourcesPath, "backend-dist", "engine", "engine.exe");
+      }
+
+      const args = isDev
+        ? [path.join(__dirname, "../backend/setup_offline.py"), "--appdata-dir", appDataDir, "--json"]
+        : ["--offline-setup", "--appdata-dir", appDataDir, "--json"];
+
+      // Determine whether chat model will be skipped (we force skip in spawn env)
+      const skipChat = true; // currently we pass IF_SKIP_CHAT_MODEL=1 for installs
+
+      setupProcess = spawn(exePath, args, {
+        cwd: isDev ? path.join(__dirname, '..') : path.join(process.resourcesPath, "backend-dist"),
+        env: { ...process.env, IF_SKIP_CHAT_MODEL: '1' }
+      });
+
+      // Immediately notify renderer that the setup has started and provide initial step/total
+      try {
+        const initialTotal = skipChat ? 2 : 3;
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('offline-setup-progress', {
+            type: 'step', step: 1, total: initialTotal, name: 'Initializing...', status: 'processing', pct: 0
+          });
+        }
+      } catch (e) {
+        console.warn('[Setup] Failed to send initial progress:', e.message || e);
+      }
+
+      // collect stderr to return a useful error message if the process fails
+      let stderrBuffer = '';
+
+      setupProcess.stdout.on('data', (data) => {
+        const lines = data.toString().split('\n');
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          try {
+            const parsed = JSON.parse(line.trim());
+            // If the backend reports totals that include the chat model but we are skipping it,
+            // adjust the total so the UI shows the correct step count.
+            if (parsed && parsed.type === 'step' && parsed.total && skipChat && parsed.total > 2) {
+              parsed.total = Math.max(2, parsed.total - 1);
+            }
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.webContents.send('offline-setup-progress', parsed);
+            }
+          } catch (e) {
+            console.log('[Setup Output]', line.trim());
+          }
+        }
+      });
+
+      setupProcess.stderr.on('data', (data) => {
+        const s = data.toString();
+        stderrBuffer += s;
+        const lines = s.split(/\r?\n|\r/).map((line) => line.trim()).filter(Boolean);
+        let matchedProgress = false;
+
+        for (const line of lines) {
+          const fetchMatch = line.match(/Fetching\s+(\d+)\s+files:\s+(\d+(?:\.\d+)?)%\|.*?\|\s*(\d+)\/(\d+)/i);
+          if (fetchMatch) {
+            matchedProgress = true;
+            const pct = Number(fetchMatch[2]);
+            const processed = Number(fetchMatch[3]);
+            const total = Number(fetchMatch[4]);
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.webContents.send('offline-setup-progress', {
+                type: 'progress',
+                name: 'Embedding Model',
+                status: 'downloading',
+                pct,
+                downloaded_mb: processed,
+                total_mb: total,
+              });
+            }
+            continue;
+          }
+        }
+
+        if (!matchedProgress) {
+          console.error('[Setup Error]', s.trim());
+        } else {
+          console.log('[Setup Progress]', s.trim());
+        }
+      });
+
+      setupProcess.on('close', (code) => {
+        setupProcess = null;
+        if (code === 0) {
+          console.log('[Setup] Setup completed successfully. Marking setup as completed and restarting Python engine...');
+          // Mark setup as completed so we don't show the dialog again
+          indexingPreferences.offlineSetupCompleted = true;
+          saveIndexingPreferences();
+          markOfflineSetupComplete();
+          if (pyProcess) {
+            pyProcess.kill(); // The 'close' listener in startPython will handle cleanup
+          }
+          // Give it a tiny delay to ensure the port/locks are released
+          setTimeout(() => {
+            startPython();
+            resolve({ success: true });
+          }, 1000);
+        } else {
+          const errMsg = stderrBuffer.trim() || `Setup process exited with code ${code}`;
+          try {
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.webContents.send('offline-setup-progress', { type: 'error', message: errMsg });
+            }
+          } catch (e) {}
+          resolve({ success: false, error: errMsg });
+        }
+      });
+    });
+  });
+
+  ipcMain.handle('reset-offline-setup', async () => {
+    try {
+      const appDataDir = app.getPath('userData');
+      const modelsDir = path.join(appDataDir, 'backend', 'models');
+      const setupMarkerPath = getOfflineSetupMarkerPath();
+
+      if (fs.existsSync(modelsDir)) {
+        fs.rmSync(modelsDir, { recursive: true, force: true });
+      }
+
+      if (fs.existsSync(setupMarkerPath)) {
+        fs.rmSync(setupMarkerPath, { force: true });
+      }
+
+      indexingPreferences.offlineSetupCompleted = false;
+      saveIndexingPreferences();
+
+      return { success: true };
+    } catch (err) {
+      console.error('[Setup] Failed to reset offline setup:', err.message || err);
+      return { success: false, error: err.message || 'Failed to reset offline setup.' };
+    }
+  });
 
   // IPC Handlers for file operations
   ipcMain.handle('list-directory', async (event, dirPath, options = {}) => {
@@ -1971,11 +2533,24 @@ function registerIpcHandlers() {
   });
 
   // ── Open Terminal Here ──
-  ipcMain.handle('open-terminal-here', async (event, dirPath) => {
+  // Accepts optional { shell: 'cmd'|'powershell' } on Windows to open specific shells
+  ipcMain.handle('open-terminal-here', async (event, dirPath, options = {}) => {
     try {
       const { exec } = require('child_process');
+      const shellChoice = options?.shell || null;
       if (process.platform === 'win32') {
-        exec(`start powershell -NoExit -Command "Set-Location '${dirPath.replace(/'/g, "''")}'"`);
+        // Prefer explicit cmd if requested
+        if (shellChoice && String(shellChoice).toLowerCase() === 'cmd') {
+          // Use start to open a new cmd.exe and change directory
+          const safePath = String(dirPath).replace(/"/g, '"');
+          exec(`start cmd.exe /K "cd /d \"${safePath}\""`);
+        } else if (shellChoice && String(shellChoice).toLowerCase().includes('powershell')) {
+          const safePath = String(dirPath).replace(/'/g, "''");
+          exec(`start powershell -NoExit -Command "Set-Location '${safePath}'"`);
+        } else {
+          const safePath = String(dirPath).replace(/'/g, "''");
+          exec(`start powershell -NoExit -Command "Set-Location '${safePath}'"`);
+        }
       } else if (process.platform === 'darwin') {
         exec(`open -a Terminal "${dirPath}"`);
       } else {
@@ -2027,6 +2602,21 @@ function registerIpcHandlers() {
     } catch (err) {
       return { success: false, error: err.message };
     }
+  });
+
+  // Update handlers
+  ipcMain.handle('check-for-updates', async () => {
+    const result = await checkGitHubUpdatesOncePerDay();
+    if (result.success) {
+      return result;
+    }
+    console.error('[check-for-updates] Error:', result.error);
+    return result;
+  });
+
+  ipcMain.on('update-restart', () => {
+    console.log('[update-restart] User confirmed restart for update');
+    autoUpdater.quitAndInstall();
   });
   
 }
@@ -2126,6 +2716,9 @@ function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
+    show: false,
+    backgroundColor: '#111827',
+    icon: path.join(__dirname, 'public', 'intellifile_logo.png'),
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -2136,10 +2729,13 @@ function createWindow() {
   // Set win for version watching
   win = mainWindow;
 
+  // Remove the default menu bar (Files, Windows, Exit)
+  Menu.setApplicationMenu(null);
+
   const prodIndexPath = path.join(__dirname, 'build', 'index.html');
   const startUrl = isDev
     ? 'http://localhost:3000'
-    : `file://${prodIndexPath}`;
+    : pathToFileURL(prodIndexPath).href;
 
   if (!isDev && !fs.existsSync(prodIndexPath)) {
     console.error('[UI] build/index.html not found at:', prodIndexPath);
@@ -2164,12 +2760,48 @@ function createWindow() {
     mainWindow.loadURL(startUrl);
   }
 
+  mainWindow.once('ready-to-show', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.show();
+    }
+  });
+
+  mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL) => {
+    console.error('[UI] Failed to load window:', errorCode, errorDescription, validatedURL);
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      const errorHtml = `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>IntelliFile - Load Error</title>
+    <style>
+      body { font-family: Arial, sans-serif; padding: 24px; color: #222; background: #f8fafc; }
+      code { background: #f3f3f3; padding: 2px 4px; }
+    </style>
+  </head>
+  <body>
+    <h2>IntelliFile failed to load</h2>
+    <p>The app window could not load its UI.</p>
+    <p>Please rebuild the frontend and relaunch the app.</p>
+  </body>
+</html>`;
+      mainWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(errorHtml)}`);
+    }
+  });
+
   // Trigger auto-indexing once window is ready and Python is ready
+  // Add a small delay to allow UI to render before heavy indexing starts
   mainWindow.webContents.on('did-finish-load', () => {
     windowReadyForIndexing = true;
-    console.log('[Window] Ready for indexing');
-    tryAutoIndex();
+    console.log('[Window] Ready for indexing — will start in 500ms');
+    // Defer auto-index to give UI time to render
+    setTimeout(() => {
+      tryAutoIndex();
+    }, 500);
   });
+
+  // Increase max event listeners to prevent memory leak warnings during indexing
+  mainWindow.webContents.setMaxListeners(100);
 
   if (isDev) {
     mainWindow.webContents.openDevTools();
@@ -2185,10 +2817,11 @@ function createWindow() {
 app.on('ready', () => {
   loadIndexingPreferences();
   registerIpcHandlers();
+  initializeUpdater();
   startPython();
   startSyncServer();
   ensureSyncEngine();
-  startChatBackend();
+  if (CHAT_ENABLED) startChatBackend();
   createWindow();
 });
 

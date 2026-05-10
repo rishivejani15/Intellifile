@@ -1,5 +1,5 @@
-export async function searchFiles(query) {
-    const response = await window.intellifile.search(query);
+export async function searchFiles(query, rootFolder = null) {
+    const response = await window.intellifile.search({ query, rootFolder });
     return response.results || [];
 }
 

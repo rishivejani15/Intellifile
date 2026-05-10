@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 import os
 import json
 from core.versioning.snapshot_manager import list_versions
+from core.paths import get_storage_dir
 
 class VersionEngine:
     def __init__(self):
@@ -209,8 +210,7 @@ class VersionEngine:
                     fid = generate_sha256(norm_path)
                     
                     # Detect storage path
-                    PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../"))
-                    storage_root = os.path.join(PROJECT_ROOT, "backend", "data", "storage", "versions")
+                    storage_root = os.path.join(get_storage_dir(), "versions")
                     
                     struct_path = os.path.join(storage_root, fid, f"{last_version_id}.structure.json")
                     if os.path.exists(struct_path):

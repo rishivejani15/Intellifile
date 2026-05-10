@@ -4,17 +4,14 @@ from typing import Any
 from datetime import datetime, timezone
 from utils.file_hash import generate_sha256
 from core.versioning.text_diff_engine import generate_diff
+from core.paths import get_storage_dir
 
 
-# Get project root dynamically
-CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.abspath(os.path.join(CURRENT_DIR, "../../../"))
-
-BASE_VERSION_PATH = os.path.join(PROJECT_ROOT, "backend", "data", "storage", "versions")
-INDEX_VERSION_PATH = os.path.join(PROJECT_ROOT, "backend", "data", "storage", "version_index")
+BASE_VERSION_PATH = os.path.join(get_storage_dir(), "versions")
+INDEX_VERSION_PATH = os.path.join(get_storage_dir(), "version_index")
 
 # Clear transient cache on startup to reclaim space
-CACHE_PATH = os.path.join(PROJECT_ROOT, "backend", "data", "storage", "cache")
+CACHE_PATH = os.path.join(get_storage_dir(), "cache")
 if os.path.exists(CACHE_PATH):
     import shutil
     try: shutil.rmtree(CACHE_PATH); os.makedirs(CACHE_PATH)

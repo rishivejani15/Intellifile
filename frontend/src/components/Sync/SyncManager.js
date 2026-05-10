@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { QRCodeCanvas } from 'qrcode.react';
 import './SyncManager.css';
+import { showErrorToast } from '../../utils/toast';
 
 // ── Icons ───────────────────────────────────────────────────────────────────
 
@@ -205,7 +206,7 @@ const [localAddress, setLocalAddress] = useState('');
         }
       }
     } catch (e) {
-      console.error('Failed to load sync files', e);
+      showErrorToast('Sync files not loaded.', e?.message || 'Could not read the sync folder.', 'Check the sync folder path and permissions, then try again.');
     } finally {
       setLoading(false);
     }
@@ -248,7 +249,7 @@ const [localAddress, setLocalAddress] = useState('');
           signalingUrl: savedSettings.signalingUrl,
           sessionId: savedSettings.sessionId,
           isInitiator: savedSettings.isInitiator ?? true,
-        }).catch(e => console.error('Auto-connect failed:', e));
+        }).catch(e => showErrorToast('Auto-connect failed.', e?.message || 'Could not connect to the sync server.', 'Check the signaling URL and your network connection.'));
       }
     }
 
@@ -256,7 +257,13 @@ const [localAddress, setLocalAddress] = useState('');
       clearInterval(interval);
       cleanups.forEach(fn => fn && fn());
     };
-  }, [loadFiles, loadLocalAddress]);  // note: savedSettings is read outside so we just auto-connect on initial load.
+  }, [
+    loadFiles,
+    loadLocalAddress,
+    savedSettings.sessionId,
+    savedSettings.signalingUrl,
+    savedSettings.isInitiator,
+  ]);  // note: savedSettings is read outside so we just auto-connect on initial load.
 
   // ── Auto-dismiss notifications ───────────────────────────────────────
 
@@ -277,7 +284,7 @@ const [localAddress, setLocalAddress] = useState('');
       const res = await window.intellifile.selectFilesForSync();
       if (res.success && res.added > 0) await loadFiles();
     } catch (e) {
-      console.error('Error adding files:', e);
+      showErrorToast('Could not add files.', e?.message || 'The file picker or copy operation failed.', 'Try again and check folder permissions.');
     } finally {
       setLoading(false);
     }
@@ -295,7 +302,7 @@ const [localAddress, setLocalAddress] = useState('');
         }
       }
     } catch (e) {
-      console.error('Error removing file:', e);
+      showErrorToast('Could not remove file.', e?.message || 'The remove operation failed.', 'Check whether the file is in use, then try again.');
     }
   };
 
@@ -349,7 +356,7 @@ const [localAddress, setLocalAddress] = useState('');
       });
       setShowConnectPanel(false);
     } catch (e) {
-      console.error('Connection failed:', e);
+      showErrorToast('Connection failed.', e?.message || 'The sync session could not be created.', 'Check the signaling URL, session code, and network connection.');
     }
   };
 

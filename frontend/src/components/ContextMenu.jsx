@@ -259,7 +259,7 @@ if (!selectedItem) return null;
       <div className="context-menu-item" onClick={() => { onProperties(); onClose(); }}>
         ℹ️ Properties
       </div>
-      {selectedItem && selectedItem.type !== 'folder' && selectedItem.type !== 'drive' && (
+      {onChatWithAI && selectedItem && selectedItem.type !== 'folder' && selectedItem.type !== 'drive' && (
         <div className="context-menu-item" onClick={() => { onChatWithAI(); onClose(); }}>
           🤖 Chat with AI
         </div>

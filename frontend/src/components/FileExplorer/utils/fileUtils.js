@@ -67,7 +67,10 @@ export const sortItems = (items, sortBy, sortDirection = 'asc') => {
     let compareValue = 0;
     switch (sortBy) {
       case 'date':
-        compareValue = a.modified - b.modified;
+        // Prefer created date, fallback to modified date
+        const aDate = (a.created || a.modified) || 0;
+        const bDate = (b.created || b.modified) || 0;
+        compareValue = aDate - bDate;
         break;
       case 'size':
         compareValue = a.size - b.size;

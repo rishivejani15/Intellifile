@@ -187,7 +187,7 @@ def index_files_incremental(root_folder=None, progress_cb=None, allow_protected=
                 conn.commit()
                 batch_data.clear()
 
-            if processed % 200 == 0 or processed == total_to_extract:
+            if processed % 10 == 0 or processed == total_to_extract:
                 pct = int(processed / total_to_extract * 100) if total_to_extract else 100
                 _progress("extract", f"Extracted {processed}/{total_to_extract} files", pct=pct)
                 print(f"  … extracted {processed}/{total_to_extract} files", flush=True)

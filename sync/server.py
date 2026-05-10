@@ -38,6 +38,14 @@ app = FastAPI(title="IntelliFile Local Sync Server")
 connected_clients: list[WebSocket] = []
 _event_loop: asyncio.AbstractEventLoop | None = None
 
+
+def friendly_error(exc: Exception, reason: str, solution: str) -> dict:
+    return {
+        "error": str(exc),
+        "reason": reason,
+        "solution": solution,
+    }
+
 # mDNS handles (stored so stop_mdns can be called on shutdown)
 _zeroconf = None
 _zeroconf_info = None
@@ -56,30 +64,38 @@ _pending_mobile_changes: dict[str, dict] = {}
 @app.get("/status")
 async def status():
     """Health check + connection info."""
-    return JSONResponse({
-        "status": "running",
-        "connected_devices": len(connected_clients),
-        "sync_folder": os.path.abspath(SYNC_FOLDER),
-        "pending_changes": len(_pending_changes),
-    })
+    try:
+        return JSONResponse({
+            "status": "running",
+            "connected_devices": len(connected_clients),
+            "sync_folder": os.path.abspath(SYNC_FOLDER),
+            "pending_changes": len(_pending_changes),
+        })
+    except Exception as exc:
+        log.error("status endpoint failed: %s", exc, exc_info=True)
+        return JSONResponse({"status": "error", **friendly_error(exc, "Could not read sync status.", "Restart the sync server and try again.")}, status_code=500)
 
 
 @app.get("/files")
 async def list_files():
     """List all files in the sync folder with metadata."""
-    files = []
-    if os.path.isdir(SYNC_FOLDER):
-        for root, _, filenames in os.walk(SYNC_FOLDER):
-            for fname in sorted(filenames):
-                abs_path = os.path.join(root, fname)
-                rel_path = os.path.relpath(abs_path, SYNC_FOLDER).replace("\\", "/")
-                stat = os.stat(abs_path)
-                files.append({
-                    "path":     rel_path,
-                    "size":     stat.st_size,
-                    "modified": stat.st_mtime,
-                })
-    return JSONResponse({"files": files, "count": len(files)})
+    try:
+        files = []
+        if os.path.isdir(SYNC_FOLDER):
+            for root, _, filenames in os.walk(SYNC_FOLDER):
+                for fname in sorted(filenames):
+                    abs_path = os.path.join(root, fname)
+                    rel_path = os.path.relpath(abs_path, SYNC_FOLDER).replace("\\", "/")
+                    stat = os.stat(abs_path)
+                    files.append({
+                        "path":     rel_path,
+                        "size":     stat.st_size,
+                        "modified": stat.st_mtime,
+                    })
+        return JSONResponse({"files": files, "count": len(files)})
+    except Exception as exc:
+        log.error("list_files endpoint failed: %s", exc, exc_info=True)
+        return JSONResponse({"files": [], "count": 0, **friendly_error(exc, "Could not list sync files.", "Check the sync folder permissions and try again.")}, status_code=500)
 
 
 # ─── WebSocket endpoint ────────────────────────────────────────────────────────

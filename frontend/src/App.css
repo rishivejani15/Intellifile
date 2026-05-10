@@ -58,15 +58,40 @@ body {
   background-color: var(--card-bg);
   min-height: 55px;
   display: flex;
-  align-items: flex-end;
+  align-items: center;
+  justify-content: space-between;
   padding: 0 20px;
   border-bottom: 1px solid var(--border-color);
+  gap: 20px;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 100%;
+}
+
+.app-logo {
+  width: 64px;
+  height: 64px;
+  object-fit: contain;
+  background: none;
+  border-radius: 0;
+}
+
+.app-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0;
 }
 
 .tab-nav {
   display: flex;
   gap: 16px;
   height: 100%;
+  flex: 1;
 }
 
 .tab-btn {
@@ -291,15 +316,31 @@ body {
   gap: 12px;
 }
 
-.toolbar-btn.primary {
+.toolbar-btn {
   padding: 6px 16px;
-  background: var(--primary-blue);
-  color: white;
-  border: none;
   border-radius: 4px;
   cursor: pointer;
   font-size: 13px;
   font-weight: 500;
+  transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease,
+    opacity 0.2s ease;
+}
+
+.toolbar-btn.primary {
+  background: var(--primary-blue);
+  color: white;
+  border: none;
+}
+
+.toolbar-btn.secondary {
+  background: transparent;
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+}
+
+.toolbar-btn.secondary:hover {
+  border-color: var(--primary-blue);
+  color: var(--primary-blue);
 }
 
 .toolbar-btn.primary:disabled {
@@ -623,8 +664,54 @@ body {
 
 .result-header h2 {
   font-size: 18px;
+}
+
+/* Update Section Styles */
+.update-section {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-left: auto;
+  padding-right: 10px;
+}
+
+.update-status {
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  animation: pulse 2s infinite;
+}
+
+.update-btn {
+  background: linear-gradient(135deg, #10B981 0%, #059669 100%);
+  color: white;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 13px;
   font-weight: 600;
-  color: var(--text-primary);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 8px rgba(16, 185, 129, 0.2);
+}
+
+.update-btn:hover {
+  background: linear-gradient(135deg, #059669 0%, #047857 100%);
+  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+  transform: translateY(-1px);
+}
+
+.update-btn:active {
+  transform: translateY(0);
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.6;
+  }
 }
 
 .save-btn {

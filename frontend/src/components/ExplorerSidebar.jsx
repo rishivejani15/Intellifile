@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import './FileExplorer/FileExplorer.css';
+import { showErrorToast } from '../utils/toast';
 
 const FAVORITES_KEY = 'intellifile-favorites';
 const ipcRenderer = window.electron?.ipcRenderer;
@@ -42,6 +43,8 @@ function ExplorerSidebar({ drives, onNavigate, currentPath }) {
   const [treeChildren, setTreeChildren] = useState({});
   const [treeLoading, setTreeLoading] = useState({});
   const [allowProtectedIndexing, setAllowProtectedIndexing] = useState(false);
+  const [dragOverPath, setDragOverPath] = useState(null);
+  const dragTimerRef = React.useRef(null);
 
   // Load favorites from localStorage
   useEffect(() => {
@@ -124,7 +127,7 @@ function ExplorerSidebar({ drives, onNavigate, currentPath }) {
       setTreeChildren(prev => ({ ...prev, [key]: folders }));
       return folders;
     } catch (error) {
-      console.error('Failed to load tree children:', error);
+      showErrorToast('Could not load folder tree.', error?.message || 'The directory could not be expanded.', 'Try refreshing or opening the folder again.');
       setTreeChildren(prev => ({ ...prev, [key]: [] }));
       return [];
     } finally {
@@ -232,6 +235,34 @@ function ExplorerSidebar({ drives, onNavigate, currentPath }) {
     onNavigate(folderName);
   };
 
+  const handleSidebarDragOver = (e, folderPath) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (dragOverPath !== folderPath) {
+      setDragOverPath(folderPath);
+      // Clear any existing timer
+      if (dragTimerRef.current) clearTimeout(dragTimerRef.current);
+      // Auto-navigate after 600ms hover
+      dragTimerRef.current = setTimeout(() => {
+        onNavigate(folderPath);
+      }, 600);
+    }
+  };
+
+  const handleSidebarDragLeave = (e) => {
+    e.stopPropagation();
+    if (dragTimerRef.current) clearTimeout(dragTimerRef.current);
+    setDragOverPath(null);
+  };
+
+  const handleSidebarDrop = (e, folderPath) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (dragTimerRef.current) clearTimeout(dragTimerRef.current);
+    setDragOverPath(null);
+    onNavigate(folderPath);
+  };
+
   const dynamicFolders = [
     ...(systemRoots?.specialFolders || []),
   ].filter((item) => item && item.id !== 'this_pc');
@@ -253,9 +284,12 @@ function ExplorerSidebar({ drives, onNavigate, currentPath }) {
     return (
       <div key={node.path} className="tree-node">
         <div
-          className={`tree-row ${isCurrent ? 'active' : ''} ${isAncestor ? 'ancestor' : ''}`}
+          className={`tree-row ${isCurrent ? 'active' : ''} ${isAncestor ? 'ancestor' : ''} ${dragOverPath === node.path ? 'drag-over' : ''}`}
           style={{ paddingLeft: `${12 + depth * 18}px` }}
           onClick={() => onNavigate(node.path)}
+          onDragOver={(e) => handleSidebarDragOver(e, node.path)}
+          onDragLeave={handleSidebarDragLeave}
+          onDrop={(e) => handleSidebarDrop(e, node.path)}
           title={node.path}
         >
           <button
@@ -315,8 +349,11 @@ function ExplorerSidebar({ drives, onNavigate, currentPath }) {
     return (
       <div key={driveDevice || driveLabel} className={`drive-card-wrapper`}>
         <div
-          className={`drive-card ${isCurrent ? 'active' : ''}`}
+          className={`drive-card ${isCurrent ? 'active' : ''} ${dragOverPath === driveDevice ? 'drag-over' : ''}`}
           onClick={() => onNavigate(driveDevice)}
+          onDragOver={(e) => handleSidebarDragOver(e, driveDevice)}
+          onDragLeave={handleSidebarDragLeave}
+          onDrop={(e) => handleSidebarDrop(e, driveDevice)}
         >
           <div className="drive-header">
             <button
@@ -409,8 +446,11 @@ function ExplorerSidebar({ drives, onNavigate, currentPath }) {
             {dynamicFolders.map((folder) => (
               <div
                 key={folder.id}
-                className={`sidebar-item ${isActive(folder.path) ? 'active' : ''}`}
+                className={`sidebar-item ${isActive(folder.path) ? 'active' : ''} ${dragOverPath === folder.path ? 'drag-over' : ''}`}
                 onClick={() => folder.path && onNavigate(folder.path)}
+                onDragOver={(e) => handleSidebarDragOver(e, folder.path)}
+                onDragLeave={handleSidebarDragLeave}
+                onDrop={(e) => handleSidebarDrop(e, folder.path)}
                 title={folder.path || folder.name}
               >
                 <span className="sidebar-icon">{getFolderIcon(folder.name)}</span>

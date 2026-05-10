@@ -1,4 +1,5 @@
 import { useState, useCallback } from 'react';
+import { showErrorToast } from '../../../utils/toast';
 
 const ipcRenderer = window.electron?.ipcRenderer;
 
@@ -18,7 +19,7 @@ export function useFileOperations(currentPath, onRefresh) {
     // Check if any items are protected
     const protectedItems = itemsToCut.filter(item => item.protected);
     if (protectedItems.length > 0) {
-      alert('Cannot move system files or folders');
+      showErrorToast('Cannot move system files.', 'The selected item is protected by the operating system.', 'Choose a non-system file or folder.');
       return false;
     }
     if (itemsToCut.length > 0) {
@@ -38,13 +39,13 @@ export function useFileOperations(currentPath, onRefresh) {
             const result = await ipcRenderer?.invoke('copy-file', item.path, destPath);
             if (!result.success) {
               console.error('Copy error:', result.error);
-              alert('Error copying: ' + result.error);
+              showErrorToast('Copy failed.', result.error || 'The copy operation was rejected.', 'Check file permissions or whether the destination already exists.');
             }
           } else {
             const result = await ipcRenderer?.invoke('move-file', item.path, destPath);
             if (!result.success) {
               console.error('Move error:', result.error);
-              alert('Error moving: ' + result.error);
+              showErrorToast('Move failed.', result.error || 'The move operation was rejected.', 'Check file permissions or whether the destination already exists.');
             }
           }
         }
@@ -63,7 +64,7 @@ export function useFileOperations(currentPath, onRefresh) {
     if (renamingItem && renameValue && renameValue !== renamingItem.name) {
       // Check if item is protected
       if (renamingItem.protected) {
-        alert('Cannot rename system files or folders');
+        showErrorToast('Cannot rename system files.', 'The selected item is protected by the operating system.', 'Choose a non-system file or folder.');
         return false;
       }
 
@@ -75,7 +76,7 @@ export function useFileOperations(currentPath, onRefresh) {
           return true;
         } else {
           console.error('Rename error:', result.error);
-          alert('Error renaming: ' + result.error);
+          showErrorToast('Rename failed.', result.error || 'The rename operation was rejected.', 'Close any app using the file and try again.');
         }
       } catch (err) {
         console.error('Rename error:', err);
@@ -88,7 +89,7 @@ export function useFileOperations(currentPath, onRefresh) {
     // Check if any items are protected
     const protectedItems = itemsToDelete.filter(item => item.protected);
     if (protectedItems.length > 0) {
-      alert('Cannot delete system files or folders');
+      showErrorToast('Cannot delete system files.', 'The selected item is protected by the operating system.', 'Choose a non-system file or folder.');
       return false;
     }
 
@@ -98,7 +99,7 @@ export function useFileOperations(currentPath, onRefresh) {
           const result = await ipcRenderer?.invoke('delete-file', item.path);
           if (!result.success) {
             console.error('Delete error:', result.error);
-            alert('Error: ' + result.error);
+            showErrorToast('Delete failed.', result.error || 'The delete operation was rejected.', 'Check whether the file is open or protected.');
           }
         }
         onRefresh?.();

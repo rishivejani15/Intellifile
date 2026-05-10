@@ -19,7 +19,7 @@ _BACKEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..
 if _BACKEND_DIR not in sys.path:
     sys.path.insert(0, _BACKEND_DIR)
 
-from .chat_store import ingest_chat_file, search_chat_chunks
+from .chat_store import ingest_chat_file, search_chat_chunks, get_first_chat_chunks
 
 logger = logging.getLogger("IntelliFile.LLM")
 
@@ -96,7 +96,12 @@ def init_models():
         )
         return
 
-    models_dir = os.path.join(_BACKEND_DIR,"models")
+    # Respect per-user / packaged model dir via core.paths
+    try:
+        from core.paths import get_models_dir
+        models_dir = get_models_dir()
+    except Exception:
+        models_dir = os.path.join(_BACKEND_DIR, "models")
     
     # Priority 1: 1.5B Model (Target for Lightning Speed)
     # Priority 2: 3B Model (Current fallback)
@@ -195,8 +200,20 @@ def get_relevant_chunks(query, top_k=5):
                 search_query = f"{context_hint} {query}"
                 print(f"DEBUG: Follow-up detected. Search hint: '{context_hint}'")
 
-        print(f"DEBUG: Running isolated chat retrieval for '{search_query}'...")
-        scored_chunks = search_chat_chunks(search_query, top_k=max(top_k, 3))
+        is_summary = "summar" in query.lower() or "overview" in query.lower() or "what" in query.lower() and ("file" in query.lower() or "document" in query.lower())
+        
+        # If it's a summary or generic query about the document, pull the first chunks immediately
+        if is_summary:
+            print(f"DEBUG: Summary query detected. Fetching top {top_k} chronological chunks.")
+            scored_chunks = get_first_chat_chunks(top_n=max(top_k, 3))
+        else:
+            print(f"DEBUG: Running isolated chat retrieval for '{search_query}'...")
+            scored_chunks = search_chat_chunks(search_query, top_k=max(top_k, 3))
+            
+            # Fallback: If no semantic matches > threshold, return the beginning of the document
+            if not scored_chunks:
+                print(f"DEBUG: No semantic matches > threshold. Falling back to top {top_k} chronological chunks.")
+                scored_chunks = get_first_chat_chunks(top_n=max(top_k, 3))
 
         print(f"DEBUG: Found {len(scored_chunks)} context chunks from chat store.")
         return scored_chunks
@@ -246,8 +263,26 @@ def chat(query, chunks=None, stream=False):
     prep_end = time.time()
     print(f"[DEBUG] 2. Context preparation took {prep_end - prep_start:.4f}s (Top {len(relevant_chunks)} chunks used)")
 
+    SYSTEM_PROMPT = (
+        "You are IntelliFile's document assistant. Your ONLY purpose is to help the user "
+        "understand the specific file they have loaded in this chat session.\n\n"
+        "STRICT RULES:\n"
+        "1. ONLY answer questions that are directly related to the loaded document's content.\n"
+        "2. If the user asks a general knowledge question (e.g. weather, math, trivia, coding help, "
+        "news, recipes, jokes, or anything NOT about the loaded file), you MUST politely decline "
+        "and say: \"I can only help with questions about the file you've loaded. "
+        "Please ask me something related to this document.\"\n"
+        "3. Use the provided document context to answer file-related questions accurately.\n"
+        "4. If the question is a follow-up about the document, use conversation history for context.\n"
+        "5. If the answer is not found in the document context, say so honestly — do NOT make up "
+        "information or use general knowledge to fill gaps.\n"
+        "6. Never generate code, perform calculations, or act as a general-purpose assistant.\n"
+        "7. ALWAYS respond in clean plain text. NEVER use markdown formatting such as **, ##, -, *, "
+        "or bullet points. Use simple numbered lists (1. 2. 3.) and plain sentences instead.\n"
+    )
+
     messages = [
-        {"role": "system", "content": "You are a helpful AI assistant. Use the provided document context to answer questions. If the question is a follow-up, use the conversation history to maintain context. If the answer is not in the context or history, you can use your general knowledge but clearly state if the info is not in the document."}
+        {"role": "system", "content": SYSTEM_PROMPT}
     ]
     
     # Add relevant history (last 3 turns / 6 messages)
@@ -268,7 +303,7 @@ def chat(query, chunks=None, stream=False):
         data = {
             "model": "qwen2.5-1.5b-instruct-q4_k_m",
             "messages": messages,
-            "max_tokens": 150 if not is_summary else 250,
+            "max_tokens": 512 if not is_summary else 768,
             "temperature": 0.2,
             "top_p": 0.85,
             "stream": stream
@@ -320,7 +355,7 @@ def chat(query, chunks=None, stream=False):
         # Local model
         try:
             if stream:
-                output = chat_model.create_chat_completion(messages=messages, max_tokens=150 if not is_summary else 250, temperature=0.2, top_p=0.85, stream=True)
+                output = chat_model.create_chat_completion(messages=messages, max_tokens=512 if not is_summary else 768, temperature=0.2, top_p=0.85, stream=True)
                 for chunk in output:
                     token = chunk['choices'][0]['delta'].get('content', '')
                     if token:
@@ -335,7 +370,7 @@ def chat(query, chunks=None, stream=False):
                     _chat_history.append({"role": "user", "content": query})
                     _chat_history.append({"role": "assistant", "content": full_content})
             else:
-                max_toks = 250 if is_summary else 150
+                max_toks = 768 if is_summary else 512
                 output = chat_model.create_chat_completion(
                     messages=messages, 
                     max_tokens=max_toks, 

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import VersionCard from './VersionCard';
 import VersionDiffViewer from './VersionDiffViewer';
 import { getVersions, compareVersions } from '../../services/versionService';
+import { showErrorToast } from '../../utils/toast';
 import './versioning.css';
 
 const ipc = window.electron?.ipcRenderer;
@@ -140,12 +141,12 @@ const VersionTimeline = ({ filePath }) => {
         setDiffText(result.data.diff);
         setShowDiff(true);
       } else {
-        alert('Comparison failed: ' + (result?.error || 'Unknown error'));
+        showErrorToast('Comparison failed.', result?.error || 'Unknown error', 'Choose two versions and try again.');
         setCompareA(null);
         setCompareB(null);
       }
     } catch (err) {
-      alert('Error comparing: ' + (err?.message || err));
+      showErrorToast('Comparison failed.', err?.message || 'Unknown error', 'Choose two versions and try again.');
       setCompareA(null);
       setCompareB(null);
     } finally {

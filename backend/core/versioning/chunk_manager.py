@@ -1,10 +1,9 @@
 import os
 import hashlib
 
-# Project paths
-CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.abspath(os.path.join(CURRENT_DIR, "../../../"))
-CHUNK_STORE_PATH = os.path.join(PROJECT_ROOT, "backend", "data", "storage", "chunks")
+from core.paths import get_storage_dir
+
+CHUNK_STORE_PATH = os.path.join(get_storage_dir(), "chunks")
 
 # 512KB chunks are ideal for Word/Excel metadata changes
 CHUNK_SIZE = 512 * 1024 

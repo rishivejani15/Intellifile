@@ -2,11 +2,9 @@ import os
 import json
 from datetime import datetime, timedelta, timezone
 from utils.file_hash import generate_sha256
+from core.paths import get_storage_dir
 
-# Get project root dynamically
-CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.abspath(os.path.join(CURRENT_DIR, "../../../"))
-BASE_VERSION_PATH = os.path.join(PROJECT_ROOT, "backend", "data", "storage", "versions")
+BASE_VERSION_PATH = os.path.join(get_storage_dir(), "versions")
 
 def run_smart_cleanup(file_path: str) -> dict:
     """

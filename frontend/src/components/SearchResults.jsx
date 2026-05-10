@@ -1,7 +1,7 @@
 import React from 'react';
 import './FileExplorer/FileExplorer.css';
 
-function SearchResults({ visible, results, loading, onClose, onResultClick }) {
+function SearchResults({ visible, results, loading, onClose, onResultClick, onResultDoubleClick, onResultContextMenu }) {
   if (!visible) {
     return null;
   }
@@ -29,6 +29,11 @@ function SearchResults({ visible, results, loading, onClose, onResultClick }) {
                 key={result.path + idx}
                 className="file-item file search-result-item"
                 onClick={() => onResultClick(result.path)}
+                onDoubleClick={() => onResultDoubleClick?.(result.path)}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  onResultContextMenu?.(result, e);
+                }}
                 title={result.path}
               >
                 <div className="file-icon">📄</div>

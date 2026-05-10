@@ -2,6 +2,16 @@ import json
 import sys
 import os
 import threading
+import queue
+from threading import Lock
+
+if "--offline-setup" in sys.argv:
+    from setup_offline import main as _offline_setup_main
+
+    sys.argv = [arg for arg in sys.argv if arg != "--offline-setup"]
+    _offline_setup_main()
+    sys.exit(0)
+
 # Ensure backend/ is on sys.path
 _BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
 if _BACKEND_DIR not in sys.path:
@@ -10,7 +20,7 @@ if _BACKEND_DIR not in sys.path:
 sys.stderr.write("[engine] Starting resilient process...\n")
 sys.stderr.flush()
 
-_DATA_DIR = os.path.join(_BACKEND_DIR, "data")
+_DATA_DIR = os.getenv("IF_DATA_DIR", os.path.join(_BACKEND_DIR, "data"))
 os.makedirs(_DATA_DIR, exist_ok=True)
 try:
     from core.db import init_db
@@ -35,6 +45,86 @@ def get_version_engine():
                 def process_and_save(self, *args): return {"error": f"Init failed: {e}"}
             _version_engine = MockVE()
     return _version_engine
+
+# Background indexing queue and lock
+_index_queue = queue.Queue(maxsize=10)
+_index_lock = Lock()
+_current_index_job = None
+
+def _background_indexer():
+    """Process indexing jobs in background to avoid blocking other requests"""
+    global _current_index_job
+    while True:
+        try:
+            job = _index_queue.get()
+            if job is None:  # Sentinel for shutdown
+                break
+            
+            _current_index_job = job
+            req_id = job['req_id']
+            folder = job['folder']
+            allow_protected = job['allow_protected']
+            
+            try:
+                from indexing.index_files import index_files_incremental
+                from indexing.update_faiss import update_faiss
+                from core.faiss_manager import load_index, invalidate_cache
+                import time as _time
+                
+                root_label = folder or "default"
+                sys.stderr.write(f"[engine-bg] Indexing started (root={root_label})\n")
+                sys.stderr.flush()
+                
+                _t_total = _time.perf_counter()
+                
+                def emit_progress(phase, detail="", pct=None):
+                    payload = {
+                        "_id": req_id,
+                        "type": "progress",
+                        "phase": phase,
+                        "detail": detail,
+                    }
+                    if pct is not None:
+                        payload["pct"] = pct
+                    print(json.dumps(payload), flush=True)
+                
+                result = index_files_incremental(folder, progress_cb=emit_progress, allow_protected=allow_protected)
+                affected = result["affected_chunk_ids"] if isinstance(result, dict) else result
+                skipped_total = int(result.get("skipped_total", 0)) if isinstance(result, dict) else 0
+                skipped_by_reason = result.get("skipped_by_reason", {}) if isinstance(result, dict) else {}
+                update_faiss(affected, progress_cb=emit_progress)
+                invalidate_cache()
+                load_index(force_reload=True)
+                total_secs = round(_time.perf_counter() - _t_total, 1)
+                sys.stderr.write(f"[engine-bg] Indexing completed in {total_secs}s (chunks={len(affected)}, skipped={skipped_total})\n")
+                sys.stderr.flush()
+                
+                detail = f"Indexing complete — {len(affected)} chunks in {total_secs}s"
+                if skipped_total:
+                    detail += f" (skipped {skipped_total} protected files)"
+                emit_progress("done", detail, pct=100)
+                print(json.dumps({
+                    "_id": req_id,
+                    "status": "indexed",
+                    "folder": folder or "",
+                    "total_secs": total_secs,
+                    "chunks": len(affected),
+                    "skipped_total": skipped_total,
+                    "skipped_by_reason": skipped_by_reason,
+                }), flush=True)
+            except Exception as e:
+                print(json.dumps({"_id": req_id, "error": f"Background indexing failed: {e}"}), flush=True)
+            finally:
+                _current_index_job = None
+        except Exception as e:
+            sys.stderr.write(f"[engine-bg] Background indexer error: {e}\n")
+            sys.stderr.flush()
+        finally:
+            _index_queue.task_done()
+
+# Start background indexer thread
+_indexer_thread = threading.Thread(target=_background_indexer, daemon=True)
+_indexer_thread.start()
 
 print("IntelliFile Python Engine Ready", flush=True)
 
@@ -65,11 +155,24 @@ while True:
 
         if action == "search":
             try:
+                # Ensure embedding model is available before running semantic search
+                try:
+                    from core.model import is_model_loaded, MODEL_LOAD_ERROR
+                    if not is_model_loaded():
+                        err = MODEL_LOAD_ERROR or "Embedding model not available"
+                        print(json.dumps({"_id": req_id, "error": f"Embeddings unavailable: {err}"}), flush=True)
+                        continue
+                except Exception:
+                    # If model module isn't reachable, fail the request
+                    print(json.dumps({"_id": req_id, "error": "Embedding model check failed"}), flush=True)
+                    continue
+
                 from core.search import semantic_search
                 query = request.get("query", "").strip()
                 date_from = request.get("date_from")  # Unix timestamp or None
                 date_to = request.get("date_to")      # Unix timestamp or None
-                results = semantic_search(query, date_from=date_from, date_to=date_to)
+                root_folder = request.get("root_folder")
+                results = semantic_search(query, date_from=date_from, date_to=date_to, root_folder=root_folder)
                 response = {
                     "_id": req_id,
                      "results": [
@@ -89,67 +192,66 @@ while True:
             try:
                 folder = request.get("folder")
                 allow_protected = bool(request.get("allow_protected"))
-                from indexing.index_files import index_files_incremental
-                from indexing.update_faiss import update_faiss
-                from core.faiss_manager import load_index, invalidate_cache
-                
-                root_label = folder or "default"
-                sys.stderr.write(f"[engine] Indexing started (root={root_label})\n")
-                sys.stderr.flush()
+                # Prevent long-running index when embedding model unavailable
+                try:
+                    from core.model import is_model_loaded, MODEL_LOAD_ERROR
+                    if not is_model_loaded():
+                        err = MODEL_LOAD_ERROR or "Embedding model not available"
+                        print(json.dumps({"_id": req_id, "error": f"Embeddings unavailable: {err}"}), flush=True)
+                        continue
+                except Exception:
+                    print(json.dumps({"_id": req_id, "error": "Embedding model check failed"}), flush=True)
+                    continue
 
-                import time as _time
-                _t_total = _time.perf_counter()
-
-                def emit_progress(phase, detail="", pct=None):
-                    payload = {
-                        "_id": req_id,
-                        "type": "progress",
-                        "phase": phase,
-                        "detail": detail,
-                    }
-                    if pct is not None:
-                        payload["pct"] = pct
-                    print(json.dumps(payload), flush=True)
-
-                result = index_files_incremental(folder, progress_cb=emit_progress, allow_protected=allow_protected)
-                affected = result["affected_chunk_ids"] if isinstance(result, dict) else result
-                skipped_total = int(result.get("skipped_total", 0)) if isinstance(result, dict) else 0
-                skipped_by_reason = result.get("skipped_by_reason", {}) if isinstance(result, dict) else {}
-                update_faiss(affected, progress_cb=emit_progress)
-                invalidate_cache()
-                load_index(force_reload=True)
-                total_secs = round(_time.perf_counter() - _t_total, 1)
-                sys.stderr.write(f"[engine] Indexing completed in {total_secs}s (chunks={len(affected)}, skipped={skipped_total})\n")
-                sys.stderr.flush()
-
-                detail = f"Indexing complete — {len(affected)} chunks in {total_secs}s"
-                if skipped_total:
-                    detail += f" (skipped {skipped_total} protected files)"
-                emit_progress("done", detail, pct=100)
-                print(json.dumps({
-                    "_id": req_id,
-                    "status": "indexed",
-                    "folder": folder or "",
-                    "total_secs": total_secs,
-                    "chunks": len(affected),
-                    "skipped_total": skipped_total,
-                    "skipped_by_reason": skipped_by_reason,
-                }), flush=True)
+                # Submit indexing to background thread to avoid blocking other operations
+                try:
+                    _index_queue.put_nowait({
+                        'req_id': req_id,
+                        'folder': folder,
+                        'allow_protected': allow_protected
+                    })
+                    # Immediately acknowledge so caller doesn't block
+                    print(json.dumps({"_id": req_id, "type": "progress", "phase": "queued", "detail": "Indexing job queued"}), flush=True)
+                except queue.Full:
+                    print(json.dumps({"_id": req_id, "error": "Indexing queue full - another indexing job is in progress"}), flush=True)
             except Exception as e:
-                print(json.dumps({"_id": req_id, "error": f"Indexing failed: {e}"}), flush=True)
+                print(json.dumps({"_id": req_id, "error": f"Indexing submission failed: {e}"}), flush=True)
 
         elif action == "index_file":
             try:
                 from indexing.single_file_ingest import ingest_single_file
+                from core.scanner import is_indexable_document
                 file_path = request.get("file_path")
                 allow_protected = bool(request.get("allow_protected"))
+                # Check model availability for embedding of single file
+                try:
+                    from core.model import is_model_loaded, MODEL_LOAD_ERROR
+                    if not is_model_loaded():
+                        err = MODEL_LOAD_ERROR or "Embedding model not available"
+                        print(json.dumps({"_id": req_id, "error": f"Embeddings unavailable: {err}"}), flush=True)
+                        continue
+                except Exception:
+                    print(json.dumps({"_id": req_id, "error": "Embedding model check failed"}), flush=True)
+                    continue
+
                 if file_path and os.path.exists(file_path):
+                    if not is_indexable_document(file_path):
+                        print(json.dumps({"_id": req_id, "status": "skipped", "reason": "unsupported_file_type", "file_path": file_path}), flush=True)
+                        continue
                     result = ingest_single_file(file_path, allow_protected=allow_protected)
                     print(json.dumps({"_id": req_id, "status": "indexed", "file_path": file_path, "data": result}), flush=True)
                 else:
                     print(json.dumps({"_id": req_id, "status": "skipped", "reason": "file_not_found", "file_path": file_path}), flush=True)
             except Exception as e:
                 print(json.dumps({"_id": req_id, "error": f"Single file indexing failed: {e}"}), flush=True)
+
+        elif action == "model_status":
+            try:
+                from core.model import is_model_loaded, MODEL_LOAD_ERROR
+                loaded = is_model_loaded()
+                print(json.dumps({"_id": req_id, "loaded": loaded, "error": MODEL_LOAD_ERROR}), flush=True)
+            except Exception as e:
+                print(json.dumps({"_id": req_id, "error": f"Model status check failed: {e}"}), flush=True)
 
         elif action == "delete_file":
             try:

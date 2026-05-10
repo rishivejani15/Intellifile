@@ -14,6 +14,7 @@ import SearchResults from '../SearchResults';
 import TabsBar from '../TabsBar';
 import VersionTimeline from '../Versioning/VersionTimeline';
 import { smartCleanupVersions } from '../../services/versionService';
+import { showErrorToast, showToast } from '../../utils/toast';
 import './FileExplorer.css';
 
 const ipcRenderer = window.electron?.ipcRenderer;
@@ -23,8 +24,8 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(false);
   const [viewMode, setViewMode] = useState('icons');
-  const [sortBy, setSortBy] = useState('name');
-  const [sortDirection, setSortDirection] = useState('asc');
+  const [sortBy, setSortBy] = useState('date');
+  const [sortDirection, setSortDirection] = useState('desc');
   const [groupBy, setGroupBy] = useState('none');
   const [showHidden, setShowHidden] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -259,6 +260,28 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
         });
 
         setItems(loadedItems);
+        // Asynchronously fetch folder sizes for first 3 folders only (avoid blocking UI)
+        (async () => {
+          try {
+            const folders = loadedItems.filter(i => i.type === 'folder');
+            const limit = 3; // limit to 3 to avoid UI lag
+            for (let i = 0; i < Math.min(folders.length, limit); i++) {
+              const folder = folders[i];
+              // Add small yield to allow UI to remain responsive
+              await new Promise(resolve => setImmediate(resolve));
+              try {
+                const details = await ipcRenderer?.invoke('get-file-details', folder.path);
+                if (details && details.success && typeof details.details?.size === 'number') {
+                  setItems(prev => prev.map(it => it.path === folder.path ? { ...it, size: details.details.size } : it));
+                }
+              } catch (err) {
+                // ignore errors for individual folders
+              }
+            }
+          } catch (e) {
+            // ignore
+          }
+        })();
         const actualPath = loadedItems && loadedItems.length > 0 ?
           loadedItems[0].path.substring(0, loadedItems[0].path.lastIndexOf('\\')) :
           dirPath;
@@ -339,6 +362,13 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
   // Event Handlers
   const handleAddressSubmit = (e) => {
     e.preventDefault();
+    const cmd = (addressPath || '').trim().toLowerCase();
+    // Allow quick shell commands in the address bar: 'cmd', 'powershell', 'pwsh'
+    if (cmd === 'cmd' || cmd === 'powershell' || cmd === 'pwsh') {
+      const shellOpt = cmd === 'cmd' ? 'cmd' : 'powershell';
+      ipcRenderer?.invoke('open-terminal-here', currentPath || process.env.USERPROFILE, { shell: shellOpt });
+      return;
+    }
     if (addressPath) loadDirectory(addressPath);
   };
 
@@ -382,13 +412,19 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
 
     setSelectedItems(newSelection);
     setSelectedItem(item);
-    setShowPreview(true);
+    // Only show preview for files, not for folders - this prevents window resize on first click
+    if (item.type === 'file') {
+      setShowPreview(true);
+    } else {
+      setShowPreview(false);
+    }
     setLastSelectedIndex(idx);
     if (onFileSelect) onFileSelect(item);
   };
 
   useEffect(() => {
-    if (selectedItem) {
+    // Only show preview for selected files, not folders
+    if (selectedItem && selectedItem.type === 'file') {
       setShowPreview(true);
     } else {
       setShowPreview(false);
@@ -439,7 +475,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
 
   const handleRename = async () => {
     if (renamingItem?.protected) {
-      alert('Cannot rename system files or folders');
+      showErrorToast('Cannot rename system files.', 'The selected item is protected by the operating system.', 'Choose a non-system file or folder.');
       setRenamingItem(null);
       return;
     }
@@ -460,7 +496,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
     }
 
     if (itemsToDelete.some(item => item.protected)) {
-      alert('Cannot delete system files or folders');
+      showErrorToast('Cannot delete system files.', 'The selected item is protected by the operating system.', 'Choose a non-system file or folder.');
       setShowContextMenu(false);
       return;
     }
@@ -493,7 +529,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
       setSelectedItem(null);
       setLastSelectedIndex(null);
     } else {
-      alert('Failed to delete items. Please try again.');
+      showErrorToast('Delete failed.', 'The delete operation did not complete.', 'Check whether the file is open or protected, then try again.');
     }
   };
 
@@ -575,15 +611,30 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
     }
   };
 
+  const getParentDirectory = useCallback((filePath) => {
+    if (!filePath) return '';
+    const normalized = String(filePath).replace(/[\\/]+$/, '');
+    const idx = Math.max(normalized.lastIndexOf('\\'), normalized.lastIndexOf('/'));
+    return idx > 0 ? normalized.slice(0, idx) : normalized;
+  }, []);
+
   const handleOpenTerminal = async () => {
-    const targetPath = selectedItem?.type === 'folder' ? selectedItem.path : currentPath;
+    const targetPath = selectedItem?.type === 'folder'
+      ? selectedItem.path
+      : selectedItem?.path
+        ? getParentDirectory(selectedItem.path)
+        : currentPath;
     if (targetPath) {
       await ipcRenderer?.invoke('open-terminal-here', targetPath);
     }
   };
 
   const handleOpenInVSCode = async () => {
-    const targetPath = selectedItem?.type === 'folder' ? selectedItem.path : currentPath;
+    const targetPath = selectedItem?.type === 'folder'
+      ? selectedItem.path
+      : selectedItem?.path
+        ? getParentDirectory(selectedItem.path)
+        : currentPath;
     if (targetPath) {
       await ipcRenderer?.invoke('open-in-vscode', targetPath);
     }
@@ -637,7 +688,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
     try {
       const result = await smartCleanupVersions(selectedItem.path);
       if (!result?.success) {
-        alert('Cleanup failed: ' + (result?.error || 'Unknown error'));
+        showErrorToast('Cleanup failed.', result?.error || 'Unknown error', 'Try closing the file and running cleanup again.');
         return;
       }
 
@@ -658,10 +709,14 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
         message = 'Cleanup complete: No cleanup needed. Recent versions may be retained by policy.';
       }
       
-      alert(message);
+      showToast('Cleanup complete.', {
+        type: 'success',
+        message,
+        solution: 'You can continue using the file normally.',
+      });
       handleRefreshVersioningTimeline();
     } catch (err) {
-      alert('Cleanup failed: ' + (err?.message || 'Unknown error'));
+      showErrorToast('Cleanup failed.', err?.message || 'Unknown error', 'Try closing the file and running cleanup again.');
     }
   };
 
@@ -732,9 +787,26 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
     const checkEngine = async () => {
       try {
         const status = await window.intellifile?.searchStatus();
-        if (status && status.ready) {
-          setEngineReady(true);
-          console.log('[FileExplorer] ✅ Engine ready');
+        if (status) {
+          if (status.ready) {
+            setEngineReady(true);
+            console.log('[FileExplorer] ✅ Engine ready');
+          }
+          if (typeof status.indexing === 'boolean') {
+            setIndexing(status.indexing);
+          }
+          if (status.lastIndexMessage) {
+            setIndexMessage(status.lastIndexMessage);
+          }
+          if (status.lastIndexStatus) {
+            setIndexPhase(status.lastIndexStatus.phase || '');
+            setIndexDetail(status.lastIndexStatus.detail || '');
+            setIndexPct(typeof status.lastIndexStatus.pct === 'number' ? status.lastIndexStatus.pct : null);
+          }
+          
+          if (!status.ready) {
+            setTimeout(checkEngine, 2000);
+          }
         } else {
           setTimeout(checkEngine, 2000);
         }
@@ -769,7 +841,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
       if (payload && payload.error) {
         setIndexMessage(`Indexing failed: ${payload.error}`);
       } else {
-        const skipped = Number(payload?.skipped_total || 0);
+        const skipped = Number(payload?.data?.skipped_total || payload?.skipped_total || 0);
         if (skipped > 0) {
           setIndexMessage(`Index updated (skipped ${skipped} protected ${skipped === 1 ? 'item' : 'items'})`);
         } else {
@@ -847,7 +919,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
     }
     setSemanticLoading(true);
     try {
-      const results = await searchFiles(query);
+      const results = await searchFiles(query, currentPath);
       setSemanticResults(results || []);
     } catch (err) {
       console.error('[FileExplorer] Semantic search error:', err);
@@ -871,6 +943,33 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
     if (window.electron?.ipcRenderer) {
       window.electron.ipcRenderer.invoke('open-file', filePath);
     }
+  };
+
+  const handleSearchResultDoubleClick = (filePath) => {
+    if (window.electron?.ipcRenderer) {
+      window.electron.ipcRenderer.invoke('open-file', filePath);
+    }
+  };
+
+  const handleSearchResultContextMenu = (result, event) => {
+    if (!result?.path) return;
+    const fileName = result.path.split('\\').pop() || result.path.split('/').pop() || result.path;
+    const extIdx = fileName.lastIndexOf('.');
+    const searchItem = {
+      path: result.path,
+      name: fileName,
+      type: 'file',
+      ext: extIdx > 0 ? fileName.slice(extIdx).toLowerCase() : '',
+      size: 0,
+      modified: null,
+      protected: false,
+    };
+
+    setSelectedItem(searchItem);
+    setSelectedItems([searchItem]);
+    setContextMenuPos({ x: event?.clientX || 0, y: event?.clientY || 0 });
+    setIsEmptySpaceContext(false);
+    setShowContextMenu(true);
   };
 
   const handleSearchChange = (e, type) => {
@@ -954,11 +1053,13 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
                 setSearchQuery('');
               }}
               onResultClick={handleSearchResultClick}
+              onResultDoubleClick={handleSearchResultDoubleClick}
+              onResultContextMenu={handleSearchResultContextMenu}
             />
 
             {semanticResults === null && (
               <FileList
-                items={items}
+                items={displayItems}
                 viewMode={viewMode}
                 groupBy={groupBy}
                 loading={loading}
@@ -1078,7 +1179,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
         onExtract={handleExtract}
         onChatWithAI={() => {
           setShowContextMenu(false);
-          onChatWithAI(selectedItem);
+          onChatWithAI?.(selectedItem);
         }}
         onClose={() => setShowContextMenu(false)}
       />

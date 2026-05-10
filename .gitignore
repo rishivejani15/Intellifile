@@ -20,3 +20,10 @@ frontend/coverage/
 intellifil.db
 intellifil_files/
 sync/intellifil.db
+
+# Packaging and Build
+backend-dist/
+backend/build/
+backend/dist/
+dist/
+*.exe

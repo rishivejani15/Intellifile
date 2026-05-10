@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import RiskBadge from './RiskBadge';
 import { restoreVersion } from '../../services/versionService';
+import { showErrorToast, showToast } from '../../utils/toast';
 import './versioning.css';
 
 const VersionCard = ({ version, filePath, onRefresh, onCompareClick, isSelecting, isLatest, isBaseline }) => {
@@ -16,16 +17,20 @@ const VersionCard = ({ version, filePath, onRefresh, onCompareClick, isSelecting
             const result = await restoreVersion(filePath, version.version_id);
             if (result && result.success) {
                 const len = result.restored_length !== undefined ? ` (${result.restored_length} bytes)` : '';
-                alert(`Rollback successful!${len}\n\nNote: If you have the file open in an external editor, please reload it to see the changes.`);
+                showToast('Rollback successful.', {
+                  type: 'success',
+                  message: `Version restored${len}.`,
+                  solution: 'Reload the file in any external editor to see the update.',
+                });
                 onRefresh(); // Refresh timeline to see the current state
                 if (window.electron?.ipcRenderer) {
                     window.electron.ipcRenderer.invoke('open-file', filePath).catch(() => {});
                 }
             } else {
-                alert('Rollback failed: ' + (result?.error || 'Unknown error'));
+                showErrorToast('Rollback failed.', result?.error || 'Unknown error', 'Try closing the file and restoring again.');
             }
         } catch (err) {
-            alert('Error during rollback: ' + err.message);
+            showErrorToast('Rollback failed.', err?.message || 'Unknown error', 'Try closing the file and restoring again.');
         } finally {
             setRestoring(false);
         }

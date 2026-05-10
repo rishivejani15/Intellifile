@@ -100,6 +100,7 @@ function ExplorerNavbar({
             type="text"
             value={addressPath}
             onChange={(e) => onSearchChange?.(e, 'address')}
+            onFocus={(e) => e.target.select()}
             placeholder="Type a path"
           />
         </form>

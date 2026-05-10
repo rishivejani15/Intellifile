@@ -1,4 +1,4 @@
-﻿# 🧠 IntelliFile
+# 🧠 IntelliFile
 
 **IntelliFile** is an AI-powered, privacy-first desktop search engine and conversational document intelligence system. 
 
@@ -82,12 +82,25 @@ Indexing an entire hard drive and executing 3-Billion-Parameter models locally n
 
 ## 🚀 Getting Started
 
-### 1. System Prerequisites
+### Option 1: End-User Installation (Windows .exe)
+The easiest way to use IntelliFile is to build and install the standalone executable. 
+
+1. Ensure you have **Node.js 18+** and **Python 3.11+** installed.
+2. Run the automated build script from PowerShell in the project root:
+   ```powershell
+   .\build.ps1
+   ```
+3. Once the build completes, find the installer in `frontend\dist\IntelliFile Setup 1.0.0.exe`.
+4. Run the installer. On first launch, the app will automatically present an **Offline Setup** screen to download the necessary AI models directly to your `AppData` folder.
+
+### Option 2: Developer Setup (Running from Source)
+
+#### 1. System Prerequisites
 - **Python 3.11+**
 - **Node.js 18+**
 - **C++ Build Tools/Visual Studio Redistributable** (Mandatory for compiling Local Models on Windows).
 
-### 2. Setup the Data Backend Engine
+#### 2. Setup the Data Backend Engine
 ```bash
 cd backend
 python -m venv .venv
@@ -100,14 +113,14 @@ pip install onnxruntime optimum
 ```
 *Note: Make sure to install `llama-cpp-python` with the correct hardware accelerated flags based on your environment (`cuBLAS / CUDA`).*
 
-### 3. Prepare Sub-Models
-Create a `backend/models` folder.
-* Download `qwen2.5-3b-instruct-q5_k_m.gguf` (Or the faster 1.5b Q4 variant) and place it inside the `models` directory.
+#### 3. Prepare Sub-Models
+You can manually run the offline setup script to fetch the required models (`BAAI/bge-small-en-v1.5` and `qwen2.5-3b-instruct-q5_k_m.gguf`):
 ```bash
 python backend/setup_offline.py
 ```
+*(In production, the Electron frontend automatically runs a frozen version of this script on first launch.)*
 
-### 4. Build & Launch Frontend App
+#### 4. Launch Frontend App
 ```bash
 cd frontend
 npm install

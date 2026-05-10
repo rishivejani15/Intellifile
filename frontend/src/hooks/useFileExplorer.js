@@ -1,5 +1,6 @@
 // Hook for file operations: copy, cut, paste, delete, rename, create folder, create file, undo
 import { useState, useCallback, useRef } from 'react';
+import { showErrorToast } from '../utils/toast';
 
 export const useFileExplorer = (ipcRenderer) => {
   const [clipboard, setClipboard] = useState(null);
@@ -26,7 +27,7 @@ export const useFileExplorer = (ipcRenderer) => {
     const protectedItems = itemsToCut.filter(item => item.protected);
     
     if (protectedItems.length > 0) {
-      alert('Cannot move system files or folders');
+      showErrorToast('Cannot move system files.', 'The selected item is protected by the operating system.', 'Choose a non-system file or folder.');
       return false;
     }
 
@@ -45,16 +46,20 @@ export const useFileExplorer = (ipcRenderer) => {
           const destPath = currentPath + '\\' + item.name;
 
           if (operation === 'copy') {
+        // If this was a move (cut) and all moves succeeded, clear the staged clipboard
+        if (clipboard.operation === 'cut') {
+          setClipboard(null);
+        }
             const result = await ipcRenderer?.invoke('copy-file', item.path, destPath);
             if (!result.success) {
               console.error('Copy error:', result.error);
-              alert('Error copying: ' + result.error);
+              showErrorToast('Copy failed.', result.error || 'The copy operation was rejected.', 'Check file permissions or whether the destination already exists.');
             }
           } else {
             const result = await ipcRenderer?.invoke('move-file', item.path, destPath);
             if (!result.success) {
               console.error('Move error:', result.error);
-              alert('Error moving: ' + result.error);
+              showErrorToast('Move failed.', result.error || 'The move operation was rejected.', 'Check file permissions or whether the destination already exists.');
             }else {
               pushUndo({ type: 'move', from: item.path, to: destPath });}
           }
@@ -73,7 +78,7 @@ export const useFileExplorer = (ipcRenderer) => {
   const handleRename = useCallback(async (currentPath, onRenameComplete) => {
     if (renamingItem && renameValue && renameValue !== renamingItem.name) {
       if (renamingItem.protected) {
-        alert('Cannot rename system files or folders');
+        showErrorToast('Cannot rename system files.', 'The selected item is protected by the operating system.', 'Choose a non-system file or folder.');
         setRenamingItem(null);
         return false;
       }
@@ -87,7 +92,7 @@ export const useFileExplorer = (ipcRenderer) => {
           return true;
         } else {
           console.error('Rename error:', result.error);
-          alert('Error renaming: ' + result.error);
+          showErrorToast('Rename failed.', result.error || 'The rename operation was rejected.', 'Close any app using the file and try again.');
         }
       } catch (err) {
         console.error('Rename error:', err);
@@ -103,7 +108,7 @@ export const useFileExplorer = (ipcRenderer) => {
     const { skipConfirm = false } = options || {};
 
     if (protectedItems.length > 0) {
-      alert('Cannot delete system files or folders');
+      showErrorToast('Cannot delete system files.', 'The selected item is protected by the operating system.', 'Choose a non-system file or folder.');
       return false;
     }
 
@@ -122,7 +127,7 @@ export const useFileExplorer = (ipcRenderer) => {
           const result = await ipcRenderer?.invoke('delete-file', item.path);
           if (!result.success) {
             console.error('Delete error:', result.error);
-            alert('Error: ' + result.error);
+            showErrorToast('Delete failed.', result.error || 'The delete operation was rejected.', 'Check whether the file is open or protected.');
           }
         }
         onDeleteComplete?.();
@@ -143,7 +148,7 @@ export const useFileExplorer = (ipcRenderer) => {
           onCreateComplete?.();
           return true;
         } else {
-          alert('Error creating file: ' + result.error);
+          showErrorToast('Create file failed.', result.error || 'The file could not be created.', 'Check write permissions in the target folder.');
         }
       } catch (err) {
         console.error('Create file error:', err);
@@ -193,13 +198,13 @@ export const useFileExplorer = (ipcRenderer) => {
       const result = await ipcRenderer?.invoke('compress-zip', selectedItem.path);
       if (!result?.success) {
         if (!result?.canceled) {
-          alert('Compression failed: ' + (result?.error || 'Unknown error'));
+          showErrorToast('Compression failed.', result?.error || 'The archive could not be created.', 'Check disk space and write permissions.');
         }
         return false;
       }
       return true;
     } catch (err) {
-      alert('Compression failed: ' + (err?.message || 'Unknown error'));
+      showErrorToast('Compression failed.', err?.message || 'Unknown error', 'Check disk space and write permissions.');
       return false;
     }
   }, [ipcRenderer]);
@@ -210,20 +215,22 @@ export const useFileExplorer = (ipcRenderer) => {
       const result = await ipcRenderer?.invoke('extract-zip', selectedItem.path);
       if (!result?.success) {
         if (!result?.canceled) {
-          alert('Extraction failed: ' + (result?.error || 'Unknown error'));
+          showErrorToast('Extraction failed.', result?.error || 'The archive could not be extracted.', 'Try a different destination folder or verify the ZIP file.');
         }
         return false;
       }
       return true;
     } catch (err) {
-      alert('Extraction failed: ' + (err?.message || 'Unknown error'));
+      showErrorToast('Extraction failed.', err?.message || 'Unknown error', 'Try a different destination folder or verify the ZIP file.');
       return false;
     }
   }, [ipcRenderer]);
 
   const handleDragStart = useCallback((e, item, selectedItems) => {
     const itemsToDrag = selectedItems.length > 0 ? selectedItems : [item];
-    e.dataTransfer.setData('application/json', JSON.stringify(itemsToDrag.map(i => i.path)));
+    const payload = JSON.stringify(itemsToDrag.map(i => i.path));
+    e.dataTransfer.setData('application/json', payload);
+    e.dataTransfer.setData('text/plain', payload);
     e.dataTransfer.effectAllowed = 'copyMove';
   }, []);
 
@@ -232,7 +239,7 @@ export const useFileExplorer = (ipcRenderer) => {
     if (targetItem.type !== 'folder') return;
 
     try {
-      const data = e.dataTransfer.getData('application/json');
+      const data = e.dataTransfer.getData('application/json') || e.dataTransfer.getData('text/plain');
       const paths = JSON.parse(data || '[]');
       const isCopy = e.ctrlKey;
 
@@ -242,8 +249,10 @@ export const useFileExplorer = (ipcRenderer) => {
         if (isCopy) {
           await ipcRenderer?.invoke('copy-file', sourcePath, destPath);
         } else {
-          await ipcRenderer?.invoke('move-file', sourcePath, destPath);
-           pushUndo({ type: 'move', from: sourcePath, to: destPath });
+          const result = await ipcRenderer?.invoke('move-file', sourcePath, destPath);
+          if (result?.success) {
+            pushUndo({ type: 'move', from: sourcePath, to: destPath });
+          }
         }
       }
       onDropComplete?.();

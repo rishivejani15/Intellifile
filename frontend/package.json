@@ -1,34 +1,93 @@
 {
-  "name": "semantic-merge-assistant",
+  "name": "intellifile",
   "version": "1.0.0",
-  "description": "AI-powered semantic merge assistant",
+  "description": "IntelliFile - AI-powered local file manager",
   "main": "main.js",
   "homepage": "./",
   "scripts": {
     "start": "concurrently \"npm run react-start\" \"npm run electron-start\"",
     "react-start": "react-scripts start",
     "build": "react-scripts build",
+    "pack": "electron-builder --dir",
     "electron-start": "wait-on http://localhost:3000 && electron .",
     "electron-dev": "electron .",
     "backend": "cd.. && cd backend && python app.py",
-    "dev": "concurrently \"npm run backend\" \"npm start\""
+    "dev": "concurrently \"npm run backend\" \"npm start\"",
+    "dist": "electron-builder --win"
+  },
+  "build": {
+    "extends": null,
+    "appId": "com.intellifile.app",
+    "productName": "IntelliFile",
+    "icon": "public/intellifile_logo.ico",
+    "publish": {
+      "provider": "github",
+      "owner": "rishivejani15",
+      "repo": "Intellifile"
+    },
+    "extraMetadata": {
+      "main": "main.js"
+    },
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "deleteAppDataOnUninstall": true,
+      "installerIcon": "public/intellifile_logo.ico",
+      "uninstallerIcon": "public/intellifile_logo.ico",
+      "installerHeaderIcon": "public/intellifile_logo.ico"
+    },
+    "files": [
+      "package.json",
+      "main.js",
+      "preload.js",
+      "system_roots.js",
+      "sync_engine.js",
+      "build/**/*",
+      "!build/**/*.map"
+    ],
+    "extraResources": [
+      {
+        "from": "../backend-dist/",
+        "to": "backend-dist",
+        "filter": [
+          "**/*",
+          "!**/*.md",
+          "!**/test/**",
+          "!**/tests/**",
+          "!**/*.pyc",
+          "!**/__pycache__/**"
+        ]
+      },
+      {
+        "from": "../sync/",
+        "to": "sync"
+      }
+    ],
+    "directories": {
+      "output": "../dist"
+    }
   },
   "dependencies": {
     "archiver": "^7.0.1",
-    "axios": "^1.4.0",
-    "fs": "^0.0.1-security",
-    "qrcode.react": "^4.2.0",
-    "react": "^18.2.0",
-    "react-diff-view": "^3.3.2",
-    "react-dom": "^18.2.0",
-    "react-scripts": "^5.0.1",
+    "archiver-utils": "^5.0.2",
+    "electron-updater": "^6.8.3",
     "unzipper": "^0.12.3",
     "wrtc": "^0.4.7",
     "ws": "^8.20.0"
   },
   "devDependencies": {
-    "concurrently": "^8.0.0",
+    "axios": "^1.4.0",
+    "concurrently": "^8.2.2",
     "electron": "^41.4.0",
+    "electron-builder": "^25.1.8",
+    "qrcode.react": "^4.2.0",
+    "react": "^18.2.0",
+    "react-diff-view": "^3.3.2",
+    "react-dom": "^18.2.0",
+    "react-scripts": "^5.0.1",
     "wait-on": "^7.0.0"
   },
   "eslintConfig": {

@@ -9,10 +9,10 @@ import numpy as np
 from core.chunker import chunk_text
 from core.extractor import extract_text
 from core.model import MODEL, encode_query
+from core.paths import get_data_dir
 
 
-_BACKEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-_DATA_DIR = os.path.join(_BACKEND_DIR, "data")
+_DATA_DIR = get_data_dir()
 _CHAT_DB_PATH = os.path.join(_DATA_DIR, "chat_files.db")
 _CHAT_INDEX_PATH = os.path.join(_DATA_DIR, "chat_vectors.faiss")
 
@@ -265,3 +265,13 @@ def search_chat_chunks(query: str, top_k: int = 5, min_similarity: float = 0.18)
 def get_chat_index_size() -> int:
     idx = load_chat_index()
     return int(idx.ntotal) if idx is not None else 0
+
+def get_first_chat_chunks(top_n: int = 3) -> List[Tuple[str, float]]:
+    conn = get_chat_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT text FROM chunks ORDER BY chunk_index ASC LIMIT ?", (top_n,))
+    rows = cur.fetchall()
+    conn.close()
+    
+    # Return with a dummy high score of 1.0 since these are fallback chunks
+    return [(text, 1.0) for text, in rows]

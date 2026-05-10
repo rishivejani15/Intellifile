@@ -6,6 +6,7 @@ from core.db import get_connection, init_db, rebuild_fts
 from core.extractor import extract_text_with_status
 from core.model import MODEL
 from core.faiss_manager import invalidate_cache, save_index
+from core.scanner import is_indexable_document
 from indexing.update_faiss import update_faiss
 
 
@@ -19,6 +20,17 @@ def ingest_single_file(file_path: str, allow_protected: bool = False) -> Dict[st
     abs_path = os.path.abspath(file_path)
     if not os.path.isfile(abs_path):
         raise FileNotFoundError(f"File not found: {abs_path}")
+
+    if not is_indexable_document(abs_path):
+        return {
+            "status": "skipped",
+            "path": abs_path,
+            "filename": os.path.basename(abs_path),
+            "new_chunks": 0,
+            "affected_chunk_ids": [],
+            "reason": "unsupported_file_type",
+            "skipped": True,
+        }
 
     modified_time = int(os.path.getmtime(abs_path))
     created_time = int(os.stat(abs_path).st_ctime)
