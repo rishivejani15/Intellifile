@@ -8,18 +8,45 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
+*.py[cod]
+*$py.class
+*.so
+
 .venv/
 venv/
+env/
 .build-venv/
+.env
 
-# Frontend
+# Frontend / Node
+node_modules/
 frontend/node_modules/
+.pnp
+.pnp.js
+
 frontend/build/
 frontend/dist/
 frontend/coverage/
+frontend/out/
+
+# Database / Storage
 intellifil.db
 intellifil_files/
 sync/intellifil.db
+
+# IntelliFile Dynamic Data / Database Storage
+backend/data/storage/
+
+# Test Files
+test_new.xlsx
+test_old.xlsx
+
+# Logs
+*.log
+error.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
 
 # Packaging and Build
 backend-dist/
@@ -27,3 +54,19 @@ backend/build/
 backend/dist/
 dist/
 *.exe
+
+# OS Generated Files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini
+
+# IDEs / Editors
+.idea/
+.vscode/
+*.swp
+*.swo
