@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import './App.css';
 import FileExplorer from './components/FileExplorer/FileExplorer';
 import SyncManager from './components/Sync/SyncManager';
@@ -42,16 +42,11 @@ function App() {
     ipcRenderer.on('update-available', handleUpdateAvailable);
     ipcRenderer.on('update-downloaded', handleUpdateDownloaded);
 
-    // Check for updates on app startup
-    ipcRenderer.invoke('check-for-updates').catch(err => {
-      console.warn('[App] Check for updates failed:', err);
-    });
-
     return () => {
       ipcRenderer.removeListener('update-available', handleUpdateAvailable);
       ipcRenderer.removeListener('update-downloaded', handleUpdateDownloaded);
     };
-  }, [ipcRenderer]);
+  }, []);
 
   useEffect(() => {
     async function fetchDrives() {
@@ -94,6 +89,10 @@ function App() {
       console.error('[App] Reset offline setup failed:', result.error);
     }
   };
+
+  const handleOfflineSetupComplete = useCallback(() => {
+    setSetupComplete(true);
+  }, []);
   useEffect(() => {
     console.log('[App] versioningFile:', versioningFile);
   }, [versioningFile]);
@@ -191,7 +190,7 @@ function App() {
       </div>
       <ToastHost />
 
-      {!setupComplete && <OfflineSetup key={offlineSetupKey} onComplete={() => setSetupComplete(true)} />}
+      {!setupComplete && <OfflineSetup key={offlineSetupKey} onComplete={handleOfflineSetupComplete} />}
     </div>
   );
 }

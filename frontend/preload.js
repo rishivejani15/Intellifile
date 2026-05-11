@@ -223,6 +223,9 @@ contextBridge.exposeInMainWorld('intellifile', {
   offlineSetupRun: () => {
     return ipcRenderer.invoke('offline-setup-run');
   },
+  checkNetworkConnectivity: () => {
+    return ipcRenderer.invoke('check-network-connectivity');
+  },
   resetOfflineSetup: () => {
     return ipcRenderer.invoke('reset-offline-setup');
   },

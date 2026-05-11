@@ -336,7 +336,7 @@ def get_version_content(file_path: str, version_id: str):
             if "chunk_hashes" in metadata:
                 from core.versioning.chunk_manager import rebuild_file_from_chunks
                 # Use a cache directory for transient rebuilds to save permanent space
-                cache_dir = os.path.join(PROJECT_ROOT, "backend", "data", "storage", "cache")
+                cache_dir = os.path.join(get_storage_dir(), "cache")
                 os.makedirs(cache_dir, exist_ok=True)
                 version_file = os.path.join(cache_dir, f"{version_id}{ext}")
                 
@@ -368,6 +368,19 @@ def compare_versions(file_path: str, version_a: str, version_b: str):
     Returns diff between two stored versions.
     Supports both standard text diffs and structured JSON diffs.
     """
+    def version_sort_key(version_id: str):
+        token = str(version_id or "")
+        time_part = token.split("_", 1)[0]
+        try:
+            return (int(time_part), token)
+        except Exception:
+            return (0, token)
+
+    # Always diff from older -> newer so old/new labels are semantically correct.
+    ordered_versions = sorted([version_a, version_b], key=version_sort_key)
+    older_version = ordered_versions[0]
+    newer_version = ordered_versions[1]
+
     ext = os.path.splitext(file_path)[1].lower()
     
     if ext in [".docx", ".xlsx"]:
@@ -375,8 +388,8 @@ def compare_versions(file_path: str, version_a: str, version_b: str):
         from core.versioning.version_engine import VersionEngine
         engine = VersionEngine()
         
-        path_a = get_version_content(file_path, version_a)
-        path_b = get_version_content(file_path, version_b)
+        path_a = get_version_content(file_path, older_version)
+        path_b = get_version_content(file_path, newer_version)
         
         # If we got dicts (structures), process_version handles them.
         # If we got strings (paths), it parses them.
@@ -391,18 +404,18 @@ def compare_versions(file_path: str, version_a: str, version_b: str):
             except: pass
 
         return {
-            "version_a": version_a,
-            "version_b": version_b,
+            "version_a": older_version,
+            "version_b": newer_version,
             "diff": result["diff"]
         }
     else:
         # Standard Text Diff
-        content_a = get_version_content(file_path, version_a)
-        content_b = get_version_content(file_path, version_b)
+        content_a = get_version_content(file_path, older_version)
+        content_b = get_version_content(file_path, newer_version)
         diff = generate_diff(content_a, content_b)
 
         return {
-            "version_a": version_a,
-            "version_b": version_b,
+            "version_a": older_version,
+            "version_b": newer_version,
             "diff": diff
         }

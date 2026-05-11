@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import './OfflineSetup.css';
 import { showErrorToast, showToast } from '../utils/toast';
 
@@ -7,26 +7,44 @@ const OfflineSetup = ({ onComplete }) => {
   const [progress, setProgress] = useState(null);
   const [errorMsg, setErrorMsg] = useState('');
 
-  const checkStatus = useCallback(async () => {
-    try {
-      const res = await window.intellifile.offlineSetupStatus();
-      if (res.needed) {
-        setStatus('needed');
-      } else {
-        onComplete();
-      }
-    } catch (e) {
-      showErrorToast('Offline setup check failed.', e?.message || 'Could not verify model status.', 'Check the app can read its data folder, then try again.');
-      setStatus('needed'); // default to showing if error
-    }
-  }, [onComplete]);
-
   useEffect(() => {
+    const checkStatus = async () => {
+      try {
+        const res = await window.intellifile.offlineSetupStatus();
+        if (res.needed) {
+          setStatus('needed');
+        } else {
+          onComplete();
+        }
+      } catch (e) {
+        showErrorToast('Offline setup check failed.', e?.message || 'Could not verify model status.', 'Check the app can read its data folder, then try again.');
+        setStatus('needed'); // default to showing if error
+      }
+    };
+
     checkStatus();
-  }, [checkStatus]);
+  }, []);
 
   const startSetup = async () => {
     if (status === 'running') return;
+
+    try {
+      const networkCheck = await window.intellifile.checkNetworkConnectivity?.();
+      if (!networkCheck?.success || !networkCheck?.online) {
+        const message = 'Internet connection is required to download the AI models. Please turn on Wi-Fi or connect to the internet, then try again.';
+        setErrorMsg(message);
+        setStatus('error');
+        showErrorToast('Offline setup needs internet.', message, 'Once the connection is back, click Retry Setup.');
+        return;
+      }
+    } catch (e) {
+      const message = 'Could not verify network connectivity. Please check your internet connection and try again.';
+      setErrorMsg(message);
+      setStatus('error');
+      showErrorToast('Offline setup needs internet.', message, 'Once the connection is back, click Retry Setup.');
+      return;
+    }
+
     setStatus('running');
     setErrorMsg('');
     // Don't assume total steps here; wait for the first 'step' message from the backend
@@ -42,7 +60,9 @@ const OfflineSetup = ({ onComplete }) => {
           status: msg.status || 'downloading',
           pct: typeof msg.pct === 'number' ? msg.pct : p?.pct, 
           downloaded: msg.downloaded_mb, 
-          total_mb: msg.total_mb 
+          total_mb: msg.total_mb,
+          downloaded_files: msg.downloaded_files,
+          total_files: msg.total_files,
         }));
       } else if (msg.type === 'error') {
         setErrorMsg(msg.message);
@@ -80,7 +100,7 @@ const OfflineSetup = ({ onComplete }) => {
       <div className="offline-setup-container">
         <h2>Offline Setup Required</h2>
         <p>
-          IntelliFile needs to download AI models (approx. 0.5 GB) for offline search and chat. 
+          IntelliFile needs to download the semantic AI model (about 200 MB). 
           This is a one-time process and requires an internet connection. Depending on your network speed, this may take several minutes. Please do not close the application.
         </p>
 
@@ -115,8 +135,11 @@ const OfflineSetup = ({ onComplete }) => {
             <div className="progress-details">
               <span>{typeof progress.pct === 'number' ? `${progress.pct.toFixed(1)}%` : 'Processing... this might take a moment'}</span>
               <span>
-                {typeof progress.downloaded === 'number' ? `${Math.round(progress.downloaded)} files` : ''}
-                {typeof progress.total_mb === 'number' ? ` / ${Math.round(progress.total_mb)} files` : ''}
+                {typeof progress.downloaded === 'number' && typeof progress.total_mb === 'number'
+                  ? `${Math.round(progress.downloaded)} MB / ${Math.round(progress.total_mb)} MB`
+                  : typeof progress.downloaded_files === 'number' && typeof progress.total_files === 'number'
+                    ? `${progress.downloaded_files} / ${progress.total_files} files`
+                    : ''}
               </span>
             </div>
           </div>

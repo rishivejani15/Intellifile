@@ -1189,6 +1189,9 @@
   display: flex;
   flex-direction: column;
   gap: 0;
+  flex: 1 1 auto;
+  min-height: 100%;
+  width: 100%;
 }
 
 .group-header {
@@ -1214,6 +1217,17 @@
   gap: 12px;
   padding: 12px;
   align-content: start;
+}
+
+.versioning-empty-state {
+  padding: 18px;
+  color: #555;
+}
+
+@media (prefers-color-scheme: dark) {
+  .versioning-empty-state {
+    color: #ddd;
+  }
 }
 
 .file-list.icons .file-item {

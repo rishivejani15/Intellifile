@@ -5,6 +5,15 @@ def compare_excel_structures(old_struct, new_struct):
     # Support both old flat format and new nested format
     old_sheets = old_struct.get("sheets", old_struct) if isinstance(old_struct, dict) else {}
     new_sheets = new_struct.get("sheets", new_struct) if isinstance(new_struct, dict) else {}
+
+    def cell_signature(data):
+        if not isinstance(data, dict):
+            return (None, None, None)
+        return (
+            data.get("value"),
+            data.get("formula"),
+            data.get("cached_value") if data.get("cached_value") is not None else data.get("display_value")
+        )
     
     has_macros = new_struct.get("has_macros", False) if isinstance(new_struct, dict) else False
     macro_changed = has_macros != (old_struct.get("has_macros", False) if isinstance(old_struct, dict) else False)
@@ -23,22 +32,25 @@ def compare_excel_structures(old_struct, new_struct):
             # Check for changed or removed cells
             for coord, data in old_sheet.items():
                 if coord in new_sheet:
-                    if data["value"] != new_sheet[coord]["value"]:
+                    old_sig = cell_signature(data)
+                    new_sig = cell_signature(new_sheet[coord])
+
+                    if old_sig != new_sig:
                         changed_cells.append({
                             "sheet": sheet,
                             "cell": coord,
-                            "old_value": data["value"],
-                            "new_value": new_sheet[coord]["value"]
+                            "old_value": data.get("display_value", data.get("value")),
+                            "new_value": new_sheet[coord].get("display_value", new_sheet[coord].get("value"))
                         })
                     
-                    if data["formula"] != new_sheet[coord]["formula"]:
+                    if data.get("formula") != new_sheet[coord].get("formula"):
                         formula_changes += 1
                 else:
                     # Cell removed (cleared)
                     changed_cells.append({
                         "sheet": sheet,
                         "cell": coord,
-                        "old_value": data["value"],
+                        "old_value": data.get("display_value", data.get("value")),
                         "new_value": None
                     })
 
@@ -49,7 +61,7 @@ def compare_excel_structures(old_struct, new_struct):
                         "sheet": sheet,
                         "cell": coord,
                         "old_value": None,
-                        "new_value": data["value"]
+                        "new_value": data.get("display_value", data.get("value"))
                     })
         else:
             # Sheet was completely removed
@@ -58,7 +70,7 @@ def compare_excel_structures(old_struct, new_struct):
                 changed_cells.append({
                     "sheet": sheet,
                     "cell": coord,
-                    "old_value": data["value"],
+                    "old_value": data.get("display_value", data.get("value")),
                     "new_value": None
                 })
                 
@@ -70,7 +82,7 @@ def compare_excel_structures(old_struct, new_struct):
                 "sheet": sheet,
                 "cell": coord,
                 "old_value": None,
-                "new_value": data["value"]
+                "new_value": data.get("display_value", data.get("value"))
             })
 
     return {

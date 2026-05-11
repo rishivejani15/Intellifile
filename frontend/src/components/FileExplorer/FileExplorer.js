@@ -18,6 +18,7 @@ import { showErrorToast, showToast } from '../../utils/toast';
 import './FileExplorer.css';
 
 const ipcRenderer = window.electron?.ipcRenderer;
+const VERSIONING_BLOCKED_EXTENSIONS = new Set(['.zip', '.ppt', '.pptx', '.pptm']);
 
 function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWithAI }) {
   // UI State
@@ -100,6 +101,10 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
     if (idx <= 0) return '';
     return name.slice(idx).toLowerCase();
   }, []);
+  const canVersionItem = useCallback((item) => {
+    if (!item || item.type !== 'file') return false;
+    return !VERSIONING_BLOCKED_EXTENSIONS.has((item.ext || '').toLowerCase());
+  }, []);
   const addItemsToState = useCallback((itemsToAdd) => {
     if (!itemsToAdd || itemsToAdd.length === 0) return;
     setItems(prev => {
@@ -177,6 +182,15 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
     if (change.action === 'add' || change.action === 'change') {
       const updatedItem = change.item;
       if (!updatedItem?.path) return;
+
+      if (change.action === 'change' && showVersioning && selectedItem?.type === 'file') {
+        const normalizedSelected = selectedItem.path.toLowerCase().replace(/[\\/]+$/, '');
+        const normalizedUpdated = updatedItem.path.toLowerCase().replace(/[\\/]+$/, '');
+        if (normalizedSelected === normalizedUpdated) {
+          window.dispatchEvent(new CustomEvent('refresh-version-timeline'));
+        }
+      }
+
       setItems(prev => {
         const existingIndex = prev.findIndex(item => item.path === updatedItem.path);
         const nextItems = [...prev];
@@ -196,7 +210,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
       setSelectedItem(prev => (prev?.path === change.filePath ? null : prev));
       return;
     }
-  }, [currentPath, matchesSearch]);
+  }, [currentPath, matchesSearch, selectedItem, showVersioning]);
 
   // Load directory with filtering and sorting
   const loadDirectory = useCallback(async (dirPath, options = {}) => {
@@ -537,16 +551,17 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
     if (!currentPath) return;
     
     const folderName = 'New Folder';
-    const newPath = currentPath + '\\' + folderName;
     
     // Create the folder
     const created = await fileOps.handleCreateFolder(currentPath, () => {});
     
     if (created) {
+      const newPath = created.path || (currentPath + '\\' + folderName);
+      const actualName = newPath.split(/[\\/]/).pop() || folderName;
       // Create a new item object for rename mode
       const newItem = {
         path: newPath,
-        name: folderName,
+        name: actualName,
         type: 'folder',
         size: 0,
         modified: new Date().toISOString(),
@@ -570,16 +585,16 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
   const handleCreateFile = async (fileName) => {
     if (!currentPath || !fileName) return;
     
-    const newPath = currentPath + '\\' + fileName;
-    
     // Create the file
     const created = await fileOps.handleCreateFile(currentPath, fileName, () => {});
     
     if (created) {
+      const newPath = created.path || (currentPath + '\\' + fileName);
+      const actualName = newPath.split(/[\\/]/).pop() || fileName;
       // Create a new item object for rename mode
       const newItem = {
         path: newPath,
-        name: fileName,
+        name: actualName,
         type: 'file',
         size: 0,
         modified: new Date().toISOString(),
@@ -602,6 +617,10 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
 
   const handleUndo = async () => {
     await fileOps.handleUndo(() => {});
+  };
+
+  const handleRedo = async () => {
+    await fileOps.handleRedo(() => {});
   };
 
   const handleCopyPath = async () => {
@@ -663,6 +682,11 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
 
   const handleVersioning = () => {
     if (selectedItem && selectedItem.type === 'file') {
+      if (!canVersionItem(selectedItem)) {
+        setShowPreview(false);
+        setShowVersioning(true);
+        return;
+      }
       setShowPreview(false);
       setShowVersioning(true);
     }
@@ -778,7 +802,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
   useKeyboardShortcuts({
     selectedItem, selectedItems, clipboard, renamingItem, currentPath, historyIndex, displayItems,
     handleCopy, handleCut, handlePaste, handleDelete, handleRename, handleCreateFolder,
-    handleBack, handleForward, handleUp,
+    handleBack, handleForward, handleUp, handleRefresh, handleUndo, handleRedo,
     setSelectedItems, setSelectedItem, setRenamingItem, setRenameValue, setShowContextMenu
   });
 
@@ -1043,7 +1067,16 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
         />
 
         <div className="explorer-content-area">
-          <div className="explorer-content">
+          <div
+            className="explorer-content"
+            onContextMenu={(e) => {
+              if (semanticResults !== null) return;
+              // Let file items handle their own context menu; use empty-space menu everywhere else.
+              if (e.target?.closest?.('.file-item')) return;
+              e.preventDefault();
+              handleEmptySpaceContextMenu(e);
+            }}
+          >
             <SearchResults
               visible={semanticResults !== null}
               results={semanticResults || []}
@@ -1136,7 +1169,17 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
             </div>
           </div>
           <div className="versioning-body">
-            <VersionTimeline filePath={selectedItem.path} />
+            {!canVersionItem(selectedItem) ? (
+              <div className="versioning-empty-state">
+                <h4>Version history is not available for this file type.</h4>
+                <p>
+                  ZIP and PowerPoint files are excluded from versioning because they are archive/presentation formats and
+                  cannot be compared reliably here.
+                </p>
+              </div>
+            ) : (
+              <VersionTimeline filePath={selectedItem.path} />
+            )}
           </div>
         </div>
       )}
@@ -1175,6 +1218,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
         onRefresh={handleRefresh}
         onUndo={handleUndo}
         onVersioning={handleVersioning}
+        canVersionItem={canVersionItem(selectedItem)}
         onCompress={handleCompress}
         onExtract={handleExtract}
         onChatWithAI={() => {

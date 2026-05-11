@@ -7,9 +7,12 @@ import './versioning.css';
 
 const ipc = window.electron?.ipcRenderer;
 
+const normalizePath = (p) => (p || '').toLowerCase().replace(/\//g, '\\').replace(/[\\/]+$/, '');
+
 const VersionTimeline = ({ filePath }) => {
   const [versions, setVersions] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
   const [compareA, setCompareA] = useState(null);
   const [compareB, setCompareB] = useState(null);
@@ -21,23 +24,14 @@ const VersionTimeline = ({ filePath }) => {
 
     const sorted = [...raw].sort((a, b) => String(b?.version_id || '').localeCompare(String(a?.version_id || '')));
     const seenById = new Set();
-    const seenByHash = new Set();
 
     return sorted.filter((v) => {
       const versionId = v?.version_id;
-      const fileHash = v?.file_hash;
 
       if (!versionId) return false;
       if (seenById.has(versionId)) return false;
 
-      // Collapse visually identical snapshots to avoid repeated "modified" cards.
-      if (fileHash && seenByHash.has(fileHash)) {
-        seenById.add(versionId);
-        return false;
-      }
-
       seenById.add(versionId);
-      if (fileHash) seenByHash.add(fileHash);
       return true;
     });
   }, []);
@@ -47,7 +41,12 @@ const VersionTimeline = ({ filePath }) => {
       console.warn('[Timeline] No filePath provided');
       return;
     }
-    setLoading(true);
+    const isInitialLoad = versions.length === 0;
+    if (isInitialLoad) {
+      setLoading(true);
+    } else {
+      setRefreshing(true);
+    }
     setError(null);
     try {
       console.log('[Timeline] Fetching versions for:', filePath);
@@ -75,9 +74,10 @@ const VersionTimeline = ({ filePath }) => {
       setError('Failed to connect to version engine');
       setVersions([]);
     } finally {
+      setRefreshing(false);
       setLoading(false);
     }
-  }, [filePath, normalizeVersions]);
+  }, [filePath, normalizeVersions, versions.length]);
 
   useEffect(() => {
     console.log('[VersionTimeline] Mounting/Updating for path:', filePath);
@@ -91,8 +91,8 @@ const VersionTimeline = ({ filePath }) => {
 
     const handler = (event, data) => {
       try {
-        const normalizedPropPath = (filePath || '').toLowerCase().replace(/\//g, '\\\\');
-        const normalizedEventPath = (data?.filePath || '').toLowerCase().replace(/\//g, '\\\\');
+        const normalizedPropPath = normalizePath(filePath);
+        const normalizedEventPath = normalizePath(data?.filePath);
 
         if (normalizedEventPath === normalizedPropPath) {
           console.log('[Timeline] Refreshing due to external save:', data.filePath);
@@ -202,8 +202,13 @@ const VersionTimeline = ({ filePath }) => {
                 </div>
             )}
 
-            <div className="timeline-list">
-                {loading && <div className="timeline-loading">Loading versions...</div>}
+            <div className={`timeline-list ${refreshing ? 'is-refreshing' : ''}`}>
+              {refreshing && (
+                <div className="timeline-refresh-indicator" aria-live="polite">
+                  Updating timeline...
+                </div>
+              )}
+              {loading && versions.length === 0 && <div className="timeline-loading">Loading versions...</div>}
                 {error && <div className="timeline-error">{error}</div>}
                 {!loading && versions.length === 0 && (
                     <div className="no-versions">No versions found for this file.</div>

@@ -15,21 +15,30 @@ def extract_excel_structure(file_path):
         pass
 
     try:
-        # data_only=False to get formulas
-        wb = load_workbook(file_path, data_only=False)
+        # Load twice so we can compare both the formula text and the cached display value.
+        wb_formulas = load_workbook(file_path, data_only=False)
+        wb_values = load_workbook(file_path, data_only=True)
 
         sheets_data = {}
 
-        for sheet in wb.sheetnames:
-            ws = wb[sheet]
+        for sheet in wb_formulas.sheetnames:
+            ws_formulas = wb_formulas[sheet]
+            ws_values = wb_values[sheet] if sheet in wb_values.sheetnames else None
             sheet_content = {}
 
-            for row in ws.iter_rows(values_only=False):
+            for row in ws_formulas.iter_rows(values_only=False):
                 for cell in row:
                     if cell.value is not None:
+                        cached_value = None
+                        if ws_values is not None:
+                            cached_value = ws_values[cell.coordinate].value
+
+                        displayed_value = cached_value if cached_value is not None else cell.value
                         sheet_content[cell.coordinate] = {
                             "value": str(cell.value),
-                            "formula": cell.value if cell.data_type == "f" else None
+                            "formula": cell.value if cell.data_type == "f" else None,
+                            "cached_value": None if cached_value is None else str(cached_value),
+                            "display_value": str(displayed_value)
                         }
 
             sheets_data[sheet] = sheet_content

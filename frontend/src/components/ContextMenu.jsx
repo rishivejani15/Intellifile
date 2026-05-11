@@ -28,6 +28,7 @@ function ContextMenu({
   onCompress,
   onExtract,
   onClose,
+  canVersionItem = true,
 }) {
   const contextMenuRef = useRef(null);
   const [showNewSubmenu, setShowNewSubmenu] = useState(false);
@@ -234,9 +235,15 @@ if (!selectedItem) return null;
 
       {selectedItem.type === 'folder' && (
         <>
-          <div className="context-menu-item" onClick={() => { onPinToFavorites?.(); onClose(); }}>
-            {isPinnedToFavorites ? '📍 Unpin from Quick Access' : '📌 Pin to Quick Access'}
-          </div>
+          {canVersionItem ? (
+            <div className="context-menu-item" onClick={() => { onVersioning?.(selectedItem); onClose(); }}>
+              🕘 Versioning
+            </div>
+          ) : (
+            <div className="context-menu-item disabled" onClick={() => { onClose(); }}>
+              🕘 Versioning not available
+            </div>
+          )}
           <div className="context-menu-item" onClick={() => { onOpenTerminal?.(); onClose(); }}>
             💻 Open Terminal Here
           </div>

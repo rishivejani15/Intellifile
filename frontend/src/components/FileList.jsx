@@ -110,9 +110,11 @@ function FileList({
   return (
     <div
       className={`file-list ${viewMode}`}
+      role="presentation"
       onContextMenu={(e) => {
-        // Only fire for empty space (not on file items, they handle their own)
-        if (e.target === e.currentTarget || e.target.classList.contains('file-list') || e.target.classList.contains('group-header')) {
+        // Fire for any non-file-item area so right-click works in scrolled blank space too.
+        const onFileItem = !!e.target?.closest?.('.file-item');
+        if (!onFileItem) {
           e.preventDefault();
           onEmptySpaceContextMenu?.(e);
         }

@@ -20,6 +20,7 @@ export const useKeyboardShortcuts = ({
   handleUp,
   handleRefresh,
   handleUndo,
+  handleRedo,
   setSelectedItems,
   setSelectedItem,
   setRenamingItem,
@@ -37,17 +38,24 @@ export const useKeyboardShortcuts = ({
       if (isEditableTarget(e.target)) {
         return;
       }
-      if (e.ctrlKey && e.key === 'c') {
+
+      const isCtrl = e.ctrlKey || e.metaKey;
+      const key = (e.key || '').toLowerCase();
+
+      if (isCtrl && key === 'c') {
         handleCopy();
         e.preventDefault();
-      } else if (e.ctrlKey && e.key === 'x') {
+      } else if (isCtrl && key === 'x') {
         handleCut();
         e.preventDefault();
-      } else if (e.ctrlKey && e.key === 'v') {
+      } else if (isCtrl && key === 'v') {
         handlePaste();
         e.preventDefault();
-      } else if (e.ctrlKey && e.key === 'z') {
+      } else if (isCtrl && key === 'z' && !e.shiftKey) {
         handleUndo?.();
+        e.preventDefault();
+      } else if ((isCtrl && key === 'y') || (isCtrl && key === 'z' && e.shiftKey)) {
+        handleRedo?.();
         e.preventDefault();
       } else if (e.key === 'Delete') {
         handleDelete();
@@ -56,10 +64,10 @@ export const useKeyboardShortcuts = ({
         setRenamingItem(selectedItem);
         setRenameValue(selectedItem.name);
         e.preventDefault();
-      } else if (e.ctrlKey && e.key === 'n') {
+      } else if (isCtrl && key === 'n') {
         handleCreateFolder();
         e.preventDefault();
-      } else if (e.ctrlKey && e.key.toLowerCase() === 'a') {
+      } else if (isCtrl && key === 'a') {
         setSelectedItems(displayItems);
         if (displayItems.length > 0) {
           setSelectedItem(displayItems[0]);
@@ -88,5 +96,5 @@ export const useKeyboardShortcuts = ({
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedItem, selectedItems, clipboard, renamingItem, currentPath, historyIndex, displayItems]);
+  }, [selectedItem, selectedItems, clipboard, renamingItem, currentPath, historyIndex, displayItems, handleCopy, handleCut, handlePaste, handleDelete, handleCreateFolder, handleBack, handleForward, handleUp, handleRefresh, handleUndo, handleRedo, setSelectedItems, setSelectedItem, setRenamingItem, setRenameValue, setShowContextMenu]);
 };

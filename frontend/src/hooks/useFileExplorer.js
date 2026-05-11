@@ -7,10 +7,13 @@ export const useFileExplorer = (ipcRenderer) => {
   const [renamingItem, setRenamingItem] = useState(null);
   const [renameValue, setRenameValue] = useState('');
   const undoStack = useRef([]);
+  const redoStack = useRef([]);
 
   const pushUndo = useCallback((action) => {
     undoStack.current.push(action);
     if (undoStack.current.length > 30) undoStack.current.shift();
+    // Any new action invalidates redo history.
+    redoStack.current = [];
   }, []);
   
   const handleCopy = useCallback((selectedItems, selectedItem) => {
@@ -123,13 +126,17 @@ export const useFileExplorer = (ipcRenderer) => {
         if (!window.confirm(msg)) return false;
       }
       try {
+        const deletedActions = [];
         for (const item of itemsToDelete) {
           const result = await ipcRenderer?.invoke('delete-file', item.path);
           if (!result.success) {
             console.error('Delete error:', result.error);
             showErrorToast('Delete failed.', result.error || 'The delete operation was rejected.', 'Check whether the file is open or protected.');
+          } else {
+            deletedActions.push({ type: 'delete', path: item.path, itemType: item.type, name: item.name });
           }
         }
+        deletedActions.forEach((action) => pushUndo(action));
         onDeleteComplete?.();
         return true;
       } catch (err) {
@@ -137,7 +144,7 @@ export const useFileExplorer = (ipcRenderer) => {
       }
     }
     return false;
-  }, [ipcRenderer]);
+  }, [ipcRenderer, pushUndo]);
 
   const handleCreateFile = useCallback(async (currentPath, fileName, onCreateComplete) => {
     if (currentPath && fileName) {
@@ -145,8 +152,9 @@ export const useFileExplorer = (ipcRenderer) => {
         const newPath = currentPath + '\\' + fileName;
         const result = await ipcRenderer?.invoke('create-file', newPath);
         if (result.success) {
+          pushUndo({ type: 'create', path: result.path || newPath, itemType: 'file' });
           onCreateComplete?.();
-          return true;
+          return result;
         } else {
           showErrorToast('Create file failed.', result.error || 'The file could not be created.', 'Check write permissions in the target folder.');
         }
@@ -155,7 +163,7 @@ export const useFileExplorer = (ipcRenderer) => {
       }
     }
     return false;
-  }, [ipcRenderer]);
+  }, [ipcRenderer, pushUndo]);
 
   const handleUndo = useCallback(async (onUndoComplete) => {
     if (undoStack.current.length === 0) return false;
@@ -166,11 +174,45 @@ export const useFileExplorer = (ipcRenderer) => {
         await ipcRenderer?.invoke('rename-file', action.from, action.to);
       } else if (action.type === 'move') {
         await ipcRenderer?.invoke('move-file', action.to, action.from);
+      } else if (action.type === 'create') {
+        await ipcRenderer?.invoke('delete-file', action.path);
+      } else if (action.type === 'delete') {
+        await ipcRenderer?.invoke('restore-deleted-file', action.path);
       }
+      redoStack.current.push(action);
+      if (redoStack.current.length > 30) redoStack.current.shift();
       onUndoComplete?.();
       return true;
     } catch (err) {
       console.error('Undo error:', err);
+      return false;
+    }
+  }, [ipcRenderer]);
+
+  const handleRedo = useCallback(async (onRedoComplete) => {
+    if (redoStack.current.length === 0) return false;
+    const action = redoStack.current.pop();
+
+    try {
+      if (action.type === 'rename') {
+        await ipcRenderer?.invoke('rename-file', action.to, action.from);
+      } else if (action.type === 'move') {
+        await ipcRenderer?.invoke('move-file', action.from, action.to);
+      } else if (action.type === 'create') {
+        if (action.itemType === 'folder') {
+          await ipcRenderer?.invoke('create-folder', action.path);
+        } else {
+          await ipcRenderer?.invoke('create-file', action.path);
+        }
+      } else if (action.type === 'delete') {
+        await ipcRenderer?.invoke('delete-file', action.path);
+      }
+      undoStack.current.push(action);
+      if (undoStack.current.length > 30) undoStack.current.shift();
+      onRedoComplete?.();
+      return true;
+    } catch (err) {
+      console.error('Redo error:', err);
       return false;
     }
   }, [ipcRenderer]);
@@ -182,15 +224,16 @@ export const useFileExplorer = (ipcRenderer) => {
         const newPath = currentPath + '\\' + folderName;
         const result = await ipcRenderer?.invoke('create-folder', newPath);
         if (result.success) {
+          pushUndo({ type: 'create', path: result.path || newPath, itemType: 'folder' });
           onCreateComplete?.();
-          return true;
+          return result;
         }
       } catch (err) {
         console.error('Create folder error:', err);
       }
     }
     return false;
-  }, [ipcRenderer]);
+  }, [ipcRenderer, pushUndo]);
 
   const handleCompressZip = useCallback(async (selectedItem) => {
     if (!selectedItem?.path) return false;
@@ -276,6 +319,7 @@ export const useFileExplorer = (ipcRenderer) => {
     handleCreateFolder,
     handleCreateFile,
     handleUndo,
+    handleRedo,
     handleDragStart,
     handleDropOnItem,
     handleCompressZip,

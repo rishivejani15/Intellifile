@@ -105,6 +105,8 @@ const CHAT_ENABLED = false;
 let updateAvailable = false;
 let updateDownloaded = false;
 const UPDATE_CHECK_STATE_FILE = 'github-update-check.json';
+const GITHUB_OWNER = 'rishivejani15';
+const GITHUB_REPO = 'Intellifile';
 
 function getLocalDateKey(date = new Date()) {
   const year = date.getFullYear();
@@ -147,6 +149,76 @@ function hasCheckedForUpdatesToday() {
   return getLastUpdateCheckDate() === getLocalDateKey();
 }
 
+function normalizeReleaseTag(tag) {
+  return String(tag || '').trim().replace(/^v/i, '');
+}
+
+function compareVersionStrings(a, b) {
+  const parse = (value) => {
+    const match = normalizeReleaseTag(value).match(/^(\d+)\.(\d+)\.(\d+)(?:[-+](.+))?$/);
+    if (!match) return null;
+    return {
+      major: Number(match[1]),
+      minor: Number(match[2]),
+      patch: Number(match[3]),
+      prerelease: match[4] || '',
+    };
+  };
+
+  const left = parse(a);
+  const right = parse(b);
+  if (!left || !right) {
+    return String(normalizeReleaseTag(a)).localeCompare(String(normalizeReleaseTag(b)));
+  }
+
+  if (left.major !== right.major) return left.major - right.major;
+  if (left.minor !== right.minor) return left.minor - right.minor;
+  if (left.patch !== right.patch) return left.patch - right.patch;
+  if (left.prerelease === right.prerelease) return 0;
+  if (!left.prerelease) return 1;
+  if (!right.prerelease) return -1;
+  return left.prerelease.localeCompare(right.prerelease);
+}
+
+function fetchGitHubReleases() {
+  return new Promise((resolve, reject) => {
+    const https = require('https');
+    const options = {
+      hostname: 'api.github.com',
+      path: `/repos/${encodeURIComponent(GITHUB_OWNER)}/${encodeURIComponent(GITHUB_REPO)}/releases?per_page=10`,
+      method: 'GET',
+      headers: {
+        'User-Agent': 'IntelliFile-Updater',
+        'Accept': 'application/vnd.github+json',
+        'X-GitHub-Api-Version': '2022-11-28',
+      },
+      timeout: 5000,
+    };
+
+    const req = https.request(options, (res) => {
+      let body = '';
+      res.setEncoding('utf8');
+      res.on('data', (chunk) => { body += chunk; });
+      res.on('end', () => {
+        if (res.statusCode < 200 || res.statusCode >= 300) {
+          reject(new Error(`GitHub API request failed with status ${res.statusCode}`));
+          return;
+        }
+
+        try {
+          resolve(JSON.parse(body));
+        } catch (err) {
+          reject(err);
+        }
+      });
+    });
+
+    req.on('error', reject);
+    req.on('timeout', () => req.destroy(new Error('GitHub API request timed out')));
+    req.end();
+  });
+}
+
 async function checkGitHubUpdatesOncePerDay({ force = false } = {}) {
   if (isDev) {
     return { success: true, skipped: true, reason: 'development-mode' };
@@ -157,16 +229,35 @@ async function checkGitHubUpdatesOncePerDay({ force = false } = {}) {
   }
 
   try {
-    const result = await autoUpdater.checkForUpdates();
+    const releases = await fetchGitHubReleases();
+    const currentVersion = normalizeReleaseTag(app.getVersion());
+    const candidates = Array.isArray(releases) ? releases.filter((release) => release && !release.draft) : [];
+    const latestRelease = candidates[0] || null;
+
     markUpdateCheckCompleted();
+
+    if (!latestRelease) {
+      return { success: true, skipped: true, reason: 'no-releases-found' };
+    }
+
+    const latestVersion = normalizeReleaseTag(latestRelease.tag_name || latestRelease.name || '');
+    const comparison = compareVersionStrings(latestVersion, currentVersion);
+    const updateAvailable = comparison > 0;
+
     return {
       success: true,
-      updateAvailable: !!(result && result.updateInfo),
-      updateInfo: result ? result.updateInfo : null,
+      updateAvailable,
+      updateInfo: updateAvailable ? {
+        version: latestVersion,
+        tag: latestRelease.tag_name || latestVersion,
+        name: latestRelease.name || latestVersion,
+        prerelease: !!latestRelease.prerelease,
+        url: latestRelease.html_url || null,
+      } : null,
     };
   } catch (err) {
     markUpdateCheckCompleted();
-    return { success: false, error: err.message || String(err) };
+    return { success: true, skipped: true, reason: err.message || 'github-check-failed' };
   }
 }
 
@@ -177,7 +268,8 @@ function initializeUpdater() {
   }
 
   try {
-    autoUpdater.checkForUpdatesAndNotify();
+    autoUpdater.allowPrerelease = true;
+    autoUpdater.autoDownload = false;
 
     autoUpdater.on('update-available', (info) => {
       updateAvailable = true;
@@ -196,16 +288,22 @@ function initializeUpdater() {
     });
 
     autoUpdater.on('error', (err) => {
-      console.error('[Updater] Error:', err.message || err);
+      console.warn('[Updater] Ignoring update error:', err.message || err);
     });
 
     checkGitHubUpdatesOncePerDay().then((result) => {
       if (result && result.skipped) {
         console.log('[Updater] Skipped daily GitHub version check:', result.reason);
       } else if (result && result.success) {
-        console.log('[Updater] Daily GitHub version check completed');
-      } else if (result && !result.success) {
-        console.warn('[Updater] Daily GitHub version check failed:', result.error);
+        if (result.updateAvailable && result.updateInfo) {
+          updateAvailable = true;
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('update-available', { version: result.updateInfo.version });
+          }
+          console.log('[Updater] New GitHub release found:', result.updateInfo.version);
+        } else {
+          console.log('[Updater] GitHub release check completed; no update found');
+        }
       }
     });
   } catch (err) {
@@ -864,6 +962,28 @@ function getLocalIpv4() {
   return { address: candidates[0]?.address || null, candidates };
 }
 
+function checkInternetConnectivity(timeoutMs = 3000) {
+  return new Promise((resolve) => {
+    try {
+      const dns = require('dns');
+      let finished = false;
+      const finish = (value) => {
+        if (finished) return;
+        finished = true;
+        resolve(value);
+      };
+
+      const timer = setTimeout(() => finish(false), timeoutMs);
+      dns.lookup('huggingface.co', (err) => {
+        clearTimeout(timer);
+        finish(!err);
+      });
+    } catch (err) {
+      resolve(false);
+    }
+  });
+}
+
 function startSyncServer() {
   try {
     if (syncServerProcess && !syncServerProcess.killed) {
@@ -1386,12 +1506,23 @@ ipcMain.handle('versions-restore', async (_event, payload) => {
 });
 
 ipcMain.handle('save-version', async (_event, payload) => {
-  return sendToPython({
+  const result = await sendToPython({
     action: 'save_version',
     file_path: payload.filePath || payload.file_path,
     old_content: payload.oldContent || payload.old_content || '',
     new_content: payload.newContent || payload.new_content || '',
   });
+
+  if (result && result.success && win && !win.isDestroyed()) {
+    win.webContents.send('version-updated', {
+      filePath: payload.filePath || payload.file_path,
+      versionId: result.data?.version_id,
+      summary: result.data?.summary,
+      riskLevel: result.data?.risk_level,
+    });
+  }
+
+  return result;
 });
 
 function isProtectedPath(filePath) {
@@ -1633,6 +1764,14 @@ function registerIpcHandlers() {
   ipcMain.handle('offline-setup-run', async (event) => {
     if (setupProcess) return { success: false, error: 'Setup already running' };
 
+    const hasInternet = await checkInternetConnectivity();
+    if (!hasInternet) {
+      return {
+        success: false,
+        error: 'Internet connection is required to download the AI models. Please turn on Wi-Fi or connect to the internet and try again.',
+      };
+    }
+
     return new Promise((resolve) => {
       const appDataDir = app.getPath('userData');
       let exePath;
@@ -1708,8 +1847,8 @@ function registerIpcHandlers() {
                 name: 'Embedding Model',
                 status: 'downloading',
                 pct,
-                downloaded_mb: processed,
-                total_mb: total,
+                downloaded_files: processed,
+                total_files: total,
               });
             }
             continue;
@@ -1773,6 +1912,15 @@ function registerIpcHandlers() {
     } catch (err) {
       console.error('[Setup] Failed to reset offline setup:', err.message || err);
       return { success: false, error: err.message || 'Failed to reset offline setup.' };
+    }
+  });
+
+  ipcMain.handle('check-network-connectivity', async () => {
+    try {
+      const online = await checkInternetConnectivity();
+      return { success: true, online };
+    } catch (err) {
+      return { success: false, online: false, error: err.message || 'Unable to verify network connectivity.' };
     }
   });
 
@@ -2212,6 +2360,31 @@ function registerIpcHandlers() {
     }
   });
 
+  ipcMain.handle('restore-deleted-file', async (event, originalPath) => {
+    try {
+      const escapedPath = String(originalPath || '').replace(/'/g, "''");
+      const command = [
+        '$shell = New-Object -ComObject Shell.Application',
+        '$recycle = $shell.Namespace(10)',
+        '$item = $recycle.Items() | Where-Object { $_.ExtendedProperty(\'System.Recycle.DeletedFrom\') -eq \'${escapedPath}\' } | Select-Object -First 1',
+        'if ($item) { $item.InvokeVerb(\'RESTORE\'); exit 0 } else { exit 1 }'
+      ].join('; ');
+
+      return await new Promise((resolve) => {
+        const { exec } = require('child_process');
+        exec(`powershell -NoProfile -Command "${command}"`, (err) => {
+          if (err) {
+            resolve({ success: false, error: err.message });
+          } else {
+            resolve({ success: true });
+          }
+        });
+      });
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
   ipcMain.handle('create-folder', async (event, folderPath) => {
     try {
       if (fs.existsSync(folderPath)) {
@@ -2226,7 +2399,7 @@ function registerIpcHandlers() {
         folderPath = newPath;
       }
       fs.mkdirSync(folderPath, { recursive: true });
-      return { success: true };
+      return { success: true, path: folderPath };
     } catch (err) {
       return { success: false, error: err.message };
     }
@@ -2606,11 +2779,7 @@ function registerIpcHandlers() {
 
   // Update handlers
   ipcMain.handle('check-for-updates', async () => {
-    const result = await checkGitHubUpdatesOncePerDay();
-    if (result.success) {
-      return result;
-    }
-    console.error('[check-for-updates] Error:', result.error);
+    const result = await checkGitHubUpdatesOncePerDay({ force: true });
     return result;
   });
 
