@@ -181,7 +181,7 @@ function ExplorerNavbar({
           >
             {showHidden ? '👁️' : '👁️‍🗨️'}
           </button>
-          <div className={`index-status ${indexing ? 'running' : 'done'}`} title={indexDetail || indexMessage}>
+          <div className={`index-status ${indexing ? 'running' : (indexMessage && indexMessage.toLowerCase().includes('failed') ? 'error' : 'done')}`} title={indexDetail || indexMessage}>
             <span className="index-dot" />
             <span className="index-text">
               {indexing ? `Indexing${indexPhase ? ` (${indexPhase})` : ''}` : (indexMessage || 'Checking index...')}

@@ -97,7 +97,7 @@ body {
 .tab-btn {
   background: transparent;
   border: none;
-  color: #888;
+  color: var(--text-secondary);
   padding: 14px 24px;
   font-size: 15px;
   font-weight: 500;
@@ -108,13 +108,20 @@ body {
 }
 
 .tab-btn:hover {
-  color: #ccc;
-  background-color: rgba(255,255,255,0.02);
+  color: var(--text-primary);
+  background-color: rgba(0, 0, 0, 0.04);
 }
 
 .tab-btn.active {
-  color: #fff;
-  border-bottom-color: #0e639c;
+  color: var(--primary-blue);
+  font-weight: 600;
+  border-bottom-color: var(--primary-blue);
+}
+
+@media (prefers-color-scheme: dark) {
+  .tab-btn:hover {
+    background-color: rgba(255, 255, 255, 0.05);
+  }
 }
 
 /* Container Layout - 3 columns: left sidebar, main content, right sidebar */

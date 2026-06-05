@@ -8,6 +8,8 @@ const LogsPanel = () => {
   const logsContainerRef = useRef(null);
 
   useEffect(() => {
+    if (!window.intellifile) return;
+
     // Load initial logs
     window.intellifile.getLogs().then(initialLogs => {
       if (initialLogs) setLogs(initialLogs);
@@ -32,7 +34,7 @@ const LogsPanel = () => {
   }, [logs, autoScroll]);
 
   const handleClear = async () => {
-    await window.intellifile.clearLogs();
+    if (window.intellifile) await window.intellifile.clearLogs();
     setLogs([]);
   };
 
@@ -56,6 +58,18 @@ const LogsPanel = () => {
     return 'cat-default';
   };
 
+  const handleCopyAll = () => {
+    const textToCopy = filteredLogs
+      .map(log => `[${log.timestamp}] [${log.category}] ${log.message}`)
+      .join('\n');
+    navigator.clipboard.writeText(textToCopy).then(() => {
+      // Could show a toast here if we had access to the toast system in this component
+      console.log('Logs copied to clipboard');
+    }).catch(err => {
+      console.error('Failed to copy logs:', err);
+    });
+  };
+
   return (
     <div className="logs-panel">
       <div className="logs-toolbar">
@@ -76,6 +90,7 @@ const LogsPanel = () => {
             />
             Auto-scroll
           </label>
+          <button onClick={handleCopyAll} title="Copy all logs to clipboard">Copy All</button>
           <button onClick={handleClear}>Clear</button>
         </div>
       </div>

@@ -863,6 +863,12 @@
   color: #1f5e2c;
 }
 
+.index-status.error {
+  border-color: #fca5a5;
+  background: #fef2f2;
+  color: #991b1b;
+}
+
 .index-dot {
   width: 6px;
   height: 6px;
@@ -878,6 +884,10 @@
 
 .index-status.done .index-dot {
   background: #22c55e;
+}
+
+.index-status.error .index-dot {
+  background: #ef4444;
 }
 
 .index-text {
@@ -993,6 +1003,16 @@
     border-color: #2f5337;
     background: #1f3a26;
     color: #b8f0c5;
+  }
+
+  .index-status.error {
+    border-color: #7f1d1d;
+    background: #3a1f1f;
+    color: #fca5a5;
+  }
+
+  .index-status.error .index-dot {
+    background: #ef4444;
   }
 
   .index-pct {
