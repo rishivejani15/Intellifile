@@ -14,6 +14,7 @@ import urllib.request
 import shutil
 import json
 import argparse
+import warnings
 
 
 # ── Qwen GGUF download URLs (HuggingFace) ──────────────────────────
@@ -124,12 +125,29 @@ def main():
 
         # Download directly as ONNX - no export, no PyTorch needed!
         # We only download the necessary files to keep the footprint tiny
-        snapshot_download(
-            repo_id=model_name,
-            cache_dir=_MODELS_DIR,
-            allow_patterns=["*.onnx", "*.json", "tokenizer*"],
-            ignore_patterns=["*model_fp16*", "*model_int8*", "*model_quantized*"]
-        )
+        class _FilteredStderr:
+            def __init__(self, dest):
+                self.dest = dest
+            def write(self, data):
+                if not data:
+                    return
+                if "hf_xet" in data or "Xet Storage is enabled" in data:
+                    return
+                self.dest.write(data)
+            def flush(self):
+                self.dest.flush()
+
+        old_stderr = sys.stderr
+        sys.stderr = _FilteredStderr(old_stderr)
+        try:
+            snapshot_download(
+                repo_id=model_name,
+                cache_dir=_MODELS_DIR,
+                allow_patterns=["*.onnx", "*.json", "tokenizer*"],
+                ignore_patterns=["*model_fp16*", "*model_int8*", "*model_quantized*"]
+            )
+        finally:
+            sys.stderr = old_stderr
 
         _log(f"      [OK] ONNX embedding model downloaded directly")
         _log(f"      [OK] Saved to -> {_MODELS_DIR}")

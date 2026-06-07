@@ -23,7 +23,7 @@ const OfflineSetup = ({ onComplete }) => {
     };
 
     checkStatus();
-  }, []);
+  }, [onComplete]);
 
   const startSetup = async () => {
     if (status === 'running') return;

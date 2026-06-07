@@ -49,6 +49,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
   const [indexDetail, setIndexDetail] = useState('');
   const [indexPct, setIndexPct] = useState(null);
   const [indexMessage, setIndexMessage] = useState('');
+  const [engineError, setEngineError] = useState('');
   const [archiveActive, setArchiveActive] = useState(false);
   const [archiveAction, setArchiveAction] = useState('');
   const [archivePct, setArchivePct] = useState(null);
@@ -369,7 +370,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
         setLoading(false);
       }
     }
-  }, [updateBreadcrumb, searchQuery, sortBy, sortDirection, showHidden, updateHistory, updateActiveTab, setCurrentPath, setAddressPath, setRenamingItem, currentPath]);
+  }, [updateBreadcrumb, searchQuery, sortBy, sortDirection, showHidden, updateHistory, updateActiveTab, setCurrentPath, setAddressPath, setRenamingItem, onFileSelect, currentPath]);
 
   const handleRecentChooserSelect = (file) => {
     setShowRecentChooser(false);
@@ -436,7 +437,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
     return () => {
       ipcRenderer.off('open-path', handleOpenPath);
     };
-  }, [ipcRenderer, loadDirectory]);
+  }, [loadDirectory]);
 
   // Recent-file chooser state (for explorer open fallback)
   const [showRecentChooser, setShowRecentChooser] = React.useState(false);
@@ -926,6 +927,11 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
           if (status.lastIndexMessage) {
             setIndexMessage(status.lastIndexMessage);
           }
+          if (status.error) {
+            setEngineError(status.error);
+          } else {
+            setEngineError('');
+          }
           if (status.lastIndexStatus) {
             setIndexPhase(status.lastIndexStatus.phase || '');
             setIndexDetail(status.lastIndexStatus.detail || '');
@@ -1169,6 +1175,12 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
           onSearchChange={handleSearchChange}
           onSearchKeyDown={handleSearchKeyDown}
         />
+
+        {engineError && (
+          <div className="engine-error-banner">
+            ⚠️ Search engine failed to start: {engineError}
+          </div>
+        )}
 
         <div className="explorer-content-area">
           <div

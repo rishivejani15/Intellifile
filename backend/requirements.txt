@@ -18,5 +18,5 @@ uvicorn
 pydantic-settings
 pydantic
 sentence-transformers[onnx] 
-llama-cpp-python
+llama-cpp-python==0.3.26
 huggingface_hub

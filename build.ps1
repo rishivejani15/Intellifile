@@ -12,11 +12,55 @@ if (Test-Path "dist") { Remove-Item -Recurse -Force "dist" }
 # 1. PyInstaller Freeze
 Write-Host "1. Freezing Python Backend (with UPX compression)..." -ForegroundColor Yellow
 Set-Location -Path backend
-if (Test-Path ".venv\Scripts\pip.exe") {
-	.venv\Scripts\pip.exe install -r requirements.txt
-	if ($LASTEXITCODE -ne 0) { Write-Host "Failed to install backend requirements" -ForegroundColor Red; exit $LASTEXITCODE }
+$shortTempRoot = "C:\t"
+$shortInstallTemp = Join-Path $shortTempRoot "pip-temp"
+$shortCache = Join-Path $shortTempRoot "pip-cache"
+if (!(Test-Path $shortTempRoot)) {
+	New-Item -ItemType Directory -Force -Path $shortTempRoot | Out-Null
 }
-.venv\Scripts\pyinstaller --clean intellifile_engine.spec
+if (!(Test-Path $shortInstallTemp)) {
+	New-Item -ItemType Directory -Force -Path $shortInstallTemp | Out-Null
+}
+if (!(Test-Path $shortCache)) {
+	New-Item -ItemType Directory -Force -Path $shortCache | Out-Null
+}
+$originalTemp = $env:TEMP
+$originalTmp = $env:TMP
+$originalPipCache = $env:PIP_CACHE_DIR
+$substDrive = "Z:"
+$substCreated = $false
+
+if ((Get-PSDrive -Name Z -ErrorAction SilentlyContinue) -ne $null) {
+	subst Z: /D | Out-Null
+}
+subst $substDrive $shortInstallTemp | Out-Null
+$substCreated = $true
+$env:TEMP = "Z:\"
+$env:TMP = "Z:\"
+$env:PIP_CACHE_DIR = $shortCache
+
+try {
+	if (Test-Path "..\venv\Scripts\python.exe") {
+		& "..\venv\Scripts\python.exe" -m pip install -r requirements.txt
+		if ($LASTEXITCODE -ne 0) { Write-Host "Failed to install backend requirements" -ForegroundColor Red; exit $LASTEXITCODE }
+		& "..\venv\Scripts\python.exe" -m pip install pyinstaller
+		if ($LASTEXITCODE -ne 0) { Write-Host "Failed to install PyInstaller" -ForegroundColor Red; exit $LASTEXITCODE }
+		& "..\venv\Scripts\python.exe" -m PyInstaller --clean intellifile_engine.spec
+		$pyinstallerExit = $LASTEXITCODE
+		if ($pyinstallerExit -ne 0) { Write-Host "Failed to build engine" -ForegroundColor Red; exit $pyinstallerExit }
+	} else {
+		Write-Host "Python executable not found in ..\venv\Scripts" -ForegroundColor Red
+		exit 1
+	}
+} finally {
+	if ($substCreated -and (Get-PSDrive -Name Z -ErrorAction SilentlyContinue) -ne $null) {
+		subst $substDrive /D | Out-Null
+	}
+	if ($null -ne $originalTemp) { $env:TEMP = $originalTemp } else { Remove-Item Env:\TEMP -ErrorAction SilentlyContinue }
+	if ($null -ne $originalTmp) { $env:TMP = $originalTmp } else { Remove-Item Env:\TMP -ErrorAction SilentlyContinue }
+	if ($null -ne $originalPipCache) { $env:PIP_CACHE_DIR = $originalPipCache } else { Remove-Item Env:\PIP_CACHE_DIR -ErrorAction SilentlyContinue }
+}
+
 if ($LASTEXITCODE -ne 0) { Write-Host "Failed to build engine" -ForegroundColor Red; exit $LASTEXITCODE }
 
 # Move dist folders to expected location

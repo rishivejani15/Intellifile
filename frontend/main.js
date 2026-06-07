@@ -815,6 +815,7 @@ const SYNC_PORT = 8765;
 let pyReady = false;
 let pythonReadyForIndexing = false;
 let windowReadyForIndexing = false;
+let pyEngineError = null;
 let pyBuffer = '';
 let pendingRequests = new Map();  // requestId -> { resolve, timeout }
 let documentPreviewCache = new Map();
@@ -851,6 +852,10 @@ function sendToPython(payload, timeoutMs = 120000) {
 function tryAutoIndex() {
   if (autoIndexRequested || indexInProgress) return;
   if (!pythonReadyForIndexing || !windowReadyForIndexing) return;
+  if (!pyModelLoaded) {
+    console.log('[Index] Skipping auto-index: embedding model is not loaded yet');
+    return;
+  }
   triggerAutoIndex();
 }
 
@@ -1121,6 +1126,7 @@ function startPython() {
   pythonEnv.IF_DATA_DIR = path.join(appDataDir, 'backend', 'data');
   pythonEnv.IF_MODELS_DIR = path.join(appDataDir, 'backend', 'models');
 
+  pyEngineError = null;
   if (isDev) {
     const scriptPath = path.join(__dirname, "../backend/engine_server.py");
     console.log('[Python] Starting engine from:', scriptPath);
@@ -1130,14 +1136,33 @@ function startPython() {
       env: pythonEnv,
     });
   } else {
-    const exePath = path.join(process.resourcesPath, "backend-dist", "engine", "engine.exe");
+    const exeName = process.platform === 'win32' ? 'engine.exe' : 'engine';
+    const exePath = path.join(process.resourcesPath, 'backend-dist', 'engine', exeName);
     console.log('[Python] Starting frozen engine from:', exePath);
+    if (!fs.existsSync(exePath)) {
+      pyEngineError = `Frozen engine executable not found at ${exePath}. Please rebuild using build.ps1 or reinstall the packaged app.`;
+      console.error('[Python] Missing frozen engine executable:', exePath);
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('engine-error', pyEngineError);
+      }
+      return;
+    }
     pyProcess = spawn(exePath, [], {
-      cwd: path.join(process.resourcesPath, "backend-dist"),
+      cwd: path.join(process.resourcesPath, 'backend-dist'),
       stdio: ['pipe', 'pipe', 'pipe'],
       env: pythonEnv,
     });
   }
+
+  pyProcess.on('error', (err) => {
+    pyEngineError = err && err.message ? err.message : String(err);
+    pyReady = false;
+    pythonReadyForIndexing = false;
+    console.error('[Python] Engine spawn failed:', pyEngineError);
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('engine-error', pyEngineError);
+    }
+  });
 
   // Increase max listeners to prevent memory leak warnings during indexing
   if (pyProcess) {
@@ -1148,26 +1173,71 @@ function startPython() {
 
   pyProcess.stdout.on("data", (data) => {
     const text = data.toString();
-    console.log("[PY stdout]", text.trim());
-
-    // Check for readiness signal
-    if (!pyReady && text.includes('IntelliFile Python Engine Ready')) {
-      pyReady = true;
-      pythonReadyForIndexing = true;
-      console.log('[Python] ✅ Engine is ready — pyReady = true');
-      tryAutoIndex();
-    }
+    console.debug('[PY stdout]', text.trim());
 
     // Buffer stdout and resolve pending requests when we get complete JSON lines
     pyBuffer += text;
-    const lines = pyBuffer.split('\n');
+    const lines = pyBuffer.split(/\r?\n/);
     // Keep last (possibly incomplete) line in buffer
     pyBuffer = lines.pop();
+
     for (const line of lines) {
       const trimmed = line.trim();
       if (!trimmed) continue;
+
+      // Check for readiness signal on each full line
+      if (!pyReady && trimmed.includes('IntelliFile Python Engine Ready')) {
+        pyReady = true;
+        pyModelLoaded = false;
+        pythonReadyForIndexing = false;
+        console.log('[Python] ✅ Engine is ready — pyReady = true');
+        sendToPython({ action: 'model_status' }, 10000).then((res) => {
+          if (res && res.loaded) {
+            pyModelLoaded = true;
+            pythonReadyForIndexing = true;
+            console.log('[Python] ✅ Embedding model is loaded — ready for indexing');
+            tryAutoIndex();
+          } else {
+            pyModelLoaded = false;
+            pythonReadyForIndexing = false;
+            const modelError = res?.error || 'Embedding model not available';
+            console.warn('[Python] Embedding model unavailable:', modelError);
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.webContents.send('model-status', { loaded: false, error: modelError });
+            }
+          }
+        }).catch((err) => {
+          pyModelLoaded = false;
+          pythonReadyForIndexing = false;
+          const errMsg = err && err.message ? err.message : String(err);
+          console.warn('[Python] Model status check failed:', errMsg);
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('model-status', { loaded: false, error: errMsg });
+          }
+        });
+      }
+
+      let jsonText = null;
+      if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+        jsonText = trimmed;
+      } else {
+        const firstBrace = Math.min(
+          trimmed.indexOf('{') !== -1 ? trimmed.indexOf('{') : Infinity,
+          trimmed.indexOf('[') !== -1 ? trimmed.indexOf('[') : Infinity
+        );
+        const lastBrace = Math.max(trimmed.lastIndexOf('}'), trimmed.lastIndexOf(']'));
+        if (firstBrace !== Infinity && lastBrace > firstBrace) {
+          jsonText = trimmed.slice(firstBrace, lastBrace + 1);
+        }
+      }
+
+      if (!jsonText) {
+        console.debug('[PY stdout ignored non-json]', trimmed);
+        continue;
+      }
+
       try {
-        const parsed = JSON.parse(trimmed);
+        const parsed = JSON.parse(jsonText);
         const id = parsed._id;
 
         // Forward progress messages to the renderer
@@ -1188,8 +1258,7 @@ function startPython() {
           }
         }
       } catch (e) {
-        // Not valid JSON, ignore
-        console.log("Not a valid json");
+        console.debug('[PY stdout JSON parse failed]', jsonText, e && e.message ? e.message : e);
       }
     }
   });
@@ -1201,6 +1270,7 @@ function startPython() {
   pyProcess.on("close", (code) => {
     console.log('[Python] ❌ Process exited with code:', code);
     pyReady = false;
+    pyModelLoaded = false;
     // Reject all pending requests
     for (const [id, { resolve, timeout }] of pendingRequests) {
       clearTimeout(timeout);
@@ -1665,6 +1735,9 @@ ipcMain.handle('clear-faiss', async () => {
 });
 
 ipcMain.handle("search", async (_, payload) => {
+  if (pyEngineError) {
+    throw new Error(pyEngineError);
+  }
   const query = typeof payload === 'string' ? payload : payload?.query || '';
   const rootFolder = typeof payload === 'object' && payload ? payload.rootFolder || payload.rootPath || null : null;
   console.log('[IPC] search called, pyReady:', pyReady, 'query:', query, 'rootFolder:', rootFolder);
@@ -1680,12 +1753,14 @@ ipcMain.handle("search", async (_, payload) => {
 });
 
 ipcMain.handle("search-status", async () => {
-  console.log('[IPC] search-status called, pyReady:', pyReady);
+  console.log('[IPC] search-status called, pyReady:', pyReady, 'pyModelLoaded:', pyModelLoaded, 'pyEngineError:', pyEngineError);
   return {
     ready: pyReady,
+    modelLoaded: pyModelLoaded,
     indexing: indexInProgress,
     lastIndexMessage,
-    lastIndexStatus
+    lastIndexStatus,
+    error: pyEngineError
   };
 });
 
@@ -1743,11 +1818,17 @@ ipcMain.handle('download-model', async () => {
   if (!CHAT_ENABLED) return { success: false, error: 'Chat is disabled by policy.' };
   return new Promise((resolve) => {
     try {
-      const scriptPath = path.join(__dirname, '..', 'backend', 'setup_offline.py');
+      const appDataDir = app.getPath('userData');
       const env = { ...process.env, IF_ALLOW_MODEL_DOWNLOAD: '1' };
       // Prefer per-user models dir inside app userData
-      env.IF_MODELS_DIR = path.join(app.getPath('userData'), 'models');
-      const dl = spawn(PYTHON_EXECUTABLE, [scriptPath], {
+      env.IF_MODELS_DIR = path.join(appDataDir, 'backend', 'models');
+      const exePath = isDev
+        ? PYTHON_EXECUTABLE
+        : path.join(process.resourcesPath, 'backend-dist', 'engine', 'engine.exe');
+      const args = isDev
+        ? [path.join(__dirname, "../backend/setup_offline.py"), "--appdata-dir", appDataDir, "--json"]
+        : ["--offline-setup", "--appdata-dir", appDataDir, "--json"];
+      const dl = spawn(exePath, args, {
         cwd: path.join(__dirname, '..'),
         env,
         stdio: ['ignore', 'pipe', 'pipe']

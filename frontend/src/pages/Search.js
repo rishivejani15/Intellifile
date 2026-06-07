@@ -15,6 +15,7 @@ export default function Search() {
   const [indexMessage, setIndexMessage] = useState('');
   const [ready, setReady] = useState(false);
   const [error, setError] = useState('');
+  const [engineError, setEngineError] = useState('');
 
   // Poll engine readiness
   useEffect(() => {
@@ -22,11 +23,20 @@ export default function Search() {
     async function check() {
       try {
         const status = await getSearchStatus();
-        if (status.ready) {
-          setReady(true);
-          clearInterval(interval);
+        if (status) {
+          if (status.error) {
+            setEngineError(status.error);
+          } else {
+            setEngineError('');
+          }
+          if (status.ready) {
+            setReady(true);
+            clearInterval(interval);
+          }
         }
-      } catch { /* ignore */ }
+      } catch (err) {
+        console.warn('[Search] search status check failed:', err);
+      }
     }
     check();
     interval = setInterval(check, 2000);
@@ -107,7 +117,13 @@ export default function Search() {
         </div>
       )}
 
-{(indexing || indexMessage) && (
+      {engineError && (
+        <div className="search-error">
+          ⚠️ Search engine failed to start: {engineError}
+        </div>
+      )}
+
+      {(indexing || indexMessage) && (
         <div className={`index-status ${indexing ? 'running' : (indexMessage && indexMessage.toLowerCase().includes('failed') ? 'error' : 'done')}`} title={indexDetail || indexMessage}>
           <span className="index-dot" />
           <span className="index-text">
