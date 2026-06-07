@@ -15,7 +15,10 @@ contextBridge.exposeInMainWorld('electron', {
     invoke: (channel, ...args) => ipcRenderer.invoke(channel, ...args),
     send: (channel, ...args) => ipcRenderer.send(channel, ...args),
     on: (channel, func) => {
-      const wrappedFunc = (event, ...args) => func(...args);
+      const wrappedFunc = (event, ...args) => {
+        console.log(`[Preload] Received IPC on channel: ${channel}`, args);
+        return func(...args);
+      };
       getOrCreateHandlerList(channel).push({ func, wrapped: wrappedFunc });
       ipcRenderer.on(channel, wrappedFunc);
     },
@@ -238,5 +241,16 @@ contextBridge.exposeInMainWorld('intellifile', {
     const handler = (_event, progress) => callback(progress);
     ipcRenderer.on('offline-setup-progress', handler);
     return () => ipcRenderer.off('offline-setup-progress', handler);
-  }
+  },
+
+  // Startup path (for file-manager open-with and Chrome "Show in folder")
+  getStartupPath: () => ipcRenderer.invoke('get-startup-path'),
+
+  // Default file manager handling
+  checkIsDefaultFileManager: () => ipcRenderer.invoke('check-is-default-file-manager'),
+  setDefaultFileManager: (enable) => ipcRenderer.invoke('set-default-file-manager', enable),
+
+  // Chrome redirect handling
+  setChromeRedirect: (enable) => ipcRenderer.invoke('set-chrome-redirect', enable),
+  getChromeRedirect: () => ipcRenderer.invoke('get-chrome-redirect')
 });

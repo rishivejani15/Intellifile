@@ -214,7 +214,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
 
   // Load directory with filtering and sorting
   const loadDirectory = useCallback(async (dirPath, options = {}) => {
-    const { soft = false, trackHistory = true, tabId = null } = options;
+    const { soft = false, trackHistory = true, tabId = null, selectFile = null } = options;
     const requestId = ++loadRequestRef.current;
     const isStale = () => requestId !== loadRequestRef.current;
 
@@ -307,14 +307,57 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
             setAddressPath(actualPath);
             updateBreadcrumb(actualPath);
           }
-          setSelectedItem(prev => (prev && loadedItems.some(i => i.path === prev.path)) ? prev : null);
-          setSelectedItems(prev => prev.filter(pItem => loadedItems.some(i => i.path === pItem.path)));
-          setLastSelectedIndex(null);
+          
+          let selected = null;
+          if (selectFile) {
+            const selectNameLower = selectFile.toLowerCase();
+            const found = loadedItems.find(i => 
+              i.name.toLowerCase() === selectNameLower || 
+              i.path.toLowerCase() === selectNameLower
+            );
+            if (found) {
+              selected = found;
+              setSelectedItems([found]);
+              setSelectedItem(found);
+              setLastSelectedIndex(loadedItems.indexOf(found));
+              if (onFileSelect) onFileSelect(found);
+              
+              let attempts = 0;
+              const scrollInterval = setInterval(() => {
+                const els = document.querySelectorAll('.file-item.selected');
+                if (els.length > 0) {
+                  els[0].scrollIntoView({ behavior: 'auto', block: 'center' });
+                  clearInterval(scrollInterval);
+                }
+                if (++attempts > 20) clearInterval(scrollInterval);
+              }, 50);
+            }
+          }
+
+          if (!selected) {
+            setSelectedItem(prev => (prev && loadedItems.some(i => i.path === prev.path)) ? prev : null);
+            setSelectedItems(prev => prev.filter(pItem => loadedItems.some(i => i.path === pItem.path)));
+            setLastSelectedIndex(null);
+          }
+
           if (trackHistory && pathChanged) {
             updateHistory(actualPath, tabId);
           }
           if (pathChanged) {
             updateActiveTab(actualPath, tabId);
+          }
+          // If this navigation was triggered from Explorer and no exact file was provided,
+          // show a small recent-file chooser instead of guessing the newest file.
+          if (pathChanged && options && options.fromExplorer && !selectFile) {
+            const recentFiles = loadedItems
+              .filter(i => i.type === 'file')
+              .sort((a, b) => b.modified - a.modified)
+              .slice(0, 6);
+            setRecentChooserFiles(recentFiles);
+            setShowRecentChooser(true);
+          } else {
+            setShowRecentChooser(false);
+            setRecentChooserFiles([]);
           }
         }
       }
@@ -328,16 +371,77 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
     }
   }, [updateBreadcrumb, searchQuery, sortBy, sortDirection, showHidden, updateHistory, updateActiveTab, setCurrentPath, setAddressPath, setRenamingItem, currentPath]);
 
-  // Initialize with saved path or Documents folder
+  const handleRecentChooserSelect = (file) => {
+    setShowRecentChooser(false);
+    // Prefer selecting using existing logic to keep behavior consistent and performant
+    loadDirectory(currentPath, { selectFile: file.name, soft: true, trackHistory: false });
+  };
+
+  // Initialize with startup path, saved path or Documents folder
   useEffect(() => {
     if (initialLoadRef.current) return;
     initialLoadRef.current = true;
-    if (currentPath) {
-      loadDirectory(currentPath, { trackHistory: false });
-    } else {
-      loadDirectory(null);
-    }
+
+    const init = async () => {
+      let startupPathData = null;
+      try {
+        if (window.intellifile?.getStartupPath) {
+          startupPathData = await window.intellifile.getStartupPath();
+        }
+      } catch (e) {
+        console.warn('Failed to fetch startup path:', e);
+      }
+
+      if (startupPathData && startupPathData.path) {
+        console.log('[FileExplorer] Opening startup path:', startupPathData);
+        loadDirectory(startupPathData.path, { 
+          trackHistory: true, 
+          selectFile: startupPathData.selectFile,
+          fromExplorer: !!startupPathData.fromExplorer
+        });
+      } else if (currentPath) {
+        loadDirectory(currentPath, { trackHistory: false });
+      } else {
+        loadDirectory(null);
+      }
+    };
+
+    init();
   }, [currentPath, loadDirectory]);
+
+  // Listen for open-path event from main process (for second instance activations)
+  useEffect(() => {
+    if (!ipcRenderer) return;
+
+    const handleOpenPath = (data) => {
+      console.log('[FileExplorer] Received open-path event:', data);
+      if (window.intellifile?.showToast) {
+        window.intellifile.showToast('Received open path request: ' + (data?.path || 'unknown'), { type: 'info' });
+      } else {
+        // Fallback if showToast isn't directly exposed
+        const event = new CustomEvent('show-toast', { detail: { message: 'Open Path Triggered: ' + data?.selectFile } });
+        window.dispatchEvent(event);
+      }
+      
+      if (data && data.path) {
+        loadDirectory(data.path, { 
+          trackHistory: true, 
+          selectFile: data.selectFile,
+          fromExplorer: !!data.fromExplorer
+        });
+      }
+    };
+
+    ipcRenderer.on('open-path', handleOpenPath);
+    return () => {
+      ipcRenderer.off('open-path', handleOpenPath);
+    };
+  }, [ipcRenderer, loadDirectory]);
+
+  // Recent-file chooser state (for explorer open fallback)
+  const [showRecentChooser, setShowRecentChooser] = React.useState(false);
+  const [recentChooserFiles, setRecentChooserFiles] = React.useState([]);
+
 
   // Watch the active directory and apply incremental updates
   useEffect(() => {
@@ -1091,7 +1195,24 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
             />
 
             {semanticResults === null && (
-              <FileList
+              <>
+                {showRecentChooser && recentChooserFiles.length > 0 && (
+                  <div className="recent-chooser">
+                    <div className="recent-chooser-title">Select the file you intended to open:</div>
+                    <div className="recent-chooser-list">
+                      {recentChooserFiles.map(f => (
+                        <div key={f.path} className="recent-chooser-item">
+                          <div className="recent-chooser-name">{f.name}</div>
+                          <div className="recent-chooser-actions">
+                            <button onClick={() => handleRecentChooserSelect(f)}>Select</button>
+                            <button onClick={() => openFileWithDefaultApp(f.path)}>Open</button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                <FileList
                 items={displayItems}
                 viewMode={viewMode}
                 groupBy={groupBy}
@@ -1117,6 +1238,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
                   if (e.key === 'Escape') setRenamingItem(null);
                 }}
               />
+                </>
             )}
 
           </div>

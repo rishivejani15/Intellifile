@@ -82,7 +82,7 @@ body {
 
 .app-title {
   font-size: 18px;
-  font-weight: 600;
+  font-weight: 800;
   color: var(--text-primary);
   margin: 0;
 }
@@ -352,8 +352,9 @@ body {
 
 .toolbar-btn.primary:disabled {
   background: var(--border-color);
+  color: var(--text-secondary);
   cursor: not-allowed;
-  opacity: 0.6;
+  opacity: 0.8;
 }
 
 .toolbar-hint {

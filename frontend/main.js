@@ -1,4 +1,10 @@
 const { app, BrowserWindow, Menu, ipcMain, shell, dialog, clipboard, nativeImage } = require('electron');
+const gotTheLock = app.requestSingleInstanceLock();
+if (!gotTheLock) {
+  app.quit();
+  process.exit(0);
+}
+
 const { autoUpdater } = require('electron-updater');
 const path = require('path');
 const { pathToFileURL } = require('url');
@@ -11,6 +17,351 @@ const { registerSystemRoots, getSystemRoots } = require('./system_roots');
 const { SyncEngine } = require('./sync_engine');
 
 const PROJECT_ROOT = path.join(__dirname, '..');
+
+// Single-instance lock and path arguments handling
+let startupPathPayload = null;
+
+function getPathFromArgv(argv) {
+  if (!Array.isArray(argv)) return null;
+  console.log('[ArgvDebug] getPathFromArgv input:', argv);
+
+  const cleanArg = (str) => {
+    if (!str) return '';
+    let s = str.trim();
+    if (s.startsWith('"') && s.endsWith('"')) {
+      s = s.substring(1, s.length - 1).trim();
+    }
+    if (s.startsWith("'") && s.endsWith("'")) {
+      s = s.substring(1, s.length - 1).trim();
+    }
+    return s;
+  };
+
+  for (let i = 0; i < argv.length; i++) {
+    let arg = cleanArg(argv[i]);
+    if (!arg) continue;
+
+    let targetPath = null;
+    const lowerArg = arg.toLowerCase();
+
+    if (lowerArg === '/select' || lowerArg === '--select') {
+      if (i + 1 < argv.length) {
+        targetPath = cleanArg(argv[i + 1]);
+      }
+    } else if (lowerArg.startsWith('/select,') || lowerArg.startsWith('--select,')) {
+      const commaIndex = arg.indexOf(',');
+      if (commaIndex !== -1) {
+        targetPath = cleanArg(arg.substring(commaIndex + 1));
+      }
+    } else if (lowerArg.startsWith('/select:') || lowerArg.startsWith('--select:')) {
+      const colonIndex = arg.indexOf(':');
+      if (colonIndex !== -1) {
+        targetPath = cleanArg(arg.substring(colonIndex + 1));
+      }
+    } else if (lowerArg.startsWith('/select') || lowerArg.startsWith('--select')) {
+      const rest = arg.substring(7).trim();
+      if (rest.startsWith(',') || rest.startsWith(':')) {
+        targetPath = cleanArg(rest.substring(1));
+      } else {
+        targetPath = cleanArg(rest);
+      }
+    }
+
+    if (targetPath) {
+      try {
+        if (path.isAbsolute(targetPath) && fs.existsSync(targetPath)) {
+          console.log('[ArgvDebug] Found select path:', targetPath);
+          return targetPath;
+        }
+      } catch (e) { }
+      try {
+        const normalized = path.normalize(targetPath);
+        if (path.isAbsolute(normalized) && fs.existsSync(normalized)) {
+          console.log('[ArgvDebug] Found select path (normalized):', normalized);
+          return normalized;
+        }
+      } catch (e) { }
+    }
+  }
+
+  // Fallback: search for any absolute path that exists
+  for (let i = argv.length - 1; i >= 0; i--) {
+    let arg = cleanArg(argv[i]);
+    if (!arg) continue;
+    if (arg.startsWith('-')) continue;
+    if (arg === '.' || arg.endsWith('main.js') || arg.toLowerCase().endsWith('electron.exe') || arg.toLowerCase().endsWith('electron')) continue;
+
+    try {
+      if (path.isAbsolute(arg) && fs.existsSync(arg)) {
+        console.log('[ArgvDebug] Fallback found absolute path:', arg);
+        return arg;
+      }
+      // Extra: try to extract a Windows path embedded inside the argument (handles odd quoting)
+      try {
+        const winPathRegex = /[A-Za-z]:\\[^"\s]*/g;
+        const matches = arg.match(winPathRegex);
+        if (matches && matches.length) {
+          for (const m of matches) {
+            const candidate = m;
+            if (fs.existsSync(candidate)) {
+              console.log('[ArgvDebug] Extracted embedded path from arg:', candidate);
+              return candidate;
+            }
+          }
+        }
+      } catch (e) { /* ignore */ }
+      // Extra: handle file:// URIs
+      try {
+        const lower = arg.toLowerCase();
+        if (lower.startsWith('file:///')) {
+          let p = arg.substring('file:///'.length);
+          p = decodeURIComponent(p);
+          p = p.replace(/\//g, path.sep);
+          if (fs.existsSync(p)) {
+            console.log('[ArgvDebug] Extracted file URI path:', p);
+            return p;
+          }
+        }
+        // Handle any Windows-style or generic file: URI variants
+        if (lower.startsWith('file:')) {
+          let p = arg.substring('file:'.length);
+          // Remove leading slashes or backslashes (file:/// or file:\\\\)
+          p = p.replace(/^[/\\\\]+/, '');
+          p = decodeURIComponent(p);
+          p = p.replace(/[\\/]+/g, path.sep);
+          if (fs.existsSync(p)) {
+            console.log('[ArgvDebug] Extracted generic file URI path:', p);
+            return p;
+          }
+        }
+      } catch (e) { /* ignore */ }
+    } catch (e) { }
+  }
+
+  console.log('[ArgvDebug] No path found in argv');
+  return null;
+}
+
+function resolvePathToOpen(targetPath) {
+  if (!targetPath) return null;
+  try {
+    const stats = fs.statSync(targetPath);
+    if (stats.isDirectory()) {
+      // SMART HEURISTIC: Guess the file if this was a Chrome 'Show in folder'
+      let guessedFile = null;
+      try {
+        const files = fs.readdirSync(targetPath);
+        let maxTime = 0;
+        const now = Date.now();
+        for (const f of files) {
+          try {
+            const fPath = path.join(targetPath, f);
+            const fStats = fs.statSync(fPath);
+            if (!fStats.isDirectory() && fStats.mtimeMs > maxTime) {
+              maxTime = fStats.mtimeMs;
+              guessedFile = f;
+            }
+          } catch (e) { }
+        }
+        if (guessedFile) {
+          console.log('[Heuristic] Guessed recently downloaded file on startup:', guessedFile);
+          return { path: targetPath, selectFile: guessedFile };
+        }
+      } catch (e) { }
+      return { path: targetPath, selectFile: null };
+    } else {
+      return { path: path.dirname(targetPath), selectFile: path.basename(targetPath) };
+    }
+  } catch (e) {
+    try {
+      const parent = path.dirname(targetPath);
+      if (fs.existsSync(parent)) {
+        return { path: parent, selectFile: path.basename(targetPath) };
+      }
+    } catch (err) { }
+    return null;
+  }
+}
+
+function checkIsDefaultFileManager() {
+  return new Promise((resolve) => {
+    if (process.platform !== 'win32') {
+      return resolve(false);
+    }
+    const appExe = app.getPath('exe');
+    const cmd = `reg query "HKEY_CURRENT_USER\\Software\\Classes\\Folder\\shell\\open\\command" /ve`;
+    const { exec } = require('child_process');
+    exec(cmd, (err, stdout) => {
+      if (err) {
+        return resolve(false);
+      }
+      const isDefault = stdout.toLowerCase().includes(appExe.toLowerCase());
+      if (isDefault) {
+        // Silently sync and update the other registry keys to ensure they are on the latest setup with %1
+        setDefaultFileManager(true).catch(() => { });
+      }
+      resolve(isDefault);
+    });
+  });
+}
+
+function setDefaultFileManager(enable) {
+  return new Promise((resolve) => {
+    if (process.platform !== 'win32') {
+      return resolve({ success: false, error: 'Platform not supported' });
+    }
+    const appExe = app.getPath('exe');
+    const { exec } = require('child_process');
+
+    if (enable) {
+      // Build base command parts WITHOUT %1 — each registry entry adds %1 as needed
+      const exeBase = isDev
+        ? `"${appExe}" "${__dirname}"`
+        : `"${appExe}"`;
+
+      const script = `
+$exeBase = '${exeBase}'
+
+# Folder class – double-click a folder opens in IntelliFile
+$p1 = 'HKCU:\\Software\\Classes\\Folder\\shell\\open\\command'
+if (!(Test-Path $p1)) { New-Item -Path $p1 -Force | Out-Null }
+Set-ItemProperty -Path $p1 -Name '(Default)' -Value "$exeBase ""%1"""
+Set-ItemProperty -Path $p1 -Name 'DelegateExecute' -Value ''
+
+$p2 = 'HKCU:\\Software\\Classes\\Folder\\shell\\explore\\command'
+if (!(Test-Path $p2)) { New-Item -Path $p2 -Force | Out-Null }
+Set-ItemProperty -Path $p2 -Name '(Default)' -Value "$exeBase ""%1"""
+Set-ItemProperty -Path $p2 -Name 'DelegateExecute' -Value ''
+
+# Directory class – handles Chrome "Show in folder" and similar
+$dOpen = 'HKCU:\\Software\\Classes\\Directory\\shell\\open\\command'
+if (!(Test-Path $dOpen)) { New-Item -Path $dOpen -Force | Out-Null }
+Set-ItemProperty -Path $dOpen -Name '(Default)' -Value "$exeBase ""%1"""
+Set-ItemProperty -Path $dOpen -Name 'DelegateExecute' -Value ''
+
+$dExplore = 'HKCU:\\Software\\Classes\\Directory\\shell\\explore\\command'
+if (!(Test-Path $dExplore)) { New-Item -Path $dExplore -Force | Out-Null }
+Set-ItemProperty -Path $dExplore -Name '(Default)' -Value "$exeBase ""%1"""
+Set-ItemProperty -Path $dExplore -Name 'DelegateExecute' -Value ''
+
+# CLSID entry for "Open new window" taskbar context menu
+$p3 = 'HKCU:\\Software\\Classes\\CLSID\\{52205fd8-5dfb-447d-801a-d0b52f2e83e1}\\shell\\opennewwindow\\command'
+if (!(Test-Path $p3)) { New-Item -Path $p3 -Force | Out-Null }
+Set-ItemProperty -Path $p3 -Name '(Default)' -Value "$exeBase ""%1"""
+Set-ItemProperty -Path $p3 -Name 'DelegateExecute' -Value ''
+`;
+
+      const buffer = Buffer.from(script, 'utf16le');
+      const base64 = buffer.toString('base64');
+      const fullCmd = `powershell -NoProfile -EncodedCommand ${base64}`;
+
+      exec(fullCmd, (err) => {
+        if (err) {
+          console.error('[DefaultFileManager] Failed to write registry:', err);
+          resolve({ success: false, error: err.message });
+        } else {
+          resolve({ success: true });
+        }
+      });
+    } else {
+      const disableScript = `
+Remove-Item -Path 'HKCU:\\Software\\Classes\\Folder\\shell\\open' -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item -Path 'HKCU:\\Software\\Classes\\Folder\\shell\\explore' -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item -Path 'HKCU:\\Software\\Classes\\Directory\\shell\\open' -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item -Path 'HKCU:\\Software\\Classes\\Directory\\shell\\explore' -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item -Path 'HKCU:\\Software\\Classes\\CLSID\\{52205fd8-5dfb-447d-801a-d0b52f2e83e1}' -Recurse -Force -ErrorAction SilentlyContinue
+`;
+
+      const buffer = Buffer.from(disableScript, 'utf16le');
+      const base64 = buffer.toString('base64');
+      const fullCmd = `powershell -NoProfile -EncodedCommand ${base64}`;
+
+      exec(fullCmd, (err) => {
+        if (err) {
+          console.error('[DefaultFileManager] Failed to clean registry:', err);
+          resolve({ success: false, error: err.message });
+        } else {
+          resolve({ success: true });
+        }
+      });
+    }
+  });
+}
+
+const rawStartupPath = getPathFromArgv(process.argv);
+console.log('[ArgvDebug] Startup argv:', process.argv);
+console.log('[ArgvDebug] Startup rawStartupPath:', rawStartupPath);
+if (rawStartupPath) {
+  const resolved = resolvePathToOpen(rawStartupPath);
+  startupPathPayload = resolved;
+  console.log('[ArgvDebug] Startup payload resolved:', startupPathPayload);
+}
+app.on('second-instance', (event, commandLine) => {
+  console.log('[ArgvDebug] second-instance triggered, commandLine:', commandLine);
+
+  // DEBUG HACK: write the commandLine to a file so we can see what Windows actually passed
+  require('fs').appendFileSync(require('path').join(__dirname, 'second-instance-debug.txt'), new Date().toISOString() + ': ' + JSON.stringify(commandLine) + '\n');
+
+  if (mainWindow) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    // Force window to foreground on Windows
+    mainWindow.setAlwaysOnTop(true);
+    mainWindow.show();
+    mainWindow.focus();
+    mainWindow.setAlwaysOnTop(false);
+
+    const rawPath = getPathFromArgv(commandLine);
+    console.log('[ArgvDebug] second-instance rawPath parsed:', rawPath);
+    if (rawPath) {
+      let payload = null;
+      try {
+        const stats = fs.statSync(rawPath);
+        if (stats.isDirectory()) {
+          // SMART HEURISTIC for Chrome 'Show in folder' fallback:
+          // Because Windows strips the file name, we only get the folder path.
+          // We can guess the file by finding the most recently modified file (within the last 2 minutes).
+          let guessedFile = null;
+          try {
+            const files = fs.readdirSync(rawPath);
+            let maxTime = 0;
+            const now = Date.now();
+            for (const f of files) {
+              try {
+                const fPath = require('path').join(rawPath, f);
+                const fStats = fs.statSync(fPath);
+                if (!fStats.isDirectory() && fStats.mtimeMs > maxTime) {
+                  maxTime = fStats.mtimeMs;
+                  guessedFile = f;
+                }
+              } catch (e) { } // ignore locked files
+            }
+                // Only auto-select the guessed file if it was modified recently
+                const GUESS_WINDOW_MS = 2 * 60 * 1000; // 2 minutes
+                if (guessedFile && (Date.now() - maxTime) <= GUESS_WINDOW_MS) {
+                  console.log('[Heuristic] Guessed recently downloaded file:', guessedFile, 'ageMs=', Date.now() - maxTime);
+                  payload = { path: rawPath, selectFile: guessedFile };
+                } else {
+                  console.log('[Heuristic] Not confident to auto-select file (guessedFile=', guessedFile, 'ageMs=', guessedFile ? (Date.now() - maxTime) : 'N/A', ') - showing recent chooser');
+                  payload = { path: rawPath, selectFile: null };
+                }
+          } catch (e) {
+            payload = { path: rawPath, selectFile: null };
+          }
+        } else {
+          payload = { path: path.dirname(rawPath), selectFile: path.basename(rawPath) };
+        }
+      } catch (e) {
+        payload = { path: rawPath, selectFile: null };
+      }
+      console.log('[ArgvDebug] second-instance payload resolved:', payload);
+      if (payload) {
+        payload.fromExplorer = true;
+        mainWindow.webContents.send('open-path', payload);
+      }
+    }
+  }
+});
+
 
 const DEFAULT_INDEXING_PREFS = {
   allowProtectedIndexing: false,
@@ -85,8 +436,8 @@ function persistLogEntry(logEntry) {
 }
 
 const venvCandidates = [
-  path.join(PROJECT_ROOT,'backend', '.venv', 'Scripts', 'python.exe'),
-  path.join(PROJECT_ROOT,'backend' ,'.venv', 'Scripts', 'python.exe'),
+  path.join(PROJECT_ROOT, 'backend', '.venv', 'Scripts', 'python.exe'),
+  path.join(PROJECT_ROOT, 'backend', '.venv', 'Scripts', 'python.exe'),
 ];
 
 const PYTHON_EXECUTABLE = venvCandidates.find((p) => fs.existsSync(p))
@@ -315,16 +666,16 @@ let logBuffer = [];
 const MAX_LOG_LINES = 1000;
 
 function appendLog(category, message, isError = false) {
-  const timestamp = new Date().toISOString().split('T')[1].slice(0, -1);
+  const timestamp = new Date().toLocaleString();
   const logEntry = { timestamp, category, message, isError };
-  
+
   logBuffer.push(logEntry);
   if (logBuffer.length > MAX_LOG_LINES) {
     logBuffer.shift();
   }
 
   persistLogEntry(logEntry);
-  
+
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('backend-log', logEntry);
   }
@@ -335,7 +686,7 @@ const originalConsoleLog = console.log;
 const originalConsoleError = console.error;
 const originalConsoleWarn = console.warn;
 
-console.log = function(...args) {
+console.log = function (...args) {
   originalConsoleLog.apply(console, args);
   if (args.length > 0 && typeof args[0] === 'string' && args[0].startsWith('[')) {
     const match = args[0].match(/^\[(.*?)\]/);
@@ -349,7 +700,7 @@ console.log = function(...args) {
   }
 };
 
-console.error = function(...args) {
+console.error = function (...args) {
   originalConsoleError.apply(console, args);
   if (args.length > 0 && typeof args[0] === 'string' && args[0].startsWith('[')) {
     const match = args[0].match(/^\[(.*?)\]/);
@@ -363,7 +714,7 @@ console.error = function(...args) {
   }
 };
 
-console.warn = function(...args) {
+console.warn = function (...args) {
   originalConsoleWarn.apply(console, args);
   if (args.length > 0 && typeof args[0] === 'string' && args[0].startsWith('[')) {
     const match = args[0].match(/^\[(.*?)\]/);
@@ -379,9 +730,9 @@ console.warn = function(...args) {
 
 // Supported file extensions
 const EDITABLE_EXTENSIONS = [
-  '.py', '.js', '.java', '.cpp', '.c', '.go', '.txt', '.md', '.json', '.xml', 
+  '.py', '.js', '.java', '.cpp', '.c', '.go', '.txt', '.md', '.json', '.xml',
   '.html', '.htm', '.css', '.scss', '.less', '.ts', '.jsx', '.tsx', '.docx', '.xlsx',
-  '.csv', '.env', '.gitignore', '.yml', '.yaml', '.sql', '.sh', '.bash', '.ps1', '.bat', 
+  '.csv', '.env', '.gitignore', '.yml', '.yaml', '.sql', '.sh', '.bash', '.ps1', '.bat',
   '.log', '.ini', '.cfg', '.conf', '.toml', '.vue', '.svelte', '.h', '.hpp', '.cs', '.rs', '.rb', '.php'
 ];
 
@@ -449,7 +800,7 @@ function isSystemFile(filename, showHidden = false) {
   if (ALLOWED_DOTFILES.includes(lower)) return false;
   return SYSTEM_FILES_TO_HIDE.includes(lower) ||
     SYSTEM_FOLDERS_TO_HIDE.includes(lower) ||
-    SYSTEM_FILE_EXTENSIONS.includes(ext) || lower === 'desktop.ini' || lower === 'thumbs.db' || 
+    SYSTEM_FILE_EXTENSIONS.includes(ext) || lower === 'desktop.ini' || lower === 'thumbs.db' ||
     (filename.startsWith('.') && !ALLOWED_DOTFILES.includes(lower));
 }
 
@@ -466,6 +817,8 @@ let pythonReadyForIndexing = false;
 let windowReadyForIndexing = false;
 let pyBuffer = '';
 let pendingRequests = new Map();  // requestId -> { resolve, timeout }
+let documentPreviewCache = new Map();
+let documentPreviewInFlight = new Map();
 let requestCounter = 0;
 let autoIndexRequested = false;
 let indexInProgress = false;
@@ -515,7 +868,7 @@ app.on('will-quit', () => {
 
 function startWatchingFile(filePath) {
   if (!filePath) return;
-  
+
   const normPath = filePath.toLowerCase();
   if (fileWatchers.has(normPath)) {
     console.log(`[Watcher] Already watching: ${filePath}`);
@@ -539,7 +892,7 @@ function startWatchingFile(filePath) {
       if (debounceTimers.has(normP)) {
         clearTimeout(debounceTimers.get(normP));
       }
-      
+
       debounceTimers.set(normP, setTimeout(async () => {
         debounceTimers.delete(normP);
         console.log(`[Watcher] Processing debounced change for: ${p}`);
@@ -560,7 +913,7 @@ function startWatchingFile(filePath) {
             old_content: isBinaryP ? p : lastVal,
             new_content: isBinaryP ? p : currentVal
           });
-          
+
           // Trigger immediate indexing for the modified file
           sendToPython({
             action: "index_file",
@@ -605,7 +958,7 @@ function startWatchingFile(filePath) {
 
 function stopWatchingFile(filePath) {
   if (!filePath) return;
-  
+
   const normPath = filePath.toLowerCase();
   const watcher = fileWatchers.get(normPath);
 
@@ -671,14 +1024,14 @@ function broadcastDirectoryChange(directoryPath, payload) {
 
 function startWatchingDirectory(directoryPath) {
   if (!directoryPath) return { success: false, error: 'Missing directory path.' };
-  
+
   // Don't watch Windows system folders
   const upperPath = directoryPath.toUpperCase();
-  if (upperPath.includes('\\WINDOWS') || upperPath.includes('\\PROGRAM FILES') || 
-      upperPath.includes('\\PROGRAMDATA') || upperPath.includes('\\SYSTEM VOLUME INFORMATION')) {
+  if (upperPath.includes('\\WINDOWS') || upperPath.includes('\\PROGRAM FILES') ||
+    upperPath.includes('\\PROGRAMDATA') || upperPath.includes('\\SYSTEM VOLUME INFORMATION')) {
     return { success: false, error: 'Cannot watch system folders.' };
   }
-  
+
   const normPath = path.resolve(directoryPath).toLowerCase();
   if (directoryWatchers.has(normPath)) return { success: true };
 
@@ -688,9 +1041,9 @@ function startWatchingDirectory(directoryPath) {
       ignoreInitial: true,
       depth: 0,
       usePolling: true, // Use polling for Windows file system stability
-    interval: 300,    // Check every 300ms
-    binaryInterval: 300,
-    ignorePermissionErrors: true,
+      interval: 300,    // Check every 300ms
+      binaryInterval: 300,
+      ignorePermissionErrors: true,
       persistent: true,
       awaitWriteFinish: { stabilityThreshold: 700, pollInterval: 100 },
     });
@@ -700,7 +1053,7 @@ function startWatchingDirectory(directoryPath) {
       if (item) {
         broadcastDirectoryChange(directoryPath, { action: 'add', item });
         if (item.type === 'file') {
-          sendToPython({ action: 'index_file', file_path: filePath, allow_protected: getAllowProtectedIndexing() }).catch(() => {});
+          sendToPython({ action: 'index_file', file_path: filePath, allow_protected: getAllowProtectedIndexing() }).catch(() => { });
         }
       }
     });
@@ -718,7 +1071,7 @@ function startWatchingDirectory(directoryPath) {
       if (item) {
         broadcastDirectoryChange(directoryPath, { action: 'change', item });
         if (item.type === 'file') {
-          sendToPython({ action: 'index_file', file_path: filePath, allow_protected: getAllowProtectedIndexing() }).catch(() => {});
+          sendToPython({ action: 'index_file', file_path: filePath, allow_protected: getAllowProtectedIndexing() }).catch(() => { });
         }
       }
     });
@@ -924,7 +1277,7 @@ function isPortOpen(port, host = '127.0.0.1', timeout = 500) {
     const onDone = (isOpen) => {
       if (called) return;
       called = true;
-      try { socket.destroy(); } catch (e) {}
+      try { socket.destroy(); } catch (e) { }
       resolve(isOpen);
     };
     socket.setTimeout(timeout);
@@ -1127,7 +1480,8 @@ function parseDateFromQuery(rawQuery) {
     const y1 = parseInt(match[2]);
     const m2 = MONTHS[match[3].toLowerCase()];
     const y2 = parseInt(match[4]);
-    dateFrom = startOfMonth(y1, m1);
+    // Handle second-instance events from Windows (Explorer / browser)
+    
     dateTo = endOfMonth(y2, m2);
     query = query.replace(match[0], '').trim();
   }
@@ -1217,7 +1571,7 @@ function parseDateFromQuery(rawQuery) {
       const now = new Date();
       // If year is provided, use it, otherwise default to current year
       const year = match[2] ? parseInt(match[2]) : now.getFullYear();
-      
+
       dateFrom = startOfMonth(year, month);
       dateTo = endOfMonth(year, month);
       query = query.replace(match[0], '').trim();
@@ -1327,11 +1681,11 @@ ipcMain.handle("search", async (_, payload) => {
 
 ipcMain.handle("search-status", async () => {
   console.log('[IPC] search-status called, pyReady:', pyReady);
-  return { 
-    ready: pyReady, 
+  return {
+    ready: pyReady,
     indexing: indexInProgress,
     lastIndexMessage,
-    lastIndexStatus 
+    lastIndexStatus
   };
 });
 
@@ -1384,59 +1738,59 @@ ipcMain.handle('get-versions', async (_event, filePath) => {
   });
 });
 
-  // Download embedding/chat models (runs setup_offline.py with downloads enabled)
-  ipcMain.handle('download-model', async () => {
-    if (!CHAT_ENABLED) return { success: false, error: 'Chat is disabled by policy.' };
-    return new Promise((resolve) => {
-      try {
-        const scriptPath = path.join(__dirname, '..', 'backend', 'setup_offline.py');
-        const env = { ...process.env, IF_ALLOW_MODEL_DOWNLOAD: '1' };
-        // Prefer per-user models dir inside app userData
-        env.IF_MODELS_DIR = path.join(app.getPath('userData'), 'models');
-        const dl = spawn(PYTHON_EXECUTABLE, [scriptPath], {
-          cwd: path.join(__dirname, '..'),
-          env,
-          stdio: ['ignore', 'pipe', 'pipe']
-        });
+// Download embedding/chat models (runs setup_offline.py with downloads enabled)
+ipcMain.handle('download-model', async () => {
+  if (!CHAT_ENABLED) return { success: false, error: 'Chat is disabled by policy.' };
+  return new Promise((resolve) => {
+    try {
+      const scriptPath = path.join(__dirname, '..', 'backend', 'setup_offline.py');
+      const env = { ...process.env, IF_ALLOW_MODEL_DOWNLOAD: '1' };
+      // Prefer per-user models dir inside app userData
+      env.IF_MODELS_DIR = path.join(app.getPath('userData'), 'models');
+      const dl = spawn(PYTHON_EXECUTABLE, [scriptPath], {
+        cwd: path.join(__dirname, '..'),
+        env,
+        stdio: ['ignore', 'pipe', 'pipe']
+      });
 
-        dl.stdout.on('data', (d) => {
-          const s = d.toString();
-          if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('model-download-log', s);
-        });
-        dl.stderr.on('data', (d) => {
-          const s = d.toString();
-          if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('model-download-log', s);
-        });
+      dl.stdout.on('data', (d) => {
+        const s = d.toString();
+        if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('model-download-log', s);
+      });
+      dl.stderr.on('data', (d) => {
+        const s = d.toString();
+        if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('model-download-log', s);
+      });
 
-        dl.on('close', (code) => {
-          // If download succeeded, restart python engine and chat backend so new models load
-          if (code === 0) {
-            try {
-              console.log('[ModelDownload] Restarting Python engine to load new models');
-              if (pyProcess) {
-                try { pyProcess.kill(); } catch (e) { /* ignore */ }
-                pyProcess = null;
-              }
-              if (chatBackendProcess) {
-                try { chatBackendProcess.kill(); } catch (e) { /* ignore */ }
-                chatBackendProcess = null;
-              }
-              // Small delay to let OS release handles
-              setTimeout(() => {
-                startPython();
-                startChatBackend();
-              }, 800);
-            } catch (e) {
-              console.error('[ModelDownload] Failed to restart engine:', e);
+      dl.on('close', (code) => {
+        // If download succeeded, restart python engine and chat backend so new models load
+        if (code === 0) {
+          try {
+            console.log('[ModelDownload] Restarting Python engine to load new models');
+            if (pyProcess) {
+              try { pyProcess.kill(); } catch (e) { /* ignore */ }
+              pyProcess = null;
             }
+            if (chatBackendProcess) {
+              try { chatBackendProcess.kill(); } catch (e) { /* ignore */ }
+              chatBackendProcess = null;
+            }
+            // Small delay to let OS release handles
+            setTimeout(() => {
+              startPython();
+              startChatBackend();
+            }, 800);
+          } catch (e) {
+            console.error('[ModelDownload] Failed to restart engine:', e);
           }
-          resolve({ success: code === 0, code });
-        });
-      } catch (e) {
-        resolve({ success: false, error: e && e.message ? e.message : String(e) });
-      }
-    });
+        }
+        resolve({ success: code === 0, code });
+      });
+    } catch (e) {
+      resolve({ success: false, error: e && e.message ? e.message : String(e) });
+    }
   });
+});
 
 ipcMain.handle('versions-list', async (_event, filePath) => {
   const result = await sendToPython({
@@ -1716,6 +2070,20 @@ function registerIpcHandlers() {
   if (ipcHandlersRegistered) return;
   ipcHandlersRegistered = true;
 
+  ipcMain.handle('get-startup-path', () => {
+    const payload = startupPathPayload;
+    startupPathPayload = null; // Clear so subsequent calls get null
+    return payload;
+  });
+
+  ipcMain.handle('check-is-default-file-manager', async () => {
+    return checkIsDefaultFileManager();
+  });
+
+  ipcMain.handle('set-default-file-manager', async (_event, enable) => {
+    return setDefaultFileManager(enable);
+  });
+
   // ── Offline Setup & Logs IPC ──
   ipcMain.handle('get-logs', () => {
     return logBuffer;
@@ -1746,7 +2114,7 @@ function registerIpcHandlers() {
     } catch (e) {
       console.warn('[Setup] Error checking models:', e.message);
     }
-    
+
     const modelsExist = hasEmbeddingModel;
     const setupCompleted = hasOfflineSetupCompleted();
 
@@ -1756,7 +2124,7 @@ function registerIpcHandlers() {
 
     // Only show setup dialog if models don't exist AND setup hasn't been completed before
     const needed = !modelsExist && !setupCompleted;
-    
+
     return { needed, hasChatModel, hasEmbeddingModel, setupCompleted };
   });
 
@@ -1884,7 +2252,7 @@ function registerIpcHandlers() {
             if (mainWindow && !mainWindow.isDestroyed()) {
               mainWindow.webContents.send('offline-setup-progress', { type: 'error', message: errMsg });
             }
-          } catch (e) {}
+          } catch (e) { }
           resolve({ success: false, error: errMsg });
         }
       });
@@ -1980,10 +2348,14 @@ function registerIpcHandlers() {
       const fileList = await fs.promises.readdir(resolvedPath);
       console.log('[list-directory] found', fileList.length, 'items');
 
-      // Process items in parallel using Promise.all for better performance
-      const itemPromises = fileList
-        .filter(item => !isSystemFile(item, showHidden))
-        .map(async item => {
+      const filteredList = fileList.filter(item => !isSystemFile(item, showHidden));
+      const items = [];
+      const CHUNK_SIZE = 100;
+
+      // Process items in batches to prevent UV thread pool starvation
+      for (let i = 0; i < filteredList.length; i += CHUNK_SIZE) {
+        const chunk = filteredList.slice(i, i + CHUNK_SIZE);
+        const chunkPromises = chunk.map(async item => {
           try {
             const fullPath = path.join(resolvedPath, item);
             const stats = await fs.promises.stat(fullPath);
@@ -1991,8 +2363,6 @@ function registerIpcHandlers() {
             const isEditable = EDITABLE_EXTENSIONS.includes(ext);
             const isProtected = isProtectedPath(fullPath);
 
-            // Don't calculate folder size - it's too slow and blocks the UI
-            // Just use 0 for directories, actual size for files
             const size = stats.isDirectory() ? 0 : stats.size;
 
             return {
@@ -2006,18 +2376,18 @@ function registerIpcHandlers() {
               modified: stats.mtimeMs
             };
           } catch (err) {
-            // Skip files/folders that can't be accessed due to permissions
-            console.warn('[list-directory] Skipping inaccessible item:', item, err.message);
             return null;
           }
         });
 
-      const items = (await Promise.all(itemPromises))
-        .filter(item => item !== null)
-        .sort((a, b) => {
-          if (a.type !== b.type) return a.type === 'folder' ? -1 : 1;
-          return a.name.localeCompare(b.name);
-        });
+        const chunkResults = await Promise.all(chunkPromises);
+        items.push(...chunkResults.filter(Boolean));
+      }
+
+      items.sort((a, b) => {
+        if (a.type !== b.type) return a.type === 'folder' ? -1 : 1;
+        return a.name.localeCompare(b.name);
+      });
 
       console.log('[list-directory] returning', items.length, 'items');
       return { items, error: null };
@@ -2051,7 +2421,7 @@ function registerIpcHandlers() {
 
   ipcMain.handle('read-file', async (event, filePath) => {
     try {
-       const stats = fs.statSync(filePath);
+      const stats = fs.statSync(filePath);
       // Limit to 50KB for preview
       if (stats.size > 50 * 1024) {
         const fd = fs.openSync(filePath, 'r');
@@ -2064,6 +2434,50 @@ function registerIpcHandlers() {
       return { success: true, content };
     } catch (err) {
       return { content: null, success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('get-document-preview', async (event, filePath) => {
+    try {
+      const ext = path.extname(filePath).toLowerCase();
+      if (!['.pdf', '.docx', '.xlsx', '.pptx'].includes(ext)) {
+        return { success: false, error: 'Unsupported document type' };
+      }
+      if (!fs.existsSync(filePath)) {
+        return { success: false, error: 'File not found' };
+      }
+      const stats = fs.statSync(filePath);
+      if (!stats.isFile()) {
+        return { success: false, error: 'Preview target is not a file' };
+      }
+      if (stats.size > 100 * 1024 * 1024) {
+        return { success: false, error: 'Document is too large to preview safely' };
+      }
+      const cacheKey = `${path.resolve(filePath)}:${stats.size}:${stats.mtimeMs}`;
+      if (documentPreviewCache.has(cacheKey)) {
+        return documentPreviewCache.get(cacheKey);
+      }
+      if (documentPreviewInFlight.has(cacheKey)) {
+        return await documentPreviewInFlight.get(cacheKey);
+      }
+      const previewRequest = sendToPython({ action: 'document_preview', file_path: filePath }, 30000);
+      documentPreviewInFlight.set(cacheKey, previewRequest);
+      let result;
+      try {
+        result = await previewRequest;
+      } finally {
+        documentPreviewInFlight.delete(cacheKey);
+      }
+      if (result?.error) {
+        return { success: false, error: result.error };
+      }
+      documentPreviewCache.set(cacheKey, result);
+      if (documentPreviewCache.size > 20) {
+        documentPreviewCache.delete(documentPreviewCache.keys().next().value);
+      }
+      return result;
+    } catch (err) {
+      return { success: false, error: err.message };
     }
   });
 
@@ -2757,19 +3171,31 @@ function registerIpcHandlers() {
   });
 
   // ── Image Thumbnail ──
-  ipcMain.handle('get-thumbnail', async (event, filePath) => {
+  ipcMain.handle('get-thumbnail', async (event, filePath, options = {}) => {
     try {
       const ext = path.extname(filePath).toLowerCase();
       const imageExts = ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp', '.ico', '.svg'];
       if (!imageExts.includes(ext)) {
         return { success: false, error: 'Not an image file' };
       }
+      const stats = fs.statSync(filePath);
+      if (!stats.isFile() || stats.size > 50 * 1024 * 1024) {
+        return { success: false, error: 'Image is too large to preview safely' };
+      }
       // Read image and resize for thumbnail
       const image = nativeImage.createFromPath(filePath);
       if (image.isEmpty()) {
         return { success: false, error: 'Could not load image' };
       }
-      const thumbnail = image.resize({ width: 120, height: 120, quality: 'good' });
+      const { width, height } = image.getSize();
+      const maxWidth = Math.min(2048, Math.max(64, Number.isFinite(options.maxWidth) ? options.maxWidth : 120));
+      const maxHeight = Math.min(2048, Math.max(64, Number.isFinite(options.maxHeight) ? options.maxHeight : 120));
+      const scale = Math.min(1, maxWidth / width, maxHeight / height);
+      const thumbnail = image.resize({
+        width: Math.max(1, Math.round(width * scale)),
+        height: Math.max(1, Math.round(height * scale)),
+        quality: 'good'
+      });
       const dataUrl = thumbnail.toDataURL();
       return { success: true, dataUrl };
     } catch (err) {
@@ -2787,7 +3213,7 @@ function registerIpcHandlers() {
     console.log('[update-restart] User confirmed restart for update');
     autoUpdater.quitAndInstall();
   });
-  
+
 }
 
 // Separate function to get drives info (can be called internally)

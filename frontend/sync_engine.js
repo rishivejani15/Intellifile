@@ -165,22 +165,22 @@ function computeDeltaStream(filepath, remoteChecksums, onChunk) {
     let index = 0;
     const buf = Buffer.alloc(BLOCK_SIZE);
     let chunkBuffer = [];
-    
+
     while (true) {
       const bytesRead = fs.readSync(fd, buf, 0, BLOCK_SIZE, null);
       if (bytesRead === 0) break;
-      
+
       const chunk = buf.slice(0, bytesRead);
       const localCs = md5(chunk);
       const remoteCs = (remoteChecksums[index] || remoteChecksums[String(index)]) || null;
-      
+
       if (remoteCs !== localCs) {
         chunkBuffer.push({
           block: index,
           checksum: localCs,
           data: bytesToHex(chunk),
         });
-        
+
         // 50 blocks = 6.4MB per packet, safe for WebRTC DataChannels and WS
         if (chunkBuffer.length >= 50) {
           onChunk([...chunkBuffer]);
@@ -189,11 +189,11 @@ function computeDeltaStream(filepath, remoteChecksums, onChunk) {
       }
       index++;
     }
-    
+
     if (chunkBuffer.length > 0) {
       onChunk(chunkBuffer);
     }
-    
+
     fs.closeSync(fd);
   } catch (e) {
     console.warn('[sync-engine] computeDeltaStream error:', e.message);
@@ -204,7 +204,7 @@ function computeDeltaStream(filepath, remoteChecksums, onChunk) {
 function applyDelta(filepath, deltasRaw, expectedSize) {
   // Fix RAM bloat + Destructive overwrite
   console.log(`[sync-engine] applyDelta: processing ${deltasRaw.length} chunks for ${filepath}`);
-  
+
   const dir = path.dirname(filepath);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 
@@ -218,7 +218,7 @@ function applyDelta(filepath, deltasRaw, expectedSize) {
       const buf = hexToBytes(d.data);
       fs.writeSync(fd, buf, 0, buf.length, position);
     }
-    
+
     if (expectedSize !== undefined && expectedSize !== null) {
       fs.ftruncateSync(fd, expectedSize);
     }
@@ -424,7 +424,7 @@ class SyncEngine extends EventEmitter {
         this._log('WebSocket disconnected');
         this._ws = null;
         this._stopWatcher();
-        
+
         // Fix: Clean up WebRTC to prevent dangling ICE gatherers hanging in background
         console.log('[sync-engine] WebSocket closed, cleaning up WebRTC resources');
         try { if (this._dc) this._dc.close(); } catch (_) { }
@@ -986,9 +986,9 @@ class SyncEngine extends EventEmitter {
 
       } else if (changeType === 'modified') {
         // Both sides have it — use vector clocks to decide the winner
-        const localClock  = this._vcStore.load(filepath);
+        const localClock = this._vcStore.load(filepath);
         const remoteClock = remoteClocks[filepath] || {};
-        const result      = this._compareClock(localClock, remoteClock);
+        const result = this._compareClock(localClock, remoteClock);
 
         if (result === 'remote_wins') {
           // Request updated content from remote
@@ -1165,7 +1165,7 @@ class SyncEngine extends EventEmitter {
   // ── Pending change approval flow ──────────────────────────────────
 
   _handleChangePending(msg) {
-    const filepath   = msg.filepath;
+    const filepath = msg.filepath;
     const changeType = msg.change_type || 'modified';
 
     // Track in _pendingMobileChanges so _handleSyncApproved can look it up
@@ -1176,7 +1176,7 @@ class SyncEngine extends EventEmitter {
     this._pendingChanges.push({
       filepath,
       changeType,
-      fileSize:   msg.file_size  || 0,
+      fileSize: msg.file_size || 0,
       modifiedAt: msg.modified_at || 0,
       receivedAt: Date.now(),
     });
@@ -1197,7 +1197,7 @@ class SyncEngine extends EventEmitter {
     this._awaitingRemoteApproval.delete(filepath);
 
     const localPath = path.join(this.syncFolder, filepath);
-    const pending   = this._pendingMobileChanges[filepath] || {};
+    const pending = this._pendingMobileChanges[filepath] || {};
     delete this._pendingMobileChanges[filepath];
 
     if (!fs.existsSync(localPath) || pending.changeType === 'deleted') {
@@ -1211,7 +1211,7 @@ class SyncEngine extends EventEmitter {
 
     // Send the current file content as a delta (with correct size for truncation)
     const fileSize = fs.statSync(localPath).size;
-    const vc       = this._vcStore.tick(filepath);
+    const vc = this._vcStore.tick(filepath);
     computeDeltaStream(localPath, {}, (deltasChunk) => {
       this._sendSyncMessage({
         type: 'delta',

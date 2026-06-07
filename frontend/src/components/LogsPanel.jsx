@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
+import { showToast } from '../utils/toast';
 import './LogsPanel.css';
 
 const LogsPanel = () => {
@@ -63,7 +64,7 @@ const LogsPanel = () => {
       .map(log => `[${log.timestamp}] [${log.category}] ${log.message}`)
       .join('\n');
     navigator.clipboard.writeText(textToCopy).then(() => {
-      // Could show a toast here if we had access to the toast system in this component
+      showToast('Logs copied successfully', { type: 'success', title: 'Success', duration: 3000 });
       console.log('Logs copied to clipboard');
     }).catch(err => {
       console.error('Failed to copy logs:', err);
