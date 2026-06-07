@@ -3,6 +3,7 @@ import sys
 import os
 import threading
 import queue
+from concurrent.futures import ThreadPoolExecutor
 from threading import Lock
 
 if "--offline-setup" in sys.argv:
@@ -32,6 +33,24 @@ sys.stderr.flush()
 
 # Global engine instances (lazy loaded)
 _version_engine = None
+_preview_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="document-preview")
+_preview_slots = threading.BoundedSemaphore(4)
+_stdout_lock = Lock()
+
+
+def _emit_json(payload):
+    with _stdout_lock:
+        print(json.dumps(payload), flush=True)
+
+
+def _finish_document_preview(req_id, future):
+    try:
+        result = future.result()
+        _emit_json({"_id": req_id, **result})
+    except Exception as exc:
+        _emit_json({"_id": req_id, "error": str(exc)})
+    finally:
+        _preview_slots.release()
 
 def get_version_engine():
     global _version_engine
@@ -252,6 +271,18 @@ while True:
                 print(json.dumps({"_id": req_id, "loaded": loaded, "error": MODEL_LOAD_ERROR}), flush=True)
             except Exception as e:
                 print(json.dumps({"_id": req_id, "error": f"Model status check failed: {e}"}), flush=True)
+
+        elif action == "document_preview":
+            from core.document_preview import build_document_preview
+            if not _preview_slots.acquire(blocking=False):
+                _emit_json({"_id": req_id, "error": "Document preview service is busy. Please try again."})
+            else:
+                try:
+                    preview_future = _preview_executor.submit(build_document_preview, request.get("file_path", ""))
+                    preview_future.add_done_callback(lambda future, request_id=req_id: _finish_document_preview(request_id, future))
+                except Exception:
+                    _preview_slots.release()
+                    raise
 
         elif action == "delete_file":
             try:
