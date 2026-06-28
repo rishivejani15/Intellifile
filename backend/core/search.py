@@ -141,6 +141,7 @@ def _date_range_search(top_k, date_from=None, date_to=None, root_folder=None):
     Used when the user issues a date-only query (e.g. 'files of august 2022')
     with no semantic keywords, so FAISS/FTS5 have nothing to match on.
     """
+    root_folder = _normalize_root(root_folder)
     conn = get_connection()
     try:
         cur = conn.cursor()
@@ -157,7 +158,6 @@ def _date_range_search(top_k, date_from=None, date_to=None, root_folder=None):
             params.append(f"{root_folder}%")
 
         where = " AND ".join(conditions) if conditions else "1=1"
-        root_folder = _normalize_root(root_folder)
         cur.execute(
             f"""SELECT path, created_time FROM files
                 WHERE {where}
@@ -200,19 +200,18 @@ def semantic_search(query, top_k=20, min_similarity=0.15, date_from=None, date_t
     kw_hits = _fts5_search(query, fetch_k, root_folder=root_folder)
     fn_hits = _filename_search(query, fetch_k, root_folder=root_folder)
 
-    # ── Build a map of actual cosine similarity per chunk (for display) ──
-    chunk_cosine = {}
-    for cid, sim in sem_hits:
-        chunk_cosine[cid] = max(chunk_cosine.get(cid, 0), sim)
-
     # ── RRF at chunk level (for ranking) ─────────────────
     chunk_rrf = {}
+    # Track which search signals contributed to each chunk
+    chunk_signals = defaultdict(set)  # cid -> {'semantic', 'keyword'}
 
     for rank, (cid, _score) in enumerate(sem_hits, 1):
         chunk_rrf[cid] = chunk_rrf.get(cid, 0) + 1.0 / (_RRF_K + rank)
+        chunk_signals[cid].add('semantic')
 
     for rank, (cid, _score) in enumerate(kw_hits, 1):
         chunk_rrf[cid] = chunk_rrf.get(cid, 0) + 1.0 / (_RRF_K + rank)
+        chunk_signals[cid].add('keyword')
 
     # ── Filename matches get injected directly as file-level hits ──
     filename_boost = {}
@@ -255,30 +254,20 @@ def semantic_search(query, top_k=20, min_similarity=0.15, date_from=None, date_t
 
     # ── Aggregate per file ──────────────────────────────
     # Ranking: best single RRF score per file (no large-file bias)
-    # Display: actual cosine similarity of best chunk (real accuracy %)
     file_best_rrf = {}
-    file_best_cosine = {}
+    file_signals = defaultdict(set)  # path -> set of signal types
     for cid, path, ctime in rows:
         rrf = chunk_rrf.get(cid, 0)
-        cos = chunk_cosine.get(cid, 0)
-        
-        # If FTS5 hit without semantic hit, cos is 0. Give it a baseline 50% score.
-        if cos == 0:
-            cos = 0.5
-            
         if path not in file_best_rrf or rrf > file_best_rrf[path]:
             file_best_rrf[path] = rrf
-        if path not in file_best_cosine or cos > file_best_cosine[path]:
-            file_best_cosine[path] = cos
+        file_signals[path].update(chunk_signals.get(cid, set()))
         if ctime is not None:
             file_created[path] = ctime
 
     # Add filename-match boost to RRF scores
     for path, boost in filename_boost.items():
         file_best_rrf[path] = file_best_rrf.get(path, 0) + boost
-        # Filename matches without semantic hits get a baseline cosine
-        if path not in file_best_cosine:
-            file_best_cosine[path] = 0.5
+        file_signals[path].add('filename')
 
     # Sort by RRF rank
     ranked = sorted(file_best_rrf.items(), key=lambda x: x[1], reverse=True)
@@ -301,11 +290,46 @@ def semantic_search(query, top_k=20, min_similarity=0.15, date_from=None, date_t
 
     ranked = ranked[:top_k]
 
-    return [
-        {
+    # ── Compute normalized confidence scores (0–100%) ───
+    # Uses min-max normalization of RRF scores with a multi-signal boost.
+    # This replaces the old misleading raw-cosine display.
+    if not ranked:
+        return []
+
+    rrf_values = [rrf for _, rrf in ranked]
+    rrf_max = max(rrf_values)
+    rrf_min = min(rrf_values)
+    rrf_range = rrf_max - rrf_min
+
+    # Base confidence range: top result gets ~92%, worst gets ~40%
+    _CONF_CEIL = 0.92
+    _CONF_FLOOR = 0.40
+
+    results = []
+    for path, rrf in ranked:
+        # Normalize RRF score to [FLOOR, CEIL] range
+        if rrf_range > 0:
+            norm = (rrf - rrf_min) / rrf_range
+        else:
+            # All results have the same RRF score
+            norm = 1.0
+        confidence = _CONF_FLOOR + norm * (_CONF_CEIL - _CONF_FLOOR)
+
+        # Multi-signal boost: files matched by multiple signals get
+        # a confidence bump (max +8% for all three signals matching)
+        n_signals = len(file_signals.get(path, set()))
+        if n_signals >= 3:
+            confidence += 0.08  # semantic + keyword + filename
+        elif n_signals == 2:
+            confidence += 0.05  # two signals agree
+        # Single-signal hits keep their base confidence
+
+        confidence = min(confidence, 0.99)  # cap at 99%
+
+        results.append({
             "path": path,
-            "score": file_best_cosine.get(path, 0),
+            "score": round(confidence, 3),
             "created_time": file_created.get(path),
-        }
-        for path, _rrf in ranked
-    ]
+        })
+
+    return results

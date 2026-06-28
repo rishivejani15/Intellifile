@@ -335,15 +335,15 @@ app.on('second-instance', (event, commandLine) => {
                 }
               } catch (e) { } // ignore locked files
             }
-                // Only auto-select the guessed file if it was modified recently
-                const GUESS_WINDOW_MS = 2 * 60 * 1000; // 2 minutes
-                if (guessedFile && (Date.now() - maxTime) <= GUESS_WINDOW_MS) {
-                  console.log('[Heuristic] Guessed recently downloaded file:', guessedFile, 'ageMs=', Date.now() - maxTime);
-                  payload = { path: rawPath, selectFile: guessedFile };
-                } else {
-                  console.log('[Heuristic] Not confident to auto-select file (guessedFile=', guessedFile, 'ageMs=', guessedFile ? (Date.now() - maxTime) : 'N/A', ') - showing recent chooser');
-                  payload = { path: rawPath, selectFile: null };
-                }
+            // Only auto-select the guessed file if it was modified recently
+            const GUESS_WINDOW_MS = 2 * 60 * 1000; // 2 minutes
+            if (guessedFile && (Date.now() - maxTime) <= GUESS_WINDOW_MS) {
+              console.log('[Heuristic] Guessed recently downloaded file:', guessedFile, 'ageMs=', Date.now() - maxTime);
+              payload = { path: rawPath, selectFile: guessedFile };
+            } else {
+              console.log('[Heuristic] Not confident to auto-select file (guessedFile=', guessedFile, 'ageMs=', guessedFile ? (Date.now() - maxTime) : 'N/A', ') - showing recent chooser');
+              payload = { path: rawPath, selectFile: null };
+            }
           } catch (e) {
             payload = { path: rawPath, selectFile: null };
           }
@@ -1595,7 +1595,7 @@ function parseDateFromQuery(rawQuery) {
     const m2 = MONTHS[match[3].toLowerCase()];
     const y2 = parseInt(match[4]);
     // Handle second-instance events from Windows (Explorer / browser)
-    
+
     dateTo = endOfMonth(y2, m2);
     query = query.replace(match[0], '').trim();
   }
@@ -1635,6 +1635,26 @@ function parseDateFromQuery(rawQuery) {
     }
   }
 
+  // Pattern: standalone "<day> <month> <year>" without prefix keyword
+  // e.g., "28 june 2026", "28th june 2026", "3rd march 2025"
+  if (!dateFrom && !dateTo) {
+    const standaloneDayMonthYearRe = new RegExp(
+      `\\b(\\d{1,2})(?:st|nd|rd|th)?\\s+(${monthPattern})\\s+(\\d{4})\\b`,
+      'i'
+    );
+    match = query.match(standaloneDayMonthYearRe);
+    if (match) {
+      const day = parseInt(match[1]);
+      const month = MONTHS[match[2].toLowerCase()];
+      const year = parseInt(match[3]);
+      if (day >= 1 && day <= 31) {
+        dateFrom = startOfDay(year, month, day);
+        dateTo = endOfDay(year, month, day);
+        query = query.replace(match[0], '').trim();
+      }
+    }
+  }
+
   // Pattern: "before <month> <year>" or "before <day> <month> <year>"
   if (!dateFrom && !dateTo) {
     const beforeMonthRe = new RegExp(
@@ -1670,6 +1690,77 @@ function parseDateFromQuery(rawQuery) {
         dateFrom = startOfMonth(year, month);
       }
       query = query.replace(match[0], '').trim();
+    }
+  }
+
+  // Pattern: numeric dates — YYYY-MM-DD (ISO), DD/MM/YYYY, MM-DD-YYYY
+  if (!dateFrom && !dateTo) {
+    // ISO format: 2026-06-28
+    const isoRe = /\b(\d{4})-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])\b/;
+    match = query.match(isoRe);
+    if (match) {
+      const year = parseInt(match[1]);
+      const month = parseInt(match[2]) - 1;  // JS months are 0-indexed
+      const day = parseInt(match[3]);
+      dateFrom = startOfDay(year, month, day);
+      dateTo = endOfDay(year, month, day);
+      query = query.replace(match[0], '').trim();
+    }
+  }
+
+  if (!dateFrom && !dateTo) {
+    // DD/MM/YYYY or DD-MM-YYYY
+    const dMyRe = /\b(0?[1-9]|[12]\d|3[01])[\/\-](0?[1-9]|1[0-2])[\/\-](\d{4})\b/;
+    match = query.match(dMyRe);
+    if (match) {
+      const day = parseInt(match[1]);
+      const month = parseInt(match[2]) - 1;
+      const year = parseInt(match[3]);
+      if (day >= 1 && day <= 31 && year >= 1900 && year <= 2099) {
+        dateFrom = startOfDay(year, month, day);
+        dateTo = endOfDay(year, month, day);
+        query = query.replace(match[0], '').trim();
+      }
+    }
+  }
+
+  // Pattern: "<month> <day>" or "<day> <month>" without year (defaults to current year)
+  // e.g., "june 28", "28 june", "june 28th", "28th june"
+  if (!dateFrom && !dateTo) {
+    // month-day: "june 28" / "june 28th"
+    const monthDayRe = new RegExp(
+      `(${monthPattern})\\s+(\\d{1,2})(?:st|nd|rd|th)?\\b`,
+      'i'
+    );
+    match = query.match(monthDayRe);
+    if (match) {
+      const month = MONTHS[match[1].toLowerCase()];
+      const day = parseInt(match[2]);
+      if (day >= 1 && day <= 31) {
+        const year = new Date().getFullYear();
+        dateFrom = startOfDay(year, month, day);
+        dateTo = endOfDay(year, month, day);
+        query = query.replace(match[0], '').trim();
+      }
+    }
+  }
+
+  if (!dateFrom && !dateTo) {
+    // day-month: "28 june" / "28th june"
+    const dayMonthRe = new RegExp(
+      `\\b(\\d{1,2})(?:st|nd|rd|th)?\\s+(${monthPattern})\\b`,
+      'i'
+    );
+    match = query.match(dayMonthRe);
+    if (match) {
+      const day = parseInt(match[1]);
+      const month = MONTHS[match[2].toLowerCase()];
+      if (day >= 1 && day <= 31) {
+        const year = new Date().getFullYear();
+        dateFrom = startOfDay(year, month, day);
+        dateTo = endOfDay(year, month, day);
+        query = query.replace(match[0], '').trim();
+      }
     }
   }
 
@@ -1744,7 +1835,7 @@ function parseDateFromQuery(rawQuery) {
   }
 
   // Clean up filler words left behind
-  query = query.replace(/\b(containing|with|about|files?|from|created)\b/gi, ' ').replace(/\s+/g, ' ').trim();
+  query = query.replace(/\b(containing|with|about|files?|from|created|on|dated|in|during|of)\b/gi, ' ').replace(/\s+/g, ' ').trim();
 
   return {
     cleanQuery: (!query.trim() && (dateFrom || dateTo)) ? "" : (query.trim() || rawQuery.trim()),

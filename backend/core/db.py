@@ -48,11 +48,19 @@ def init_db():
     cur.execute('CREATE INDEX IF NOT EXISTS idx_chunks_file_id ON chunks(file_id)')
     cur.execute('CREATE INDEX IF NOT EXISTS idx_files_created ON files(created_time)')
 
-    # FTS5 full-text search index (content-synced with chunks table)
+    # FTS5 full-text search index with porter stemmer for word-form matching
+    # (e.g., "documents" matches "document", "invoices" matches "invoice")
     try:
+        # Check if existing FTS table uses porter tokenizer
+        cur.execute("SELECT sql FROM sqlite_master WHERE name='chunks_fts'")
+        fts_row = cur.fetchone()
+        if fts_row and 'porter' not in (fts_row[0] or '').lower():
+            # Old FTS table without stemming — drop and recreate
+            cur.execute('DROP TABLE IF EXISTS chunks_fts')
+
         cur.execute('''
             CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts
-            USING fts5(text, content=chunks, content_rowid=id)
+            USING fts5(text, content=chunks, content_rowid=id, tokenize='porter unicode61')
         ''')
     except Exception:
         pass  # SQLite build without FTS5 — keyword search will be skipped
