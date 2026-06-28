@@ -1,4 +1,6 @@
 import os
+import sys
+import time as _time
 from typing import Dict, List
 
 from core.chunker import chunk_text
@@ -47,6 +49,8 @@ def ingest_single_file(file_path: str, allow_protected: bool = False) -> Dict[st
         file_id, old_mtime = existing
         if int(old_mtime) == modified_time:
             conn.close()
+            sys.stderr.write(f"[ingest] Skipped (unchanged): {abs_path}\n")
+            sys.stderr.flush()
             return {
                 "status": "skipped",
                 "file_id": int(file_id),
@@ -108,6 +112,9 @@ def ingest_single_file(file_path: str, allow_protected: bool = False) -> Dict[st
     update_faiss(affected_chunk_ids)
     invalidate_cache()
 
+    sys.stderr.write(f"[ingest] Indexed {filename}: {len(new_chunk_ids)} chunks ({'updated' if existing else 'new'})\n")
+    sys.stderr.flush()
+
     return {
         "status": "indexed",
         "file_id": int(file_id),
@@ -125,6 +132,7 @@ def remove_single_file(file_path: str) -> Dict[str, object]:
     Remove one file from the canonical files.db + vectors.faiss pipeline.
     """
     init_db()
+    t0 = _time.perf_counter()
 
     abs_path = os.path.abspath(file_path)
     conn = get_connection()
@@ -134,6 +142,8 @@ def remove_single_file(file_path: str) -> Dict[str, object]:
     row = cur.fetchone()
     if not row:
         conn.close()
+        sys.stderr.write(f"[ingest] Delete skipped (not in index): {abs_path}\n")
+        sys.stderr.flush()
         return {
             "status": "skipped",
             "path": abs_path,
@@ -152,6 +162,10 @@ def remove_single_file(file_path: str) -> Dict[str, object]:
         update_faiss(chunk_ids)
     rebuild_fts()
     invalidate_cache()
+
+    elapsed = round(_time.perf_counter() - t0, 2)
+    sys.stderr.write(f"[ingest] Deleted {filename} from index: {len(chunk_ids)} chunks removed in {elapsed}s\n")
+    sys.stderr.flush()
 
     return {
         "status": "deleted",

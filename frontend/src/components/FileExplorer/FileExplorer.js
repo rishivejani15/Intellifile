@@ -85,6 +85,20 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
   const initialLoadRef = useRef(false);
   const archiveMessageTimerRef = useRef(null);
 
+  // Toast debouncing for watch events — batch rapid events into a single toast
+  const watchToastTimerRef = useRef(null);
+  const watchToastBatchRef = useRef({ added: new Set(), modified: new Set(), removed: new Set() });
+
+  // Search abort ref — incremented on each search to cancel stale requests
+  const searchIdRef = useRef(0);
+
+  // Stable refs for callbacks used inside the watch effect.
+  // This prevents the effect from re-running (and recreating the chokidar
+  // watcher) every time applyDirectoryChange/loadDirectory get new identities
+  // due to selectedItem, searchQuery, etc. changing.
+  const applyDirectoryChangeRef = useRef(null);
+  const loadDirectoryRef = useRef(null);
+
   // Derived values
   const displayItems = useMemo(() => sortItems(items, sortBy, sortDirection), [items, sortBy, sortDirection]);
   const matchesSearch = useCallback((name) => {
@@ -179,6 +193,71 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
     const normalizedCurrent = currentPath.toLowerCase().replace(/[\\/]+$/, '');
     const normalizedDirectory = change.directoryPath.toLowerCase().replace(/[\\/]+$/, '');
     if (normalizedCurrent !== normalizedDirectory) return;
+
+    // ── Toast notification with debounced batching ──
+    // Queue the event and flush after 800ms of inactivity so that bulk
+    // operations (e.g., extracting a ZIP) produce one summary toast
+    // instead of dozens of individual ones.
+    const batch = watchToastBatchRef.current;
+    if (change.action === 'add' && change.item?.name) {
+      batch.added.add(change.item.name);
+    } else if (change.action === 'change' && change.item?.name) {
+      batch.modified.add(change.item.name);
+    } else if (change.action === 'unlink' && change.filePath) {
+      const name = change.filePath.split(/[\\/]/).pop() || change.filePath;
+      batch.removed.add(name);
+    }
+
+    if (watchToastTimerRef.current) {
+      clearTimeout(watchToastTimerRef.current);
+    }
+    watchToastTimerRef.current = setTimeout(() => {
+      watchToastTimerRef.current = null;
+      const { added, modified, removed } = watchToastBatchRef.current;
+      watchToastBatchRef.current = { added: new Set(), modified: new Set(), removed: new Set() };
+
+      // Cancel out add+remove pairs (temp file lifecycle: created then deleted)
+      for (const name of removed) {
+        if (added.has(name)) {
+          added.delete(name);
+          removed.delete(name);
+        }
+      }
+      // Also remove from modified if it was removed (file changed then deleted)
+      for (const name of removed) {
+        modified.delete(name);
+      }
+
+      const addedArr = [...added];
+      const modifiedArr = [...modified];
+      const removedArr = [...removed];
+
+      const parts = [];
+      if (addedArr.length === 1) {
+        parts.push(`📄 New: ${addedArr[0]}`);
+      } else if (addedArr.length > 1) {
+        parts.push(`📄 ${addedArr.length} files added`);
+      }
+      if (modifiedArr.length === 1) {
+        parts.push(`✏️ Modified: ${modifiedArr[0]}`);
+      } else if (modifiedArr.length > 1) {
+        parts.push(`✏️ ${modifiedArr.length} files modified`);
+      }
+      if (removedArr.length === 1) {
+        parts.push(`🗑️ Removed: ${removedArr[0]}`);
+      } else if (removedArr.length > 1) {
+        parts.push(`🗑️ ${removedArr.length} files removed`);
+      }
+
+      if (parts.length > 0) {
+        const hasRemoved = removedArr.length > 0;
+        showToast(parts.join(' · '), {
+          type: hasRemoved ? 'warning' : 'info',
+          title: 'File Change',
+          duration: 3500,
+        });
+      }
+    }, 800);
 
     if (change.action === 'add' || change.action === 'change') {
       const updatedItem = change.item;
@@ -444,7 +523,22 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
   const [recentChooserFiles, setRecentChooserFiles] = React.useState([]);
 
 
-  // Watch the active directory and apply incremental updates
+  // Keep the stable refs in sync with the latest callback versions
+  useEffect(() => {
+    applyDirectoryChangeRef.current = applyDirectoryChange;
+  }, [applyDirectoryChange]);
+  useEffect(() => {
+    loadDirectoryRef.current = loadDirectory;
+  }, [loadDirectory]);
+
+  // Watch the active directory and apply incremental updates.
+  // CRITICAL: This effect must depend ONLY on currentPath.
+  // Previously it depended on [currentPath, applyDirectoryChange, loadDirectory]
+  // which caused the chokidar watcher to be destroyed and recreated every time
+  // selectedItem, searchQuery, or other state changed (because those change the
+  // identity of applyDirectoryChange/loadDirectory). On Windows with usePolling,
+  // a new watcher fires 'add' for EVERY existing file in the directory, which
+  // triggered N × index_file calls blocking the Python engine for minutes.
   useEffect(() => {
     if (!ipcRenderer || !currentPath) return undefined;
 
@@ -456,16 +550,21 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
     }
 
     watchedDirectoryRef.current = normalizedCurrent;
-    ipcRenderer.invoke('watch-directory', currentPath).catch(() => {});
+    ipcRenderer.invoke('watch-directory', currentPath).catch((err) => {
+      console.error('[FileExplorer] Failed to start directory watch:', err);
+    });
 
     const handleDirectoryChanged = (event) => {
-      applyDirectoryChange(event);
+      // Use the ref so we always call the latest version of the callback
+      // without needing it in the dependency array
+      applyDirectoryChangeRef.current?.(event);
     };
 
     const handleVersionUpdated = (event) => {
-      if (!event?.filePath || !currentPath) return;
-      if (event.filePath.toLowerCase().replace(/[\\/]+$/, '') !== currentPath.toLowerCase().replace(/[\\/]+$/, '')) return;
-      loadDirectory(currentPath, { soft: true, trackHistory: false });
+      if (!event?.filePath) return;
+      // Read currentPath from the closure (it IS in deps) so this stays correct
+      if (event.filePath.toLowerCase().replace(/[\\/]+$/, '') !== normalizedCurrent) return;
+      loadDirectoryRef.current?.(currentPath, { soft: true, trackHistory: false });
     };
 
     ipcRenderer.on('directory-changed', handleDirectoryChanged);
@@ -475,8 +574,15 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
       ipcRenderer.off('directory-changed', handleDirectoryChanged);
       ipcRenderer.off('version-updated', handleVersionUpdated);
       ipcRenderer.invoke('unwatch-directory', normalizedCurrent).catch(() => {});
+      // Clear any pending toast batch timer on cleanup
+      if (watchToastTimerRef.current) {
+        clearTimeout(watchToastTimerRef.current);
+        watchToastTimerRef.current = null;
+        watchToastBatchRef.current = { added: new Set(), modified: new Set(), removed: new Set() };
+      }
     };
-  }, [currentPath, applyDirectoryChange, loadDirectory]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentPath]);
 
   // Event Handlers
   const handleAddressSubmit = (e) => {
@@ -1051,15 +1157,48 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
       setSemanticResults(null);
       return;
     }
+
+    // Increment the search ID so any in-flight search becomes stale
+    const thisSearchId = ++searchIdRef.current;
     setSemanticLoading(true);
+
     try {
-      const results = await searchFiles(query, currentPath);
+      // Race the actual search against a timeout so the UI never
+      // locks indefinitely (the core symptom of the freeze bug from
+      // the user's perspective).
+      const SEARCH_TIMEOUT_MS = 8000;
+      const searchPromise = searchFiles(query, null);
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('search_timeout')), SEARCH_TIMEOUT_MS)
+      );
+
+      const results = await Promise.race([searchPromise, timeoutPromise]);
+
+      // If a newer search was fired while we were awaiting, discard
+      if (thisSearchId !== searchIdRef.current) return;
+
       setSemanticResults(results || []);
     } catch (err) {
-      console.error('[FileExplorer] Semantic search error:', err);
-      setSemanticResults([]);
+      // Discard stale results
+      if (thisSearchId !== searchIdRef.current) return;
+
+      if (err?.message === 'search_timeout') {
+        console.warn('[FileExplorer] Search timed out — engine may be busy (indexing/rebuilding)');
+        showToast('Search timed out — the engine may be busy indexing. Please try again shortly.', {
+          type: 'warning',
+          title: 'Search Timeout',
+          duration: 4000,
+        });
+        setSemanticResults([]);
+      } else {
+        console.error('[FileExplorer] Semantic search error:', err);
+        setSemanticResults([]);
+      }
     } finally {
-      setSemanticLoading(false);
+      // Only clear loading if this is still the active search
+      if (thisSearchId === searchIdRef.current) {
+        setSemanticLoading(false);
+      }
     }
   };
 

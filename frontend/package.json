@@ -73,6 +73,7 @@
   "dependencies": {
     "archiver": "^7.0.1",
     "archiver-utils": "^5.0.2",
+    "chokidar": "^4.0.3",
     "electron-updater": "^6.8.3",
     "unzipper": "^0.12.3",
     "wrtc": "^0.4.7",

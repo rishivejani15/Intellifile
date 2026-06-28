@@ -40,16 +40,16 @@ $env:TMP = "Z:\"
 $env:PIP_CACHE_DIR = $shortCache
 
 try {
-	if (Test-Path "..\venv\Scripts\python.exe") {
-		& "..\venv\Scripts\python.exe" -m pip install -r requirements.txt
+	if (Test-Path ".venv\Scripts\python.exe") {
+		& ".venv\Scripts\python.exe" -m pip install -r requirements.txt
 		if ($LASTEXITCODE -ne 0) { Write-Host "Failed to install backend requirements" -ForegroundColor Red; exit $LASTEXITCODE }
-		& "..\venv\Scripts\python.exe" -m pip install pyinstaller
+		& ".venv\Scripts\python.exe" -m pip install pyinstaller
 		if ($LASTEXITCODE -ne 0) { Write-Host "Failed to install PyInstaller" -ForegroundColor Red; exit $LASTEXITCODE }
-		& "..\venv\Scripts\python.exe" -m PyInstaller --clean intellifile_engine.spec
+		& ".venv\Scripts\python.exe" -m PyInstaller --clean intellifile_engine.spec
 		$pyinstallerExit = $LASTEXITCODE
 		if ($pyinstallerExit -ne 0) { Write-Host "Failed to build engine" -ForegroundColor Red; exit $pyinstallerExit }
 	} else {
-		Write-Host "Python executable not found in ..\venv\Scripts" -ForegroundColor Red
+		Write-Host "Python executable not found in .venv\Scripts" -ForegroundColor Red
 		exit 1
 	}
 } finally {

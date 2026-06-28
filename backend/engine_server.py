@@ -70,6 +70,58 @@ _index_queue = queue.Queue(maxsize=10)
 _index_lock = Lock()
 _current_index_job = None
 
+# Background delete queue — separate from indexing so deletes don't queue-block
+# behind long-running index jobs, and vice-versa.
+_delete_queue = queue.Queue(maxsize=50)
+
+def _background_deleter():
+    """Process file deletion jobs in background to avoid blocking the main stdin loop.
+    
+    This is the critical fix for the search-bar freeze bug: remove_single_file()
+    calls update_faiss() which rebuilds the FAISS index synchronously. When this
+    ran on the main thread, it blocked ALL other requests (including search) for
+    the duration of the rebuild (1-3+ minutes on large indices).
+    """
+    while True:
+        try:
+            job = _delete_queue.get()
+            if job is None:  # Sentinel for shutdown
+                break
+            
+            req_id = job['req_id']
+            file_path = job['file_path']
+            
+            try:
+                import time as _time
+                from indexing.single_file_ingest import remove_single_file
+                
+                t0 = _time.perf_counter()
+                sys.stderr.write(f"[engine-bg-delete] Removing from index: {file_path}\n")
+                sys.stderr.flush()
+                
+                result = remove_single_file(file_path)
+                
+                elapsed = round(_time.perf_counter() - t0, 2)
+                status = result.get('status', 'unknown')
+                removed = result.get('removed_chunks', 0)
+                sys.stderr.write(f"[engine-bg-delete] Done in {elapsed}s — status={status}, chunks_removed={removed}, path={file_path}\n")
+                sys.stderr.flush()
+                
+                _emit_json({"_id": req_id, "success": True, "file_path": file_path, "data": result})
+            except Exception as e:
+                sys.stderr.write(f"[engine-bg-delete] Failed for {file_path}: {e}\n")
+                sys.stderr.flush()
+                _emit_json({"_id": req_id, "error": f"Delete failed: {e}"})
+        except Exception as e:
+            sys.stderr.write(f"[engine-bg-delete] Background deleter error: {e}\n")
+            sys.stderr.flush()
+        finally:
+            _delete_queue.task_done()
+
+# Start background deleter thread
+_deleter_thread = threading.Thread(target=_background_deleter, daemon=True)
+_deleter_thread.start()
+
 def _background_indexer():
     """Process indexing jobs in background to avoid blocking other requests"""
     global _current_index_job
@@ -238,6 +290,7 @@ while True:
 
         elif action == "index_file":
             try:
+                import time as _time
                 from indexing.single_file_ingest import ingest_single_file
                 from core.scanner import is_indexable_document
                 file_path = request.get("file_path")
@@ -247,6 +300,8 @@ while True:
                     from core.model import is_model_loaded, MODEL_LOAD_ERROR
                     if not is_model_loaded():
                         err = MODEL_LOAD_ERROR or "Embedding model not available"
+                        sys.stderr.write(f"[engine] index_file skipped (model unavailable): {file_path}\n")
+                        sys.stderr.flush()
                         print(json.dumps({"_id": req_id, "error": f"Embeddings unavailable: {err}"}), flush=True)
                         continue
                 except Exception:
@@ -255,13 +310,28 @@ while True:
 
                 if file_path and os.path.exists(file_path):
                     if not is_indexable_document(file_path):
+                        sys.stderr.write(f"[engine] index_file skipped (unsupported type): {file_path}\n")
+                        sys.stderr.flush()
                         print(json.dumps({"_id": req_id, "status": "skipped", "reason": "unsupported_file_type", "file_path": file_path}), flush=True)
                         continue
+                    t0 = _time.perf_counter()
+                    sys.stderr.write(f"[engine] index_file started: {file_path}\n")
+                    sys.stderr.flush()
                     result = ingest_single_file(file_path, allow_protected=allow_protected)
+                    elapsed = round(_time.perf_counter() - t0, 2)
+                    status = result.get('status', 'unknown')
+                    chunks = result.get('new_chunks', 0)
+                    reason_str = result.get('reason', '')
+                    sys.stderr.write(f"[engine] index_file done in {elapsed}s — status={status}, chunks={chunks}, reason={reason_str}, path={file_path}\n")
+                    sys.stderr.flush()
                     print(json.dumps({"_id": req_id, "status": "indexed", "file_path": file_path, "data": result}), flush=True)
                 else:
+                    sys.stderr.write(f"[engine] index_file skipped (not found): {file_path}\n")
+                    sys.stderr.flush()
                     print(json.dumps({"_id": req_id, "status": "skipped", "reason": "file_not_found", "file_path": file_path}), flush=True)
             except Exception as e:
+                sys.stderr.write(f"[engine] index_file failed: {file_path} — {e}\n")
+                sys.stderr.flush()
                 print(json.dumps({"_id": req_id, "error": f"Single file indexing failed: {e}"}), flush=True)
 
         elif action == "model_status":
@@ -286,14 +356,31 @@ while True:
 
         elif action == "delete_file":
             try:
-                from indexing.single_file_ingest import remove_single_file
                 file_path = request.get("file_path")
                 if not file_path:
                     print(json.dumps({"_id": req_id, "error": "Missing file_path"}), flush=True)
                 else:
-                    result = remove_single_file(file_path)
-                    print(json.dumps({"_id": req_id, "success": True, "file_path": file_path, "data": result}), flush=True)
+                    # Dispatch to background thread so FAISS rebuild doesn't block
+                    # the main stdin loop (this was the root cause of the search
+                    # bar freeze bug — see implementation_plan.md).
+                    try:
+                        _delete_queue.put_nowait({
+                            'req_id': req_id,
+                            'file_path': file_path,
+                        })
+                        sys.stderr.write(f"[engine] delete_file queued for background processing: {file_path}\n")
+                        sys.stderr.flush()
+                        # Immediately acknowledge so the main loop continues
+                        # processing other requests (especially search).
+                        print(json.dumps({"_id": req_id, "success": True, "queued": True, "file_path": file_path}), flush=True)
+                    except Exception:
+                        # Queue full — fall back but warn
+                        sys.stderr.write(f"[engine] delete_file queue full, dropping: {file_path}\n")
+                        sys.stderr.flush()
+                        print(json.dumps({"_id": req_id, "error": "Delete queue full"}), flush=True)
             except Exception as e:
+                sys.stderr.write(f"[engine] delete_file dispatch error: {e}\n")
+                sys.stderr.flush()
                 print(json.dumps({"_id": req_id, "error": f"Delete failed: {e}"}), flush=True)
 
         elif action == "save_version":

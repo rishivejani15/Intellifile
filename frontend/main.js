@@ -831,6 +831,10 @@ let fileContents = new Map();
 let debounceTimers = new Map();
 let directoryIndexTimers = new Map();
 
+// Tracks files recently deleted through the UI so the watcher can suppress
+// the spurious unlink→re-add storm that chokidar's polling causes on Windows.
+const _recentlyDeletedPaths = new Set();
+
 function sendToPython(payload, timeoutMs = 120000) {
   return new Promise((resolve) => {
     if (!pyProcess || !pyReady) {
@@ -1027,6 +1031,29 @@ function broadcastDirectoryChange(directoryPath, payload) {
   }
 }
 
+// Transient/temp file patterns that should never trigger UI events or indexing.
+// These are created by browsers, OS, and editors during normal file operations.
+const _TRANSIENT_PATTERNS = [
+  /\.crdownload$/i,          // Chrome partial download
+  /\.tmp$/i,                 // Generic temp
+  /\.partial$/i,             // Firefox partial download
+  /^~\$/,                    // Office lock files (~$doc.docx)
+  /^~.*/,                    // Generic temp prefix
+  /^desktop\.ini$/i,         // Windows folder config
+  /^thumbs\.db$/i,           // Windows thumbnail cache
+  /^\._/,                    // macOS resource forks
+  /\.ds_store$/i,            // macOS folder metadata
+  /\.download$/i,            // Download temp
+  /\.aria2$/i,               // aria2 download temp
+  /:Zone\.Identifier$/i,     // Windows ADS zone identifier
+  /\.lnk$/i,                 // Windows shortcuts (spurious events)
+];
+
+function _isTransientFile(filePath) {
+  const basename = path.basename(filePath);
+  return _TRANSIENT_PATTERNS.some(re => re.test(basename));
+}
+
 function startWatchingDirectory(directoryPath) {
   if (!directoryPath) return { success: false, error: 'Missing directory path.' };
 
@@ -1054,9 +1081,13 @@ function startWatchingDirectory(directoryPath) {
     });
 
     watcher.on('add', (filePath) => {
+      // Skip transient/temp files and recently-deleted paths
+      if (_isTransientFile(filePath)) return;
+      if (_recentlyDeletedPaths.has(filePath.toLowerCase())) return;
       const item = buildDirectoryItem(filePath);
       if (item) {
         broadcastDirectoryChange(directoryPath, { action: 'add', item });
+        appendLog('FileWatch', `File added: ${path.basename(filePath)}`);
         if (item.type === 'file') {
           sendToPython({ action: 'index_file', file_path: filePath, allow_protected: getAllowProtectedIndexing() }).catch(() => { });
         }
@@ -1064,6 +1095,8 @@ function startWatchingDirectory(directoryPath) {
     });
 
     watcher.on('addDir', (dirPath) => {
+      if (_isTransientFile(dirPath)) return;
+      if (_recentlyDeletedPaths.has(dirPath.toLowerCase())) return;
       const item = buildDirectoryItem(dirPath);
       if (item) {
         broadcastDirectoryChange(directoryPath, { action: 'add', item });
@@ -1072,9 +1105,12 @@ function startWatchingDirectory(directoryPath) {
     });
 
     watcher.on('change', (filePath) => {
+      if (_isTransientFile(filePath)) return;
+      if (_recentlyDeletedPaths.has(filePath.toLowerCase())) return;
       const item = buildDirectoryItem(filePath);
       if (item) {
         broadcastDirectoryChange(directoryPath, { action: 'change', item });
+        appendLog('FileWatch', `File modified: ${path.basename(filePath)}`);
         if (item.type === 'file') {
           sendToPython({ action: 'index_file', file_path: filePath, allow_protected: getAllowProtectedIndexing() }).catch(() => { });
         }
@@ -1082,7 +1118,9 @@ function startWatchingDirectory(directoryPath) {
     });
 
     watcher.on('unlink', (filePath) => {
+      if (_isTransientFile(filePath)) return;
       broadcastDirectoryChange(directoryPath, { action: 'unlink', filePath });
+      appendLog('FileWatch', `File deleted: ${path.basename(filePath)}`);
       sendToPython({ action: 'delete_file', file_path: filePath }).then((res) => {
         if (res && res.error) {
           console.warn('[Index] Delete index failed:', res.error);
@@ -1098,6 +1136,7 @@ function startWatchingDirectory(directoryPath) {
     directoryWatchers.set(normPath, watcher);
     return { success: true };
   } catch (err) {
+    console.error(`[Watcher] Error starting directory watch for ${directoryPath}:`, err.message || err);
     return { success: false, error: err.message };
   }
 }
@@ -1246,6 +1285,11 @@ function startPython() {
           if (mainWindow && !mainWindow.isDestroyed()) {
             mainWindow.webContents.send('index-progress', parsed);
           }
+          // Log indexing progress so it appears in the Logs panel
+          const phase = parsed.phase || 'indexing';
+          const detail = parsed.detail || '';
+          const pct = typeof parsed.pct === 'number' ? ` (${parsed.pct}%)` : '';
+          appendLog('Indexing', `${phase}: ${detail}${pct}`);
         }
 
         if (id && pendingRequests.has(id)) {
@@ -2117,10 +2161,13 @@ function notifyIndexComplete(payload) {
   const skipped = Number(payload?.data?.skipped_total || payload?.skipped_total || 0);
   if (payload && payload.error) {
     lastIndexMessage = `Indexing failed: ${payload.error}`;
+    appendLog('Indexing', `Indexing failed: ${payload.error}`, true);
   } else if (skipped > 0) {
     lastIndexMessage = `Index updated (skipped ${skipped} protected ${skipped === 1 ? 'item' : 'items'})`;
+    appendLog('Indexing', lastIndexMessage);
   } else {
     lastIndexMessage = 'Index updated';
+    appendLog('Indexing', 'Indexing completed successfully');
   }
 
   if (mainWindow && !mainWindow.isDestroyed()) {
@@ -2834,22 +2881,32 @@ function registerIpcHandlers() {
       if (isProtectedPath(filePath)) {
         return { success: false, error: 'Cannot delete system files or folders' };
       }
-      // Move to Recycle Bin using Windows API
+      // Move to Recycle Bin using Windows API.
+      // IMPORTANT: We must AWAIT completion so chokidar sees a clean state
+      // transition instead of catching the directory mid-operation (which
+      // causes it to fire unlink/add for ALL files in the directory).
       const { exec } = require('child_process');
       const stats = fs.statSync(filePath);
       const escapedPath = filePath.replace(/'/g, "''");
-      if (stats.isDirectory()) {
-        exec(
-          `powershell -NoProfile -Command "Add-Type -AssemblyName Microsoft.VisualBasic; [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory('${escapedPath}','OnlyErrorDialogs','SendToRecycleBin')"`,
-          (err) => { if (err) console.error('Error deleting folder:', err); }
-        );
-      } else {
-        exec(
-          `powershell -NoProfile -Command "Add-Type -AssemblyName Microsoft.VisualBasic; [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile('${escapedPath}','OnlyErrorDialogs','SendToRecycleBin')"`,
-          (err) => { if (err) console.error('Error deleting file:', err); }
-        );
-      }
-      return { success: true };
+
+      // Track this path so the watcher can suppress spurious events
+      _recentlyDeletedPaths.add(filePath.toLowerCase());
+      setTimeout(() => _recentlyDeletedPaths.delete(filePath.toLowerCase()), 5000);
+
+      const psCommand = stats.isDirectory()
+        ? `Add-Type -AssemblyName Microsoft.VisualBasic; [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory('${escapedPath}','OnlyErrorDialogs','SendToRecycleBin')`
+        : `Add-Type -AssemblyName Microsoft.VisualBasic; [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile('${escapedPath}','OnlyErrorDialogs','SendToRecycleBin')`;
+
+      return await new Promise((resolve) => {
+        exec(`powershell -NoProfile -Command "${psCommand}"`, { timeout: 15000 }, (err) => {
+          if (err) {
+            console.error('Error deleting:', err.message || err);
+            resolve({ success: false, error: err.message || 'Delete failed' });
+          } else {
+            resolve({ success: true });
+          }
+        });
+      });
     } catch (err) {
       return { success: false, error: err.message };
     }
