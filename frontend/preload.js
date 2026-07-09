@@ -175,6 +175,26 @@ contextBridge.exposeInMainWorld('intellifile', {
     ipcRenderer.on('sync-pending', handler);
     return () => ipcRenderer.off('sync-pending', handler);
   },
+  getSetting: (key) => {
+    return ipcRenderer.invoke('settings:get', key);
+  },
+  setSetting: (key, value) => {
+    return ipcRenderer.invoke('settings:set', { key, value });
+  },
+  getAutoSortRecent: (limit = 20) => {
+    return ipcRenderer.invoke('autosort:recent', limit);
+  },
+  undoAutoSort: (logId) => {
+    return ipcRenderer.invoke('autosort:undo', logId);
+  },
+  selectFolder: () => {
+    return ipcRenderer.invoke('select-folder');
+  },
+  onAutoSortNotification: (callback) => {
+    const handler = (_event, payload) => callback(payload);
+    ipcRenderer.on('autosort:notification', handler);
+    return () => ipcRenderer.off('autosort:notification', handler);
+  },
 
   // Compatibility aliases for existing UI components.
   ingestFile: (filePath) => {

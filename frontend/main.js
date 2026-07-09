@@ -1279,6 +1279,12 @@ function startPython() {
         const parsed = JSON.parse(jsonText);
         const id = parsed._id;
 
+        if (parsed.event === 'autosort:notification' && parsed.payload) {
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('autosort:notification', parsed.payload);
+          }
+        }
+
         // Forward progress messages to the renderer
         if (parsed.type === 'progress') {
           lastIndexStatus = parsed;
@@ -1914,6 +1920,50 @@ ipcMain.handle('indexing-preferences-set', async (_event, updates = {}) => {
     console.warn('[Prefs] Failed to update preferences:', e && e.message ? e.message : e);
   }
   return { ...indexingPreferences };
+});
+
+ipcMain.handle('settings:get', async (_event, key) => {
+  return sendToPython({ action: 'settings_get', key });
+});
+
+ipcMain.handle('settings:set', async (_event, payload = {}) => {
+  const key = payload?.key;
+  const value = payload?.value;
+  const result = await sendToPython({ action: 'settings_update', key, value });
+
+  if (key === 'auto_sort_enabled' || key === 'watched_folders') {
+    let enabled = false;
+    if (key === 'auto_sort_enabled') {
+      enabled = typeof value === 'string' ? value.toLowerCase() === 'true' : !!value;
+    } else {
+      const current = await sendToPython({ action: 'settings_get', key: 'auto_sort_enabled' });
+      enabled = !!current?.value && String(current.value).toLowerCase() === 'true';
+    }
+
+    if (enabled) {
+      await sendToPython({ action: 'watcher_start' });
+    } else {
+      await sendToPython({ action: 'watcher_stop' });
+    }
+  }
+
+  return result;
+});
+
+ipcMain.handle('autosort:recent', async (_event, limit = 20) => {
+  return sendToPython({ action: 'autosort_recent', limit });
+});
+
+ipcMain.handle('autosort:undo', async (_event, logId) => {
+  return sendToPython({ action: 'autosort_undo', log_id: logId });
+});
+
+ipcMain.handle('select-folder', async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: 'Select a watched folder',
+    properties: ['openDirectory', 'createDirectory'],
+  });
+  return { canceled: result.canceled, filePaths: result.filePaths || [] };
 });
 
 ipcMain.handle("index-device", async (_event, options = {}) => {

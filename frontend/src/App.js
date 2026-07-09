@@ -5,6 +5,8 @@ import SyncManager from './components/Sync/SyncManager';
 import LogsPanel from './components/LogsPanel';
 import OfflineSetup from './components/OfflineSetup';
 import ToastHost from './components/ToastHost';
+import AutoSortToastHost from './components/AutoSortToastHost';
+import Settings from './pages/Settings';
 
 const ipcRenderer = window.electron?.ipcRenderer;
 
@@ -123,6 +125,12 @@ function App() {
           >
             Logs
           </button>
+          <button
+            className={`tab-btn ${activeTab === 'settings' ? 'active' : ''}`}
+            onClick={() => setActiveTab('settings')}
+          >
+            Settings
+          </button>
         </div>
         {updateAvailable && (
           <div className="update-section">
@@ -186,9 +194,14 @@ function App() {
           <div style={{ display: activeTab === 'logs' ? 'block' : 'none', height: '100%' }}>
             <LogsPanel />
           </div>
+
+          <div style={{ display: activeTab === 'settings' ? 'block' : 'none', height: '100%' }}>
+            <Settings />
+          </div>
         </main>
       </div>
       <ToastHost />
+      <AutoSortToastHost />
 
       {!setupComplete && <OfflineSetup key={offlineSetupKey} onComplete={handleOfflineSetupComplete} />}
     </div>

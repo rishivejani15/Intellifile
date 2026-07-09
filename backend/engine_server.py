@@ -31,6 +31,17 @@ except Exception as e:
     sys.stderr.write(f"[engine] DB init warning (non-fatal): {e}\n")
 sys.stderr.flush()
 
+try:
+    from main_orchestrator import set_emitter, start_autosort, stop_autosort, settings_get, settings_update, autosort_recent, autosort_undo
+except Exception:
+    set_emitter = None
+    start_autosort = None
+    stop_autosort = None
+    settings_get = None
+    settings_update = None
+    autosort_recent = None
+    autosort_undo = None
+
 # Global engine instances (lazy loaded)
 _version_engine = None
 _preview_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="document-preview")
@@ -198,6 +209,15 @@ _indexer_thread = threading.Thread(target=_background_indexer, daemon=True)
 _indexer_thread.start()
 
 print("IntelliFile Python Engine Ready", flush=True)
+
+try:
+    if callable(set_emitter):
+        set_emitter(_emit_json)
+    if callable(start_autosort):
+        start_autosort()
+except Exception as e:
+    sys.stderr.write(f"[engine] Autosort bootstrap warning: {e}\n")
+    sys.stderr.flush()
 
 def _warm_faiss_index():
     try:
@@ -382,6 +402,69 @@ while True:
                 sys.stderr.write(f"[engine] delete_file dispatch error: {e}\n")
                 sys.stderr.flush()
                 print(json.dumps({"_id": req_id, "error": f"Delete failed: {e}"}), flush=True)
+
+        elif action == "settings_get":
+            try:
+                if callable(settings_get):
+                    key = request.get("key")
+                    result = settings_get(key)
+                    print(json.dumps({"_id": req_id, **result}), flush=True)
+                else:
+                    print(json.dumps({"_id": req_id, "error": "Settings service unavailable"}), flush=True)
+            except Exception as e:
+                print(json.dumps({"_id": req_id, "error": f"Settings read failed: {e}"}), flush=True)
+
+        elif action == "settings_update":
+            try:
+                if callable(settings_update):
+                    key = request.get("key")
+                    value = request.get("value")
+                    result = settings_update(key, value)
+                    print(json.dumps({"_id": req_id, **result}), flush=True)
+                else:
+                    print(json.dumps({"_id": req_id, "error": "Settings service unavailable"}), flush=True)
+            except Exception as e:
+                print(json.dumps({"_id": req_id, "error": f"Settings update failed: {e}"}), flush=True)
+
+        elif action == "watcher_start":
+            try:
+                if callable(start_autosort):
+                    print(json.dumps({"_id": req_id, **start_autosort()}), flush=True)
+                else:
+                    print(json.dumps({"_id": req_id, "error": "Autosort service unavailable"}), flush=True)
+            except Exception as e:
+                print(json.dumps({"_id": req_id, "error": f"Watcher start failed: {e}"}), flush=True)
+
+        elif action == "watcher_stop":
+            try:
+                if callable(stop_autosort):
+                    print(json.dumps({"_id": req_id, **stop_autosort()}), flush=True)
+                else:
+                    print(json.dumps({"_id": req_id, "error": "Autosort service unavailable"}), flush=True)
+            except Exception as e:
+                print(json.dumps({"_id": req_id, "error": f"Watcher stop failed: {e}"}), flush=True)
+
+        elif action == "autosort_recent":
+            try:
+                if callable(autosort_recent):
+                    limit = request.get("limit", 20)
+                    result = autosort_recent(limit=limit)
+                    print(json.dumps({"_id": req_id, **result}), flush=True)
+                else:
+                    print(json.dumps({"_id": req_id, "error": "Autosort service unavailable"}), flush=True)
+            except Exception as e:
+                print(json.dumps({"_id": req_id, "error": f"Recent autosort lookup failed: {e}"}), flush=True)
+
+        elif action == "autosort_undo":
+            try:
+                if callable(autosort_undo):
+                    log_id = request.get("log_id")
+                    result = autosort_undo(log_id)
+                    print(json.dumps({"_id": req_id, **result}), flush=True)
+                else:
+                    print(json.dumps({"_id": req_id, "error": "Autosort service unavailable"}), flush=True)
+            except Exception as e:
+                print(json.dumps({"_id": req_id, "error": f"Undo failed: {e}"}), flush=True)
 
         elif action == "save_version":
             file_path = request.get("file_path")
