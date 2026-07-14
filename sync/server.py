@@ -3,6 +3,7 @@
 import asyncio
 import json
 import os
+import sys
 import time
 import logging
 import uvicorn
@@ -24,8 +25,15 @@ except ModuleNotFoundError:
 
 # ─── Configuration ─────────────────────────────────────────────────────────────
 
-DB_PATH     = os.path.join(os.path.dirname(__file__), "intellifil.db")
-SYNC_FOLDER = os.path.join(os.path.dirname(__file__), "intellifil_files")
+if getattr(sys, 'frozen', False):
+    # Frozen executable mode: paths are relative to the parent of the server/ directory
+    # (i.e. resources/sync/ relative to resources/sync/server/server.exe)
+    BASE_DIR = os.path.dirname(os.path.dirname(sys.executable))
+else:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+DB_PATH     = os.path.join(BASE_DIR, "intellifil.db")
+SYNC_FOLDER = os.path.join(BASE_DIR, "intellifil_files")
 
 logging.basicConfig(
     level=logging.INFO,

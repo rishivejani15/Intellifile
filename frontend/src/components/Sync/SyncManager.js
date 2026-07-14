@@ -226,6 +226,11 @@ const [localAddress, setLocalAddress] = useState('');
         setSyncStatus(data);
       }));
     }
+    if (window.intellifile?.onSyncServerError) {
+      cleanups.push(window.intellifile.onSyncServerError((errorMsg) => {
+        showErrorToast('Sync Server Error', errorMsg, 'Please check the logs or restart the application.');
+      }));
+    }
     if (window.intellifile?.onSyncLog) {
       cleanups.push(window.intellifile.onSyncLog((msg) => {
         setSyncLogs(prev => [msg, ...prev].slice(0, 200));

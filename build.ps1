@@ -5,6 +5,7 @@ Write-Host "0. Cleaning old build artifacts..." -ForegroundColor Yellow
 if (Test-Path "backend/dist") { Remove-Item -Recurse -Force "backend/dist" }
 if (Test-Path "backend/build") { Remove-Item -Recurse -Force "backend/build" }
 if (Test-Path "backend-dist") { Remove-Item -Recurse -Force "backend-dist" }
+if (Test-Path "sync-dist") { Remove-Item -Recurse -Force "sync-dist" }
 if (Test-Path "frontend/dist") { Remove-Item -Recurse -Force "frontend/dist" }
 if (Test-Path "frontend/build") { Remove-Item -Recurse -Force "frontend/build" }
 if (Test-Path "dist") { Remove-Item -Recurse -Force "dist" }
@@ -41,13 +42,16 @@ $env:PIP_CACHE_DIR = $shortCache
 
 try {
 	if (Test-Path ".venv\Scripts\python.exe") {
-		& ".venv\Scripts\python.exe" -m pip install -r requirements.txt
+		& ".venv\Scripts\python.exe" -m pip install --no-cache-dir -r requirements.txt
 		if ($LASTEXITCODE -ne 0) { Write-Host "Failed to install backend requirements" -ForegroundColor Red; exit $LASTEXITCODE }
-		& ".venv\Scripts\python.exe" -m pip install pyinstaller
+		& ".venv\Scripts\python.exe" -m pip install --no-cache-dir pyinstaller
 		if ($LASTEXITCODE -ne 0) { Write-Host "Failed to install PyInstaller" -ForegroundColor Red; exit $LASTEXITCODE }
 		& ".venv\Scripts\python.exe" -m PyInstaller --clean intellifile_engine.spec
 		$pyinstallerExit = $LASTEXITCODE
 		if ($pyinstallerExit -ne 0) { Write-Host "Failed to build engine" -ForegroundColor Red; exit $pyinstallerExit }
+		& ".venv\Scripts\python.exe" -m PyInstaller --clean intellifile_sync.spec
+		$syncExit = $LASTEXITCODE
+		if ($syncExit -ne 0) { Write-Host "Failed to build sync server" -ForegroundColor Red; exit $syncExit }
 	} else {
 		Write-Host "Python executable not found in .venv\Scripts" -ForegroundColor Red
 		exit 1
@@ -66,6 +70,8 @@ if ($LASTEXITCODE -ne 0) { Write-Host "Failed to build engine" -ForegroundColor 
 # Move dist folders to expected location
 New-Item -ItemType Directory -Force -Path "../backend-dist" | Out-Null
 Move-Item -Path "dist/engine" -Destination "../backend-dist/engine"
+New-Item -ItemType Directory -Force -Path "../sync-dist" | Out-Null
+Move-Item -Path "dist/server" -Destination "../sync-dist/server"
 Set-Location -Path ..
 
 # 2. React Build

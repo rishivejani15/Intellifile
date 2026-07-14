@@ -128,3 +128,20 @@ npm start
 ```
 
 Click **Index Device** to construct your initial baseline embeddings database, then begin securely searching and chatting natively offline!
+
+---
+
+## 📦 Frozen Executables & Packaging (For Developers)
+
+To run the application in a fully self-contained manner without any Python installation dependencies on the end-user's machine, IntelliFile freezes both of its backend components using PyInstaller:
+
+1. **Search Engine Core (`engine_server.py`):** Frozen into a standalone directory using `backend/intellifile_engine.spec`. The resulting folder is moved to `backend-dist/engine/`.
+2. **Local Sync Server (`server.py`):** Frozen into a standalone directory using `backend/intellifile_sync.spec`. The resulting folder is moved to `sync-dist/server/`.
+
+### Packaging Checklist
+When packing the application for release (e.g. via `npm run dist`):
+- Ensure that **both** PyInstaller spec files are run to compile `engine` and `server` binaries.
+- Do **not** package raw Python files (`*.py`) in the final installer bundle. Instead, modify the `extraResources` in `package.json` to only bundle `backend-dist/` and `sync-dist/`.
+- Path variables in the Python code (such as database and synchronization directories) must detect frozen execution via `sys.frozen` and resolve paths relative to the executable's host folder to avoid referencing the developer's local source code structure.
+
+The automated `build.ps1` script handles all of these steps sequentially: cleaning old builds, running PyInstaller for both spec files, moving outputs to `backend-dist/` and `sync-dist/` respectively, building the React frontend, and invoking `electron-builder` to generate the installer. Always use `npm run dist` (which runs `build.ps1`) to compile and package the app for distribution.

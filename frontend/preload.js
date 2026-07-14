@@ -160,6 +160,11 @@ contextBridge.exposeInMainWorld('intellifile', {
     ipcRenderer.on('sync-status', handler);
     return () => ipcRenderer.off('sync-status', handler);
   },
+  onSyncServerError: (callback) => {
+    const handler = (_event, errorMsg) => callback(errorMsg);
+    ipcRenderer.on('sync-server-error', handler);
+    return () => ipcRenderer.off('sync-server-error', handler);
+  },
   onSyncLog: (callback) => {
     const handler = (_event, msg) => callback(msg);
     ipcRenderer.on('sync-log', handler);

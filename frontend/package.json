@@ -62,7 +62,7 @@
         ]
       },
       {
-        "from": "../sync/",
+        "from": "../sync-dist/",
         "to": "sync"
       }
     ],

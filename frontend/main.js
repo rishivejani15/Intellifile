@@ -1457,11 +1457,200 @@ function checkInternetConnectivity(timeoutMs = 3000) {
   });
 }
 
+let syncServerRetries = 0;
+const MAX_SYNC_SERVER_RETRIES = 3;
+
+function checkSyncServerHealth() {
+  return new Promise((resolve) => {
+    const http = require('http');
+    const req = http.request({
+      hostname: '127.0.0.1',
+      port: SYNC_PORT,
+      path: '/status',
+      method: 'GET',
+      timeout: 1000
+    }, (res) => {
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => {
+        try {
+          const parsed = JSON.parse(data);
+          if (parsed && parsed.status === 'running') {
+            resolve(true);
+          } else {
+            resolve(false);
+          }
+        } catch (e) {
+          resolve(false);
+        }
+      });
+    });
+    
+    req.on('error', () => {
+      resolve(false);
+    });
+    
+    req.on('timeout', () => {
+      req.destroy();
+      resolve(false);
+    });
+    
+    req.end();
+  });
+}
+
+function handleSyncServerFailure(message) {
+  if (syncServerRetries < MAX_SYNC_SERVER_RETRIES) {
+    syncServerRetries++;
+    const delay = Math.pow(2, syncServerRetries) * 500; // 1000ms, 2000ms, 4000ms
+    console.log(`[SyncServer] Attempt ${syncServerRetries} failed. Retrying in ${delay}ms...`);
+    appendLog('SyncServer', `Attempt ${syncServerRetries} failed. Retrying in ${delay}ms...`);
+    
+    setTimeout(() => {
+      startSyncServer();
+    }, delay);
+  } else {
+    console.error(`[SyncServer] All ${MAX_SYNC_SERVER_RETRIES} retries exhausted. Failed to start sync server.`);
+    appendLog('SyncServer', `All ${MAX_SYNC_SERVER_RETRIES} retries exhausted. Sync server startup failed.`, true);
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('sync-server-error', `Sync server failed: ${message}`);
+    }
+  }
+}
+
+function attemptStartSyncServer() {
+  let spawnCmd;
+  let spawnArgs;
+  let spawnCwd;
+
+  if (isDev) {
+    const scriptPath = path.join(__dirname, '..', 'sync', 'server.py');
+    console.log('[SyncServer] Starting sync server in dev mode from:', scriptPath);
+    spawnCmd = PYTHON_EXECUTABLE;
+    spawnArgs = [scriptPath];
+    spawnCwd = path.join(__dirname, '..');
+  } else {
+    const exeName = process.platform === 'win32' ? 'server.exe' : 'server';
+    const exePath = path.join(process.resourcesPath, 'sync', 'server', exeName);
+    console.log('[SyncServer] Starting frozen sync server from:', exePath);
+
+    if (!fs.existsSync(exePath)) {
+      const errorMsg = `Sync server executable not found at ${exePath}. (binary missing/corrupt)`;
+      console.error('[SyncServer] ❌ ' + errorMsg);
+      appendLog('SyncServer', `Error: ${errorMsg}`, true);
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('sync-server-error', errorMsg);
+      }
+      return; // Binary missing/corrupt -> fail immediately without retry
+    }
+
+    spawnCmd = exePath;
+    spawnArgs = [];
+    spawnCwd = path.join(process.resourcesPath, 'sync');
+  }
+
+  console.log(`[SyncServer] Spawning command: "${spawnCmd}" with args:`, spawnArgs, `Cwd: "${spawnCwd}"`);
+  appendLog('SyncServer', `Spawning command: ${spawnCmd}`);
+
+  let spawnedCompleted = false;
+  let healthCheckTimer = null;
+
+  try {
+    syncServerProcess = spawn(spawnCmd, spawnArgs, {
+      cwd: spawnCwd,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    syncServerProcess.on('error', (err) => {
+      if (spawnedCompleted) return;
+      spawnedCompleted = true;
+      if (healthCheckTimer) clearInterval(healthCheckTimer);
+
+      const errorMsg = err && err.message ? err.message : String(err);
+      console.error('[SyncServer] Process spawn error:', errorMsg);
+      appendLog('SyncServer', `Process spawn error: ${errorMsg}`, true);
+      
+      syncServerProcess = null;
+      handleSyncServerFailure(`Sync server binary crashed/failed to spawn: ${errorMsg}`);
+    });
+
+    syncServerProcess.stdout.on('data', (d) => {
+      console.log('[SyncServer stdout]', d.toString().trim());
+    });
+
+    syncServerProcess.stderr.on('data', (d) => {
+      console.error('[SyncServer stderr]', d.toString().trim());
+    });
+
+    syncServerProcess.on('close', (code) => {
+      if (healthCheckTimer) clearInterval(healthCheckTimer);
+      syncServerProcess = null;
+
+      if (spawnedCompleted) return;
+      spawnedCompleted = true;
+
+      console.log('[SyncServer] Process closed with code:', code);
+      appendLog('SyncServer', `Process closed with code: ${code}`);
+
+      const errorMsg = `Sync server exited unexpectedly with code ${code}.`;
+      handleSyncServerFailure(errorMsg);
+    });
+
+    // Start polling health check /status
+    let healthCheckAttempts = 0;
+    const maxHealthCheckAttempts = 10; // 10 attempts * 500ms = 5 seconds
+    
+    healthCheckTimer = setInterval(() => {
+      if (spawnedCompleted) {
+        clearInterval(healthCheckTimer);
+        return;
+      }
+
+      checkSyncServerHealth().then((isHealthy) => {
+        if (spawnedCompleted) {
+          clearInterval(healthCheckTimer);
+          return;
+        }
+
+        if (isHealthy) {
+          clearInterval(healthCheckTimer);
+          spawnedCompleted = true;
+          console.log('[SyncServer] ✅ Sync server is healthy and running.');
+          appendLog('SyncServer', '✅ Sync server is healthy and running.');
+          syncServerRetries = 0; // reset retries
+        } else {
+          healthCheckAttempts++;
+          if (healthCheckAttempts >= maxHealthCheckAttempts) {
+            clearInterval(healthCheckTimer);
+            spawnedCompleted = true;
+            console.warn('[SyncServer] Health check timed out after 5 seconds.');
+            appendLog('SyncServer', 'Health check timed out.', true);
+            
+            if (syncServerProcess && !syncServerProcess.killed) {
+              syncServerProcess.kill();
+            }
+            syncServerProcess = null;
+            handleSyncServerFailure('Sync server failed to respond to health checks.');
+          }
+        }
+      });
+    }, 500);
+
+  } catch (err) {
+    if (healthCheckTimer) clearInterval(healthCheckTimer);
+    const errorMsg = err && err.message ? err.message : String(err);
+    console.error('[SyncServer] failed to spawn process:', errorMsg);
+    appendLog('SyncServer', `Exception starting: ${errorMsg}`, true);
+    syncServerProcess = null;
+    handleSyncServerFailure(`Spawn exception: ${errorMsg}`);
+  }
+}
+
 function startSyncServer() {
   try {
     if (syncServerProcess && !syncServerProcess.killed) {
       console.log('[SyncServer] already running');
-      return;
+      return Promise.resolve();
     }
 
     return isPortOpen(SYNC_PORT, '127.0.0.1', 300).then((portOpen) => {
@@ -1470,24 +1659,13 @@ function startSyncServer() {
         return;
       }
 
-      const scriptPath = path.join(__dirname, '..', 'sync', 'server.py');
-      console.log('[SyncServer] Starting sync server from:', scriptPath);
-
-      syncServerProcess = spawn(PYTHON_EXECUTABLE, [scriptPath], {
-        cwd: path.join(__dirname, '..'),
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
-
-      syncServerProcess.stdout.on('data', (d) => console.log('[SyncServer stdout]', d.toString().trim()));
-      syncServerProcess.stderr.on('data', (d) => console.error('[SyncServer stderr]', d.toString().trim()));
-      syncServerProcess.on('close', (code) => {
-        console.log('[SyncServer] exited with code:', code);
-        syncServerProcess = null;
-      });
+      attemptStartSyncServer();
     });
   } catch (err) {
-    console.error('[SyncServer] failed to start:', err && err.message ? err.message : err);
-    syncServerProcess = null;
+    const errorMsg = err && err.message ? err.message : String(err);
+    console.error('[SyncServer] Exception in startSyncServer:', errorMsg);
+    appendLog('SyncServer', `Exception in startSyncServer: ${errorMsg}`, true);
+    handleSyncServerFailure(`Initialization error: ${errorMsg}`);
   }
 }
 
