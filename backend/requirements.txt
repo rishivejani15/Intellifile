@@ -9,6 +9,7 @@ openpyxl
 python-pptx
 Pillow
 pytesseract
+winocr
 onnxruntime
 optimum
 fastapi

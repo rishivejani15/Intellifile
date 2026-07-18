@@ -2887,7 +2887,7 @@ function registerIpcHandlers() {
   ipcMain.handle('get-document-preview', async (event, filePath) => {
     try {
       const ext = path.extname(filePath).toLowerCase();
-      if (!['.pdf', '.docx', '.xlsx', '.pptx'].includes(ext)) {
+      if (!['.pdf', '.docx', '.xlsx', '.pptx', '.png', '.jpg', '.jpeg'].includes(ext)) {
         return { success: false, error: 'Unsupported document type' };
       }
       if (!fs.existsSync(filePath)) {

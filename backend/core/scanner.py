@@ -9,6 +9,7 @@ SUPPORTED_EXT = (
     ".pptx",
     ".csv",
     ".xlsx", ".xls",
+    ".png", ".jpg", ".jpeg",
 )
 
 # Skip common junk/temporary/system-like files even in user folders
@@ -28,6 +29,14 @@ SKIP_PREFIXES = ("~$", "._")
 
 SKIP_SUFFIXES = ("~",)
 
+def _is_valid_size(filename, size):
+    # Default cap of 50MB
+    if size > 50 * 1024 * 1024:
+        return False
+    # If image, must be 50KB to 15MB
+    if filename.lower().endswith((".png", ".jpg", ".jpeg")):
+        return 50 * 1024 <= size <= 15 * 1024 * 1024
+    return True
 
 def _is_supported_file(filename):
     name = (filename or "").lower()
@@ -204,8 +213,7 @@ def _scan_directory(folder):
                             st = entry.stat()
                             if _has_system_attrs(st):
                                 continue
-                            # Skip files > 50MB
-                            if st.st_size <= 50 * 1024 * 1024:
+                            if _is_valid_size(entry.name, st.st_size):
                                 yield (entry.path, int(st.st_mtime), int(st.st_ctime))
                         except OSError:
                             pass
@@ -242,7 +250,7 @@ def fast_scan_device(max_workers=8, roots=None):
                                 st = entry.stat()
                                 if _has_system_attrs(st):
                                     continue
-                                if st.st_size <= 50 * 1024 * 1024:
+                                if _is_valid_size(entry.name, st.st_size):
                                     yield (entry.path, int(st.st_mtime), int(st.st_ctime))
                             except OSError:
                                 pass
@@ -262,7 +270,7 @@ def fast_scan_device(max_workers=8, roots=None):
                         st = os.stat(root)
                         if _has_system_attrs(st):
                             continue
-                        if st.st_size <= 50 * 1024 * 1024:
+                        if _is_valid_size(root, st.st_size):
                             yield (root, int(st.st_mtime), int(st.st_ctime))
                     except OSError:
                         pass

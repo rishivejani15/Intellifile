@@ -29,14 +29,17 @@ def _extract_one(path, allow_protected=False):
     if reason in _SKIP_REASONS and not allow_protected:
         return (path, None, reason)
 
+    is_image = path.lower().endswith((".png", ".jpg", ".jpeg"))
     chunks = chunk_text(text) if len(text.strip()) >= 50 else []
 
     # Always include filename + path as a searchable chunk so every
     # indexed file can be found by its name even without body text.
-    filename = os.path.basename(path)
-    name_no_ext = os.path.splitext(filename)[0].replace("_", " ").replace("-", " ")
-    meta_chunk = f"{name_no_ext} {filename} {path}"
-    chunks.insert(0, meta_chunk)
+    # For images, skip this if no actual OCR text chunks were generated.
+    if not is_image or chunks:
+        filename = os.path.basename(path)
+        name_no_ext = os.path.splitext(filename)[0].replace("_", " ").replace("-", " ")
+        meta_chunk = f"{name_no_ext} {filename} {path}"
+        chunks.insert(0, meta_chunk)
 
     return (path, chunks, reason)
 
@@ -262,7 +265,18 @@ def index_files_incremental(root_folder=None, progress_cb=None, allow_protected=
           f"= {total_secs:.1f}s total).", flush=True)
     skipped_total = len(skipped)
     if skipped_total:
-        _progress("extract", f"{len(affected_chunk_ids)} chunks ready ({total_secs:.1f}s) — skipped {skipped_total} protected files", pct=100)
+        skip_details = []
+        protected_count = sum(skipped_by_reason.get(k, 0) for k in ("permission_denied", "file_locked", "password_protected", "access_error"))
+        no_text_count = skipped_by_reason.get("no_text_in_image", 0)
+        if protected_count:
+            skip_details.append(f"{protected_count} protected")
+        if no_text_count:
+            skip_details.append(f"{no_text_count} images without text")
+        other_count = skipped_total - protected_count - no_text_count
+        if other_count > 0:
+            skip_details.append(f"{other_count} other")
+        skip_str = "skipped: " + ", ".join(skip_details)
+        _progress("extract", f"{len(affected_chunk_ids)} chunks ready ({total_secs:.1f}s) — {skip_str}", pct=100)    
     else:
         _progress("extract", f"{len(affected_chunk_ids)} chunks ready ({total_secs:.1f}s)", pct=100)
 

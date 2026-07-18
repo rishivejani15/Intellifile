@@ -2,7 +2,7 @@ import os
 import zipfile
 
 
-SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".xlsx", ".pptx"}
+SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".xlsx", ".pptx", ".png", ".jpg", ".jpeg"}
 
 MAX_FILE_BYTES = 100 * 1024 * 1024
 MAX_OFFICE_FILE_BYTES = 25 * 1024 * 1024
@@ -45,7 +45,7 @@ def _validate_file(file_path):
             f"Document is too large to preview safely ({file_size // (1024 * 1024)} MB)"
         )
 
-    if extension != ".pdf":
+    if extension in {".docx", ".xlsx", ".pptx"}:
         _validate_office_archive(file_path)
 
     return extension
@@ -243,6 +243,14 @@ def _preview_pptx(file_path):
             break
     return _finalize(parts, "PowerPoint presentation", truncated)
 
+def _preview_image(file_path):
+    from core.extractor import extract_text
+    text = extract_text(file_path)
+    if text.strip():
+        return _finalize([text], "Image (OCR)")
+    else:
+        return _finalize(["[No text detected in this image]"], "Image")
+
 
 def build_document_preview(file_path):
     extension = _validate_file(file_path)
@@ -253,6 +261,8 @@ def build_document_preview(file_path):
             return _preview_docx(file_path)
         if extension == ".xlsx":
             return _preview_xlsx(file_path)
+        if extension in {".png", ".jpg", ".jpeg"}:
+            return _preview_image(file_path)
         return _preview_pptx(file_path)
     except DocumentPreviewError:
         raise

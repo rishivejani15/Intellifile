@@ -90,11 +90,13 @@ def ingest_single_file(file_path: str, allow_protected: bool = False) -> Dict[st
         )
         file_id = cur.lastrowid
 
+    is_image = filename.lower().endswith((".png", ".jpg", ".jpeg"))
     chunks = chunk_text(text) if text and len(text.strip()) >= 50 else []
 
-    name_no_ext = os.path.splitext(filename)[0].replace("_", " ").replace("-", " ")
-    meta_chunk = f"{name_no_ext} {filename} {abs_path}"
-    chunks.insert(0, meta_chunk)
+    if not is_image or chunks:
+        name_no_ext = os.path.splitext(filename)[0].replace("_", " ").replace("-", " ")
+        meta_chunk = f"{name_no_ext} {filename} {abs_path}"
+        chunks.insert(0, meta_chunk)
 
     new_chunk_ids: List[int] = []
     for idx, chunk in enumerate(chunks):

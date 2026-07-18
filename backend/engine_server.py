@@ -183,7 +183,17 @@ def _background_indexer():
                 
                 detail = f"Indexing complete — {len(affected)} chunks in {total_secs}s"
                 if skipped_total:
-                    detail += f" (skipped {skipped_total} protected files)"
+                    skip_details = []
+                    protected_count = sum(skipped_by_reason.get(k, 0) for k in ("permission_denied", "file_locked", "password_protected", "access_error"))
+                    no_text_count = skipped_by_reason.get("no_text_in_image", 0)
+                    if protected_count:
+                        skip_details.append(f"{protected_count} protected")
+                    if no_text_count:
+                        skip_details.append(f"{no_text_count} images without text")
+                    other_count = skipped_total - protected_count - no_text_count
+                    if other_count > 0:
+                        skip_details.append(f"{other_count} other")
+                    detail += f" (skipped: {', '.join(skip_details)})"
                 emit_progress("done", detail, pct=100)
                 print(json.dumps({
                     "_id": req_id,

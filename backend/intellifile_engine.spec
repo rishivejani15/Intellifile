@@ -23,7 +23,14 @@ a = Analysis(
         'core.chunker',
         'core.db',
         'core.model',
-        'core.faiss_manager'
+        'core.faiss_manager',
+        'winrt',
+        'winrt.windows.media.ocr',
+        'winrt.windows.graphics.imaging',
+        'winrt.windows.storage.streams',
+        'winrt.windows.globalization',
+        'winrt.windows.foundation',
+        'winocr'
     ],
     hookspath=[],
     hooksconfig={},

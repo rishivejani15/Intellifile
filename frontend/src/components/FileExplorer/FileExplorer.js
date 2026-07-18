@@ -39,7 +39,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
   const [showContextMenu, setShowContextMenu] = useState(false);
   const [isEmptySpaceContext, setIsEmptySpaceContext] = useState(false);
   const [contextMenuPos, setContextMenuPos] = useState({ x: 0, y: 0 });
-  
+
   // Search & Indexing State
   const [semanticResults, setSemanticResults] = useState(null);
   const [semanticLoading, setSemanticLoading] = useState(false);
@@ -60,7 +60,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
   // Custom Hooks
   const navigation = useNavigation(ipcRenderer);
   const fileOps = useFileExplorer(ipcRenderer);
-  
+
   // Destructure navigation
   const {
     currentPath, setCurrentPath, breadcrumb,
@@ -379,7 +379,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
         const actualPath = loadedItems && loadedItems.length > 0 ?
           loadedItems[0].path.substring(0, loadedItems[0].path.lastIndexOf('\\')) :
           dirPath;
-        
+
         if (actualPath) {
           const pathChanged = !currentPath || actualPath !== currentPath;
           if (pathChanged) {
@@ -387,12 +387,12 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
             setAddressPath(actualPath);
             updateBreadcrumb(actualPath);
           }
-          
+
           let selected = null;
           if (selectFile) {
             const selectNameLower = selectFile.toLowerCase();
-            const found = loadedItems.find(i => 
-              i.name.toLowerCase() === selectNameLower || 
+            const found = loadedItems.find(i =>
+              i.name.toLowerCase() === selectNameLower ||
               i.path.toLowerCase() === selectNameLower
             );
             if (found) {
@@ -401,7 +401,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
               setSelectedItem(found);
               setLastSelectedIndex(loadedItems.indexOf(found));
               if (onFileSelect) onFileSelect(found);
-              
+
               let attempts = 0;
               const scrollInterval = setInterval(() => {
                 const els = document.querySelectorAll('.file-item.selected');
@@ -474,8 +474,8 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
 
       if (startupPathData && startupPathData.path) {
         console.log('[FileExplorer] Opening startup path:', startupPathData);
-        loadDirectory(startupPathData.path, { 
-          trackHistory: true, 
+        loadDirectory(startupPathData.path, {
+          trackHistory: true,
           selectFile: startupPathData.selectFile,
           fromExplorer: !!startupPathData.fromExplorer
         });
@@ -502,10 +502,10 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
         const event = new CustomEvent('show-toast', { detail: { message: 'Open Path Triggered: ' + data?.selectFile } });
         window.dispatchEvent(event);
       }
-      
+
       if (data && data.path) {
-        loadDirectory(data.path, { 
-          trackHistory: true, 
+        loadDirectory(data.path, {
+          trackHistory: true,
           selectFile: data.selectFile,
           fromExplorer: !!data.fromExplorer
         });
@@ -546,7 +546,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
     const previousWatched = watchedDirectoryRef.current;
 
     if (previousWatched && previousWatched !== normalizedCurrent) {
-      ipcRenderer.invoke('unwatch-directory', previousWatched).catch(() => {});
+      ipcRenderer.invoke('unwatch-directory', previousWatched).catch(() => { });
     }
 
     watchedDirectoryRef.current = normalizedCurrent;
@@ -573,7 +573,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
     return () => {
       ipcRenderer.off('directory-changed', handleDirectoryChanged);
       ipcRenderer.off('version-updated', handleVersionUpdated);
-      ipcRenderer.invoke('unwatch-directory', normalizedCurrent).catch(() => {});
+      ipcRenderer.invoke('unwatch-directory', normalizedCurrent).catch(() => { });
       // Clear any pending toast batch timer on cleanup
       if (watchToastTimerRef.current) {
         clearTimeout(watchToastTimerRef.current);
@@ -581,7 +581,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
         watchToastBatchRef.current = { added: new Set(), modified: new Set(), removed: new Set() };
       }
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentPath]);
 
   // Event Handlers
@@ -695,7 +695,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
         }));
       addItemsToState(itemsToAdd);
     }
-      await fileOps.handlePaste(currentPath, () => {});
+    await fileOps.handlePaste(currentPath, () => { });
   };
 
   const handleRename = async () => {
@@ -710,7 +710,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
       updateItemPathInState(renamingItem.path, newPath, renameValue);
     }
 
-    await fileOps.handleRename(currentPath, () => {});
+    await fileOps.handleRename(currentPath, () => { });
   };
 
   const handleDelete = async () => {
@@ -760,12 +760,12 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
 
   const handleCreateFolder = async () => {
     if (!currentPath) return;
-    
+
     const folderName = 'New Folder';
-    
+
     // Create the folder
-    const created = await fileOps.handleCreateFolder(currentPath, () => {});
-    
+    const created = await fileOps.handleCreateFolder(currentPath, () => { });
+
     if (created) {
       const newPath = created.path || (currentPath + '\\' + folderName);
       const actualName = newPath.split(/[\\/]/).pop() || folderName;
@@ -778,27 +778,27 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
         modified: new Date().toISOString(),
         protected: false
       };
-      
+
       // Immediately enter rename mode
       setRenamingItem(newItem);
       setRenameValue(folderName);
-      
+
       // Focus the input field immediately
       setTimeout(() => {
         inputRef.current?.focus?.();
         inputRef.current?.select?.();
       }, 10);
-      
+
       addItemsToState([newItem]);
     }
   };
 
   const handleCreateFile = async (fileName) => {
     if (!currentPath || !fileName) return;
-    
+
     // Create the file
-    const created = await fileOps.handleCreateFile(currentPath, fileName, () => {});
-    
+    const created = await fileOps.handleCreateFile(currentPath, fileName, () => { });
+
     if (created) {
       const newPath = created.path || (currentPath + '\\' + fileName);
       const actualName = newPath.split(/[\\/]/).pop() || fileName;
@@ -811,27 +811,27 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
         modified: new Date().toISOString(),
         protected: false
       };
-      
+
       // Immediately enter rename mode
       setRenamingItem(newItem);
       setRenameValue(fileName);
-      
+
       // Focus the input field immediately
       setTimeout(() => {
         inputRef.current?.focus?.();
         inputRef.current?.select?.();
       }, 10);
-      
+
       addItemsToState([newItem]);
     }
   };
 
   const handleUndo = async () => {
-    await fileOps.handleUndo(() => {});
+    await fileOps.handleUndo(() => { });
   };
 
   const handleRedo = async () => {
-    await fileOps.handleRedo(() => {});
+    await fileOps.handleRedo(() => { });
   };
 
   const handleCopyPath = async () => {
@@ -930,7 +930,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
       const deleted = Number(result?.deleted_versions || 0);
       const maintenance = Number(result?.maintenance_count || 0);
       const freedMb = Number(result?.freed_mb || 0);
-      
+
       let message = 'Cleanup complete: ';
       if (deleted > 0) {
         message += `removed ${deleted} version(s), `;
@@ -939,11 +939,11 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
         message += `cleaned ${maintenance} cache files, `;
       }
       message += `freed ${freedMb.toFixed(2)} MB.`;
-      
+
       if (deleted === 0 && maintenance === 0) {
         message = 'Cleanup complete: No cleanup needed. Recent versions may be retained by policy.';
       }
-      
+
       showToast('Cleanup complete.', {
         type: 'success',
         message,
@@ -988,7 +988,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
       } catch (err) {
       }
     }
-    await fileOps.handleDropOnItem(e, targetItem, currentPath, () => {});
+    await fileOps.handleDropOnItem(e, targetItem, currentPath, () => { });
   };
 
   const handleContextMenu = (e, item) => {
@@ -1043,7 +1043,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
             setIndexDetail(status.lastIndexStatus.detail || '');
             setIndexPct(typeof status.lastIndexStatus.pct === 'number' ? status.lastIndexStatus.pct : null);
           }
-          
+
           if (!status.ready) {
             setTimeout(checkEngine, 2000);
           }
@@ -1213,9 +1213,22 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
   };
 
   const handleSearchResultClick = (filePath) => {
-    if (window.electron?.ipcRenderer) {
-      window.electron.ipcRenderer.invoke('open-file', filePath);
-    }
+    if (!filePath) return;
+    const fileName = filePath.split('\\').pop() || filePath.split('/').pop() || filePath;
+    const extIdx = fileName.lastIndexOf('.');
+    const searchItem = {
+      path: filePath,
+      name: fileName,
+      type: 'file',
+      ext: extIdx > 0 ? fileName.slice(extIdx).toLowerCase() : '',
+      size: 0,
+      modified: null,
+      protected: false,
+    };
+
+    setSelectedItem(searchItem);
+    setSelectedItems([searchItem]);
+    setShowPreview(true);
   };
 
   const handleSearchResultDoubleClick = (filePath) => {
@@ -1364,32 +1377,32 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
                   </div>
                 )}
                 <FileList
-                items={displayItems}
-                viewMode={viewMode}
-                groupBy={groupBy}
-                loading={loading}
-                renamingItem={renamingItem}
-                renameValue={renameValue}
-                selectedItems={selectedItems}
-                selectedFiles={selectedFiles}
-                clipboard={clipboard}
-                isCutItem={isCutItem}
-                inputRef={inputRef}
-                onItemClick={handleItemClick}
-                onItemDoubleClick={handleFolderClick}
-                onContextMenu={handleContextMenu}
-                onEmptySpaceContextMenu={handleEmptySpaceContextMenu}
-                onDragStart={handleDragStart}
-                onDragOver={handleDragOver}
-                onDropOnItem={handleDropOnItem}
-                onRenameValueChange={setRenameValue}
-                onRenameBlur={handleRename}
-                onRenameKeyDown={(e) => {
-                  if (e.key === 'Enter') handleRename();
-                  if (e.key === 'Escape') setRenamingItem(null);
-                }}
-              />
-                </>
+                  items={displayItems}
+                  viewMode={viewMode}
+                  groupBy={groupBy}
+                  loading={loading}
+                  renamingItem={renamingItem}
+                  renameValue={renameValue}
+                  selectedItems={selectedItems}
+                  selectedFiles={selectedFiles}
+                  clipboard={clipboard}
+                  isCutItem={isCutItem}
+                  inputRef={inputRef}
+                  onItemClick={handleItemClick}
+                  onItemDoubleClick={handleFolderClick}
+                  onContextMenu={handleContextMenu}
+                  onEmptySpaceContextMenu={handleEmptySpaceContextMenu}
+                  onDragStart={handleDragStart}
+                  onDragOver={handleDragOver}
+                  onDropOnItem={handleDropOnItem}
+                  onRenameValueChange={setRenameValue}
+                  onRenameBlur={handleRename}
+                  onRenameKeyDown={(e) => {
+                    if (e.key === 'Enter') handleRename();
+                    if (e.key === 'Escape') setRenamingItem(null);
+                  }}
+                />
+              </>
             )}
 
           </div>
@@ -1462,6 +1475,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
           selectedItem={selectedItem}
           visible={showPreview}
           onClose={() => setShowPreview(false)}
+          searchQuery={searchQuery}
         />
       )}
 

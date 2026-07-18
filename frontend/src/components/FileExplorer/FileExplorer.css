@@ -3117,3 +3117,17 @@
 }
 
 /* Explorer content is intentionally isolated as the only vertical scroll area. */
+mark.preview-highlight {
+  background-color: #ffe082; /* Warm amber/yellow background */
+  color: #263238; /* Dark text for readability */
+  border-radius: 2px;
+  padding: 0 2px;
+  font-weight: 600;
+}
+
+@media (prefers-color-scheme: dark) {
+  mark.preview-highlight {
+    background-color: #ffd54f; /* Vibrant yellow for dark mode */
+    color: #000000;
+  }
+}

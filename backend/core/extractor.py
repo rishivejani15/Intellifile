@@ -36,6 +36,35 @@ def _extract_pptx(path):
                         parts.append(" ".join(cells))
     return "\n".join(parts)
 
+def _extract_image(path):
+    try:
+        from PIL import Image
+        # Disable DecompressionBombWarning for large screenshots/scans
+        Image.MAX_IMAGE_PIXELS = None
+        
+        from PIL.ExifTags import TAGS
+        import winocr
+        with Image.open(path) as img:
+            # Check EXIF metadata for camera signatures
+            try:
+                exif_data = img._getexif()
+                if exif_data:
+                    for tag_id, value in exif_data.items():
+                        tag = TAGS.get(tag_id, tag_id)
+                        if tag in ('Make', 'Model', 'LensModel', 'Software'):
+                            # Likely a camera photo or photo edited in Lightroom/Photoshop
+                            # Skip OCR extraction
+                            return ""
+            except Exception:
+                pass
+            result = winocr.recognize_pil_sync(img)
+            return result.get("text", "")
+    except Exception as exc:
+        import sys
+        sys.stderr.write(f"[extractor] OCR failed for {path}: {exc}\n")
+        sys.stderr.flush()
+        return ""
+
 
 def extract_text(path):
     try:
@@ -59,6 +88,8 @@ def extract_text(path):
                 return f.read(_MAX_TEXT_CHARS)
         elif lower_path.endswith(".pptx"):
             return _extract_pptx(path)[:_MAX_TEXT_CHARS]
+        elif lower_path.endswith((".png", ".jpg", ".jpeg")):
+            return _extract_image(path)[:_MAX_TEXT_CHARS]        
         else:
             # Fallback for .txt, .md, .rtf, etc.
             with open(path, "r", encoding="utf-8", errors="ignore") as f:
@@ -101,6 +132,8 @@ def extract_text_with_status(path, allow_protected=False):
                 return f.read(_MAX_TEXT_CHARS), None
         elif lower_path.endswith(".pptx"):
             return _extract_pptx(path)[:_MAX_TEXT_CHARS], None
+        elif lower_path.endswith((".png", ".jpg", ".jpeg")):
+            return _extract_image(path)[:_MAX_TEXT_CHARS], None
         else:
             with open(path, "r", encoding="utf-8", errors="ignore") as f:
                 return f.read(_MAX_TEXT_CHARS), None
