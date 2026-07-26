@@ -1,0 +1,168 @@
+/* =====================================================
+   IntelliFile ToastHost v3.0 - Futuristic Design
+   ===================================================== */
+
+/* ───────────────────────────────────────────────────────
+   Toast Container
+   ─────────────────────────────────────────────────────── */
+.toast-host {
+  position: fixed;
+  top: var(--sp-4);
+  right: var(--sp-4);
+  z-index: var(--z-toast);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  pointer-events: none;
+  max-width: 420px;
+}
+
+/* ───────────────────────────────────────────────────────
+   Toast Item
+   ─────────────────────────────────────────────────────── */
+.toast-item {
+  width: 100%;
+  pointer-events: auto;
+  background: var(--s-elev-2);
+  backdrop-filter: blur(20px) saturate(1.2);
+  -webkit-backdrop-filter: blur(20px) saturate(1.2);
+  border-radius: var(--rd-lg);
+  padding: var(--sp-3) var(--sp-4);
+  box-shadow: var(--sh-xl);
+  border-left: 4px solid var(--c-error);
+  animation: slideInRight var(--dur-300) var(--ease-spring-sm),
+             fadeOut var(--dur-300) var(--ease-default) var(--dur-4700) forwards;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  transition: transform var(--dur-200) var(--ease-default),
+              opacity var(--dur-200) var(--ease-default);
+}
+
+.toast-item:hover {
+  transform: translateX(-4px);
+}
+
+.toast-item.success { border-left-color: var(--c-success); }
+.toast-item.warning { border-left-color: var(--c-warning); }
+.toast-item.error { border-left-color: var(--c-error); }
+.toast-item.info { border-left-color: var(--c-info); }
+
+@keyframes fadeOut {
+  to { opacity: 0; transform: translateX(100%); }
+}
+
+/* ───────────────────────────────────────────────────────
+   Toast Head
+   ─────────────────────────────────────────────────────── */
+.toast-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--sp-3);
+}
+
+.toast-title {
+  font-size: var(--text-sm);
+  font-weight: 700;
+  color: var(--t-primary);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.toast-title::before {
+  content: '●';
+  font-size: 8px;
+}
+
+.toast-item.success .toast-title::before { color: var(--c-success); }
+.toast-item.warning .toast-title::before { color: var(--c-warning); }
+.toast-item.error .toast-title::before { color: var(--c-error); }
+.toast-item.info .toast-title::before { color: var(--c-info); }
+
+.toast-close {
+  border: 0;
+  background: transparent;
+  color: var(--t-muted);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--rd-sm);
+  transition: all var(--dur-150) var(--ease-default);
+  flex-shrink: 0;
+}
+
+.toast-close:hover {
+  background: var(--s-hover);
+  color: var(--t-primary);
+}
+
+/* ───────────────────────────────────────────────────────
+   Toast Message & Meta
+   ─────────────────────────────────────────────────────── */
+.toast-message,
+.toast-meta {
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  color: var(--t-secondary);
+}
+
+.toast-meta {
+  margin-top: var(--sp-1);
+  color: var(--t-muted);
+  font-style: italic;
+}
+
+/* ───────────────────────────────────────────────────────
+   Toast Progress Bar (for auto-dismiss)
+   ─────────────────────────────────────────────────────── */
+.toast-progress {
+  height: 3px;
+  background: var(--s-hover);
+  border-radius: var(--rd-full);
+  overflow: hidden;
+  margin-top: var(--sp-2);
+}
+
+.toast-progress-fill {
+  height: 100%;
+  background: var(--c-brand-gradient);
+  border-radius: inherit;
+  animation: progress var(--dur-5000) linear forwards;
+}
+
+@keyframes progress {
+  from { width: 100%; }
+  to { width: 0%; }
+}
+
+/* ───────────────────────────────────────────────────────
+   Toast Variants with Icons
+   ─────────────────────────────────────────────────────── */
+.toast-item.success .toast-title::after {
+  content: '✓';
+  color: var(--c-success);
+  font-weight: 700;
+}
+
+.toast-item.warning .toast-title::after {
+  content: '⚠';
+  color: var(--c-warning);
+}
+
+.toast-item.error .toast-title::after {
+  content: '✕';
+  color: var(--c-error);
+}
+
+.toast-item.info .toast-title::after {
+  content: 'ℹ';
+  color: var(--c-info);
+}

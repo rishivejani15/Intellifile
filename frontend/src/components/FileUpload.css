@@ -1,22 +1,322 @@
+/* =====================================================
+   IntelliFile FileUpload v3.0 - Futuristic Design
+   ===================================================== */
+
+/* ───────────────────────────────────────────────────────
+   File Upload Container
+   ─────────────────────────────────────────────────────── */
 .file-upload {
   display: flex;
   flex-direction: column;
+  gap: var(--sp-2);
 }
 
 .file-upload label {
-  font-weight: bold;
-  margin-bottom: 8px;
-  color: #333;
+  font-weight: 700;
+  color: var(--t-primary);
+  font-size: var(--text-sm);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
 }
 
-.file-upload input[type="file"] {
-  padding: 10px;
-  border: 2px dashed #667eea;
-  border-radius: 5px;
+.file-upload label::before {
+  content: '📤';
+  font-size: 16px;
+}
+
+/* ───────────────────────────────────────────────────────
+   Upload Zone
+   ─────────────────────────────────────────────────────── */
+.upload-zone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: var(--sp-10);
+  border: 2px dashed var(--bo);
+  border-radius: var(--rd-xl);
+  background: var(--s-elev);
   cursor: pointer;
-  background: #f9f9f9;
+  transition: all var(--dur-200) var(--ease-default);
+  text-align: center;
+  gap: var(--sp-3);
+  position: relative;
+  overflow: hidden;
 }
 
-.file-upload input[type="file"]:hover {
-  background: #f0f0f0;
+.upload-zone::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: var(--c-brand-soft);
+  opacity: 0;
+  transition: opacity var(--dur-200) var(--ease-default);
+  pointer-events: none;
+}
+
+.upload-zone:hover {
+  border-color: var(--c-brand);
+  background: var(--s-hover);
+}
+
+.upload-zone.drag-over {
+  border-color: var(--c-brand);
+  background: var(--c-brand-soft);
+  transform: scale(1.02);
+  box-shadow: 0 0 0 3px var(--c-brand-soft);
+}
+
+.upload-zone.drag-over::before {
+  opacity: 1;
+}
+
+/* ───────────────────────────────────────────────────────
+   Upload Icon Area
+   ─────────────────────────────────────────────────────── */
+.upload-icon-area {
+  position: relative;
+  z-index: 1;
+}
+
+.upload-icon {
+  font-size: 48px;
+  color: var(--c-brand);
+  transition: all var(--dur-300) var(--ease-spring-sm);
+}
+
+.upload-zone:hover .upload-icon {
+  transform: scale(1.1) rotate(-5deg);
+}
+
+.upload-zone.drag-over .upload-icon {
+  animation: uploadBounce 0.6s var(--ease-in-out) infinite;
+}
+
+@keyframes uploadBounce {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-8px); }
+}
+
+/* ───────────────────────────────────────────────────────
+   Upload Text
+   ─────────────────────────────────────────────────────── */
+.upload-text {
+  position: relative;
+  z-index: 1;
+}
+
+.upload-text-title {
+  font-size: var(--text-base);
+  font-weight: 700;
+  color: var(--t-primary);
+  margin-bottom: var(--sp-1);
+}
+
+.upload-text-subtitle {
+  font-size: var(--text-xs);
+  color: var(--t-muted);
+}
+
+.upload-text-subtitle strong {
+  color: var(--c-brand);
+  text-decoration: underline;
+}
+
+/* ───────────────────────────────────────────────────────
+   Hidden Input
+   ─────────────────────────────────────────────────────── */
+.file-upload input[type="file"] {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+
+/* ───────────────────────────────────────────────────────
+   Upload Button Alternative
+   ─────────────────────────────────────────────────────── */
+.upload-button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-3) var(--sp-5);
+  background: var(--c-brand);
+  color: var(--t-inverse);
+  border: none;
+  border-radius: var(--rd-lg);
+  font-weight: 700;
+  font-size: var(--text-sm);
+  cursor: pointer;
+  transition: all var(--dur-200) var(--ease-spring-sm);
+  box-shadow: 0 4px 14px rgba(99, 102, 241, 0.3);
+}
+
+.upload-button:hover {
+  background: var(--c-brand-hover);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(99, 102, 241, 0.4);
+}
+
+.upload-button::before {
+  content: '⬆';
+  font-size: 16px;
+}
+
+/* ───────────────────────────────────────────────────────
+   File List
+   ─────────────────────────────────────────────────────── */
+.uploaded-file-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  margin-top: var(--sp-3);
+}
+
+.uploaded-file-item {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-3);
+  background: var(--s-elev);
+  border: 1px solid var(--bo-light);
+  border-radius: var(--rd-lg);
+  animation: fadeInUp var(--dur-300) var(--ease-spring-sm);
+}
+
+.uploaded-file-item .file-icon {
+  font-size: 24px;
+  flex-shrink: 0;
+}
+
+.uploaded-file-item .file-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.uploaded-file-item .file-name {
+  font-weight: 600;
+  color: var(--t-primary);
+  font-size: var(--text-sm);
+  /* CRITICAL: Text overflow fix */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.uploaded-file-item .file-size {
+  font-size: var(--text-xs);
+  color: var(--t-muted);
+}
+
+.uploaded-file-item .file-progress {
+  height: 4px;
+  background: var(--s-hover);
+  border-radius: var(--rd-full);
+  overflow: hidden;
+  margin-top: var(--sp-2);
+}
+
+.uploaded-file-item .file-progress-fill {
+  height: 100%;
+  background: var(--c-brand-gradient);
+  border-radius: inherit;
+  transition: width var(--dur-300) var(--ease-spring-sm);
+}
+
+.uploaded-file-item .file-actions {
+  display: flex;
+  gap: var(--sp-1);
+  flex-shrink: 0;
+}
+
+.file-action-btn {
+  background: transparent;
+  border: none;
+  color: var(--t-muted);
+  cursor: pointer;
+  padding: var(--sp-1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--rd-sm);
+  transition: all var(--dur-150) var(--ease-default);
+}
+
+.file-action-btn:hover {
+  background: var(--s-hover);
+  color: var(--t-primary);
+}
+
+.file-action-btn.remove:hover {
+  background: var(--c-error-soft);
+  color: var(--c-error);
+}
+
+/* ───────────────────────────────────────────────────────
+   Loading State
+   ─────────────────────────────────────────────────────── */
+.upload-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--sp-6);
+  color: var(--t-muted);
+  gap: var(--sp-3);
+}
+
+.upload-loading::before {
+  content: '';
+  width: 20px;
+  height: 20px;
+  border: 3px solid var(--bo);
+  border-top-color: var(--c-brand);
+  border-radius: 50%;
+  animation: spin var(--dur-700) linear infinite;
+}
+
+/* ───────────────────────────────────────────────────────
+   Error State
+   ─────────────────────────────────────────────────────── */
+.upload-error {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-3);
+  background: var(--c-error-soft);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-radius: var(--rd-md);
+  color: var(--c-error);
+  font-size: var(--text-sm);
+  animation: shake var(--dur-400) var(--ease-in-out);
+}
+
+.upload-error::before {
+  content: '⚠️';
+  font-size: 16px;
+}
+
+/* ───────────────────────────────────────────────────────
+   Success State
+   ─────────────────────────────────────────────────────── */
+.upload-success {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-3);
+  background: var(--c-success-soft);
+  border: 1px solid rgba(34, 197, 94, 0.3);
+  border-radius: var(--rd-md);
+  color: var(--c-success);
+  font-size: var(--text-sm);
+}
+
+.upload-success::before {
+  content: '✓';
+  font-weight: 700;
+  font-size: 16px;
 }
