@@ -1,0 +1,4 @@
+# GPU acceleration (requires NVIDIA GPU + CUDA drivers)
+# Install AFTER requirements.txt — replaces CPU onnxruntime with GPU version
+onnxruntime-gpu
+optimum[onnxruntime-gpu]

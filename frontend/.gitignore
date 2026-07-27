@@ -1,0 +1,17 @@
+# Node
+node_modules/
+build/
+dist/
+coverage/
+*.log
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+release/
+
+python/
+frontend/python-standalone.tar.gz

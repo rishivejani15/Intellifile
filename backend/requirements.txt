@@ -1,2 +1,22 @@
-flask==2.3.0
-flask-cors==4.0.0
+--extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu
+faiss-cpu 
+sentence-transformers 
+pypdf 
+python-docx 
+tqdm
+numpy
+openpyxl
+python-pptx
+Pillow
+pytesseract
+onnxruntime
+optimum
+fastapi
+python-multipart
+requests
+uvicorn
+pydantic-settings
+pydantic
+sentence-transformers[onnx] 
+llama-cpp-python==0.3.26
+huggingface_hub

@@ -1,0 +1,299 @@
+/* =====================================================
+   IntelliFile DiffViewer v3.0 - Futuristic Design
+   ===================================================== */
+
+/* ───────────────────────────────────────────────────────
+   Diff Viewer Container
+   ─────────────────────────────────────────────────────── */
+.diff-viewer-container {
+  border: 1px solid var(--bo);
+  border-radius: var(--rd-xl);
+  overflow: hidden;
+  background: var(--s-elev);
+  font-family: var(--font-mono);
+  box-shadow: var(--sh-lg);
+}
+
+/* ───────────────────────────────────────────────────────
+   Diff Header
+   ─────────────────────────────────────────────────────── */
+.diff-header {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  background: var(--s-hover);
+  border-bottom: 2px solid var(--bo);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.diff-column-header {
+  padding: var(--sp-3) var(--sp-4);
+  font-weight: 700;
+  color: var(--t-primary);
+  text-align: center;
+  border-right: 1px solid var(--bo-light);
+  font-size: var(--text-sm);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.diff-column-header:last-child {
+  border-right: none;
+}
+
+/* ───────────────────────────────────────────────────────
+   Diff Content
+   ─────────────────────────────────────────────────────── */
+.diff-content {
+  max-height: 700px;
+  overflow-y: auto;
+  background: var(--s-bg);
+}
+
+.diff-content::-webkit-scrollbar {
+  width: 8px;
+}
+
+.diff-content::-webkit-scrollbar-track {
+  background: var(--s-hover);
+}
+
+.diff-content::-webkit-scrollbar-thumb {
+  background: var(--bo);
+  border-radius: var(--rd-full);
+}
+
+.diff-content::-webkit-scrollbar-thumb:hover {
+  background: var(--c-brand);
+}
+
+/* ───────────────────────────────────────────────────────
+   Diff Line
+   ─────────────────────────────────────────────────────── */
+.diff-line {
+  display: grid;
+  grid-template-columns: 50px 1fr 50px 1fr;
+  border-bottom: 1px solid var(--bo-light);
+  font-size: var(--text-xs);
+  line-height: 1.6;
+  transition: background var(--dur-150) var(--ease-default);
+}
+
+.diff-line:hover {
+  background: var(--s-hover);
+}
+
+.diff-line.added {
+  background-color: var(--c-success-soft);
+}
+
+.diff-line.deleted {
+  background-color: var(--c-error-soft);
+}
+
+.diff-line.modified {
+  background-color: var(--c-warning-soft);
+}
+
+/* ───────────────────────────────────────────────────────
+   Line Numbers
+   ─────────────────────────────────────────────────────── */
+.line-num {
+  background: var(--s-hover);
+  padding: var(--sp-1) var(--sp-2);
+  text-align: center;
+  color: var(--t-muted);
+  font-size: var(--text-xs);
+  border-right: 1px solid var(--bo-light);
+  font-weight: 600;
+  font-family: var(--font-mono);
+  min-width: 40px;
+}
+
+.old-line-num {
+  border-right: 2px solid var(--bo);
+}
+
+/* ───────────────────────────────────────────────────────
+   Line Content
+   ─────────────────────────────────────────────────────── */
+.line-content {
+  padding: var(--sp-1) var(--sp-3);
+  overflow-x: auto;
+  background: transparent;
+}
+
+.line-content code {
+  color: var(--t-primary);
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+.old-line {
+  border-right: 2px solid var(--bo-light);
+}
+
+/* ───────────────────────────────────────────────────────
+   Diff Legend
+   ─────────────────────────────────────────────────────── */
+.diff-legend {
+  display: flex;
+  gap: var(--sp-4);
+  padding: var(--sp-3) var(--sp-4);
+  background: var(--s-hover);
+  border-top: 1px solid var(--bo);
+  font-size: var(--text-xs);
+  flex-wrap: wrap;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.legend-color {
+  display: inline-block;
+  width: 18px;
+  height: 18px;
+  border-radius: var(--rd-sm);
+}
+
+.legend-color.added {
+  background: var(--c-success);
+}
+
+.legend-color.deleted {
+  background: var(--c-error);
+}
+
+.legend-color.modified {
+  background: var(--c-warning);
+}
+
+.legend-label {
+  font-weight: 600;
+  color: var(--t-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* ───────────────────────────────────────────────────────
+   Inline Diff View
+   ─────────────────────────────────────────────────────── */
+.inline-diff {
+  display: flex;
+  flex-direction: column;
+}
+
+.inline-diff-line {
+  display: flex;
+  padding: var(--sp-1) var(--sp-3);
+  border-bottom: 1px solid var(--bo-light);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+.inline-diff-line.added {
+  background: var(--c-success-soft);
+  border-left: 3px solid var(--c-success);
+}
+
+.inline-diff-line.deleted {
+  background: var(--c-error-soft);
+  border-left: 3px solid var(--c-error);
+  text-decoration: line-through;
+  opacity: 0.8;
+}
+
+.inline-diff-line.modified {
+  background: var(--c-warning-soft);
+  border-left: 3px solid var(--c-warning);
+}
+
+.inline-diff-line .line-prefix {
+  width: 30px;
+  flex-shrink: 0;
+  font-weight: 700;
+  color: var(--t-muted);
+  text-align: center;
+}
+
+.inline-diff-line.added .line-prefix {
+  color: var(--c-success);
+}
+
+.inline-diff-line.deleted .line-prefix {
+  color: var(--c-error);
+}
+
+.inline-diff-line.modified .line-prefix {
+  color: var(--c-warning);
+}
+
+/* ───────────────────────────────────────────────────────
+   Diff Stats
+   ─────────────────────────────────────────────────────── */
+.diff-stats {
+  display: flex;
+  gap: var(--sp-4);
+  padding: var(--sp-3) var(--sp-4);
+  background: var(--s-hover);
+  border-bottom: 1px solid var(--bo-light);
+  font-size: var(--text-sm);
+}
+
+.diff-stat {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-weight: 600;
+}
+
+.diff-stat-icon {
+  font-size: 14px;
+}
+
+.diff-stat.added {
+  color: var(--c-success);
+}
+
+.diff-stat.deleted {
+  color: var(--c-error);
+}
+
+.diff-stat.modified {
+  color: var(--c-warning);
+}
+
+.diff-stat-divider {
+  width: 1px;
+  background: var(--bo);
+  height: 16px;
+}
+
+/* ───────────────────────────────────────────────────────
+   Responsive
+   ─────────────────────────────────────────────────────── */
+@media (max-width: 768px) {
+  .diff-line {
+    grid-template-columns: 1fr;
+  }
+
+  .old-line-num,
+  .old-line {
+    border: none;
+    border-bottom: 1px solid var(--bo-light);
+  }
+
+  .diff-header {
+    grid-template-columns: 1fr;
+  }
+
+  .diff-column-header {
+    border-right: none;
+    border-bottom: 1px solid var(--bo-light);
+  }
+}

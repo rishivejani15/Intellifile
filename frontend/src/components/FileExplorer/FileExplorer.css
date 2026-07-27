@@ -1474,6 +1474,128 @@
   margin: var(--sp-1) var(--sp-1);
 }
 
+/* Context Menu */
+
+/* Submenu support */
+.context-menu-item.has-submenu-new {
+  overflow: visible !important;
+  position: relative;
+  padding-right: 32px;
+}
+
+.context-submenu-new {
+  position: fixed;
+  left: calc(100% + 8px);
+  top: 0;
+  background: #ffffff;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  z-index: 1001;
+  min-width: 200px; /* match parent menu width */
+  max-height: calc(100vh - 16px) !important;
+  overflow-y: auto !important;
+  padding: 8px;
+  display: none;
+}
+
+.context-submenu-new.visible {
+  display: block;
+}
+
+@media (prefers-color-scheme: dark) {
+  .context-submenu-new {
+    background: #2a2a2a;
+    border-color: #444;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+  }
+}
+
+.context-menu {
+  position: fixed;
+  background: #ffffff;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  z-index: 1000;
+  min-width: 200px;
+  max-height: calc(100vh - 16px) !important;
+  overflow-y: auto !important;
+}
+
+@media (prefers-color-scheme: dark) {
+  .context-menu {
+    background: #2a2a2a;
+    border-color: #444;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+  }
+}
+
+.context-menu-item {
+  padding: 10px 16px;
+  cursor: pointer;
+  font-size: 13px;
+  color: #333;
+  transition: all 0.15s;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+@media (prefers-color-scheme: dark) {
+  .context-menu-item {
+    color: #ddd;
+  }
+}
+
+.context-menu-item:hover:not(.disabled) {
+  background: #f5f5f5;
+}
+
+@media (prefers-color-scheme: dark) {
+  .context-menu-item:hover:not(.disabled) {
+    background: #3a3a3a;
+  }
+}
+
+.context-menu-item.delete {
+  color: #d32f2f;
+}
+
+@media (prefers-color-scheme: dark) {
+  .context-menu-item.delete {
+    color: #ff6b6b;
+  }
+}
+
+.context-menu-item.delete:hover {
+  background: #ffebee;
+}
+
+@media (prefers-color-scheme: dark) {
+  .context-menu-item.delete:hover {
+    background: #3a1a1a;
+  }
+}
+
+.context-menu-item.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.context-menu-divider {
+  height: 1px;
+  background: #e0e0e0;
+  margin: 4px 0;
+}
+
+@media (prefers-color-scheme: dark) {
+  .context-menu-divider {
+    background: #444;
+  }
+}
+
+
 /* ───────────────────────────────────────────────────────
    Properties Modal - Enhanced Dialog
    ─────────────────────────────────────────────────────── */

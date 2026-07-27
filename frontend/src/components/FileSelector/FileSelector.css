@@ -1,0 +1,221 @@
+/* =====================================================
+   IntelliFile FileSelector v3.0 - Futuristic Design
+   ===================================================== */
+
+/* ───────────────────────────────────────────────────────
+   File Selector Container
+   ─────────────────────────────────────────────────────── */
+.file-selector {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.file-selector label {
+  font-weight: 700;
+  color: var(--t-primary);
+  font-size: var(--text-sm);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.file-selector label::before {
+  content: '📁';
+  font-size: 16px;
+}
+
+/* ───────────────────────────────────────────────────────
+   Selector Box
+   ─────────────────────────────────────────────────────── */
+.selector-box {
+  position: relative;
+  background: var(--s-elev);
+  border: 2px solid var(--bo);
+  border-radius: var(--rd-lg);
+  overflow: hidden;
+  transition: all var(--dur-200) var(--ease-default);
+}
+
+.selector-box:focus-within {
+  border-color: var(--c-brand);
+  box-shadow: 0 0 0 3px var(--c-brand-soft);
+}
+
+/* ───────────────────────────────────────────────────────
+   Selected File Display
+   ─────────────────────────────────────────────────────── */
+.selected-file {
+  padding: var(--sp-3) var(--sp-4);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--s-hover);
+  cursor: pointer;
+  min-height: 44px;
+  transition: all var(--dur-150) var(--ease-default);
+}
+
+.selected-file:hover {
+  background: var(--s-active);
+}
+
+.selected-file .file-name {
+  color: var(--t-primary);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+  font-size: var(--text-sm);
+}
+
+.selected-file .placeholder {
+  color: var(--t-muted);
+  font-style: italic;
+  font-size: var(--text-sm);
+}
+
+.selected-file .file-ext {
+  color: var(--c-brand);
+  font-size: var(--text-xs);
+  margin-left: var(--sp-2);
+  font-weight: 700;
+  background: var(--c-brand-soft);
+  padding: var(--sp-1) var(--sp-2);
+  border-radius: var(--rd-md);
+}
+
+/* ───────────────────────────────────────────────────────
+   Toggle Button
+   ─────────────────────────────────────────────────────── */
+.toggle-btn {
+  width: 100%;
+  padding: var(--sp-2) var(--sp-4);
+  background: var(--c-brand);
+  color: var(--t-inverse);
+  border: none;
+  cursor: pointer;
+  font-weight: 700;
+  font-size: var(--text-sm);
+  transition: all var(--dur-200) var(--ease-spring-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+}
+
+.toggle-btn:hover {
+  background: var(--c-brand-hover);
+  transform: translateY(-1px);
+}
+
+.toggle-btn:active {
+  transform: translateY(0);
+}
+
+.toggle-btn::after {
+  content: '▼';
+  font-size: 10px;
+  transition: transform var(--dur-200) var(--ease-default);
+}
+
+.toggle-btn[aria-expanded="true"]::after {
+  transform: rotate(180deg);
+}
+
+/* ───────────────────────────────────────────────────────
+   File Dropdown
+   ─────────────────────────────────────────────────────── */
+.file-dropdown {
+  max-height: 280px;
+  overflow-y: auto;
+  border-top: 1px solid var(--bo-light);
+  background: var(--s-elev);
+  animation: slideDown var(--dur-200) var(--ease-spring-sm);
+}
+
+.file-dropdown::-webkit-scrollbar {
+  width: 6px;
+}
+
+.file-dropdown::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.file-dropdown::-webkit-scrollbar-thumb {
+  background: var(--bo);
+  border-radius: var(--rd-full);
+}
+
+/* ───────────────────────────────────────────────────────
+   File Item
+   ─────────────────────────────────────────────────────── */
+.file-item {
+  padding: var(--sp-3) var(--sp-4);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  cursor: pointer;
+  transition: all var(--dur-150) var(--ease-default);
+  border-bottom: 1px solid var(--bo-light);
+}
+
+.file-item:hover {
+  background: var(--s-hover);
+}
+
+.file-item.active {
+  background: var(--c-brand-soft);
+  border-left: 3px solid var(--c-brand);
+}
+
+.file-item:last-child {
+  border-bottom: none;
+}
+
+.file-item .file-icon {
+  font-size: 18px;
+  flex-shrink: 0;
+}
+
+.file-item .file-name {
+  flex: 1;
+  color: var(--t-primary);
+  font-size: var(--text-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.file-item .file-ext {
+  color: var(--c-brand);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  padding: var(--sp-1) var(--sp-2);
+  background: var(--c-brand-soft);
+  border-radius: var(--rd-md);
+  white-space: nowrap;
+}
+
+/* ───────────────────────────────────────────────────────
+   Empty State
+   ─────────────────────────────────────────────────────── */
+.no-files {
+  padding: var(--sp-6);
+  text-align: center;
+  color: var(--t-muted);
+  font-size: var(--text-sm);
+}
+
+.no-files::before {
+  content: '📭';
+  display: block;
+  font-size: 32px;
+  margin-bottom: var(--sp-2);
+  opacity: 0.5;
+}

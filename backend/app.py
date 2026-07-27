@@ -1,79 +1,109 @@
-"""
-Flask API for semantic merge assistant backend.
-"""
-
-from flask import Flask, request, jsonify
-from flask_cors import CORS
-import os
+import tkinter as tk
+from tkinter import filedialog, messagebox, scrolledtext
+import subprocess
 import sys
+import os
+import threading
+import time
 
-sys.path.insert(0, os.path.dirname(__file__))
+from chat.backend.llm import ingest_file, chat
 
-from merge_assistant import MergeAssistant
+class IntelliFileApp:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("IntelliFile")
+        self.root.geometry("800x600")
 
-app = Flask(__name__)
-CORS(app)
+        # Start backend in background
+        self.backend_process = None
+        self.start_backend()
 
-assistant = MergeAssistant(config_dir=os.path.join(os.path.dirname(__file__), '..', 'data'))
+        # GUI Elements
+        self.create_widgets()
 
-@app.route('/api/health', methods=['GET'])
-def health():
-    return jsonify({'status': 'ok'})
+    def start_backend(self):
+        backend_path = os.path.join(os.getcwd(), "backend")
+        python_exe = sys.executable
+        if not os.path.isdir(backend_path):
+            print(f"[ERROR] Backend path does not exist: {backend_path}")
+            return
+        self.backend_process = subprocess.Popen(
+            [
+                python_exe,
+                "-m",
+                "uvicorn",
+                "chat.backend.main:app",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                "8001",
+            ],
+            cwd=backend_path,
+        )
 
-@app.route('/api/diff', methods=['POST'])
-def get_diff():
-    """Get diff between two versions"""
-    data = request.json
-    base = data.get('base', '')
-    modified = data.get('modified', '')
-    
-    try:
-        diff = assistant.get_diff(base, modified)
-        return jsonify(diff)
-    except Exception as e:
-        return jsonify({'error': str(e)}), 400
+    def create_widgets(self):
+        # Menu
+        menubar = tk.Menu(self.root)
+        self.root.config(menu=menubar)
 
-@app.route('/api/merge-suggestions', methods=['POST'])
-def merge_suggestions():
-    """Get merge suggestions for three versions"""
-    data = request.json
-    base = data.get('base', '')
-    ours = data.get('ours', '')
-    theirs = data.get('theirs', '')
-    use_lora = data.get('use_lora', True)
-    
-    try:
-        suggestions = assistant.get_merge_suggestions(base, ours, theirs, use_lora)
-        return jsonify({'suggestions': suggestions})
-    except Exception as e:
-        return jsonify({'error': str(e)}), 400
+        file_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="File", menu=file_menu)
+        file_menu.add_command(label="Open Document", command=self.open_file)
+        file_menu.add_separator()
+        file_menu.add_command(label="Exit", command=self.root.quit)
 
-@app.route('/api/merge-conflicts', methods=['POST'])
-def merge_conflicts():
-    """Detect merge conflicts"""
-    data = request.json
-    base = data.get('base', '')
-    ours = data.get('ours', '')
-    theirs = data.get('theirs', '')
-    
-    try:
-        conflicts = assistant.detect_conflicts(base, ours, theirs)
-        return jsonify({'conflicts': conflicts})
-    except Exception as e:
-        return jsonify({'error': str(e)}), 400
+        # Chat area
+        self.chat_frame = tk.Frame(self.root)
+        self.chat_frame.pack(pady=10, padx=10, fill=tk.BOTH, expand=True)
 
-@app.route('/api/learn', methods=['POST'])
-def learn_choice():
-    """Learn from user's merge choice"""
-    data = request.json
-    suggestion = data.get('suggestion', {})
-    accepted = data.get('accepted', True)
-    
-    try:
-        assistant.learn_from_choice(suggestion, accepted)
-        return jsonify({'status': 'ok'})
-    except Exception as e:
-        return jsonify({'error': str(e)}), 400
+        self.chat_display = scrolledtext.ScrolledText(self.chat_frame, wrap=tk.WORD, height=20)
+        self.chat_display.pack(fill=tk.BOTH, expand=True)
 
-if __name__ == '__main__':
-    app.run(debug=False, port=5000)
+        self.query_entry = tk.Entry(self.root, width=50)
+        self.query_entry.pack(pady=5)
+        self.query_entry.bind("<Return>", lambda e: self.send_query())
+
+        self.send_button = tk.Button(self.root, text="Send", command=self.send_query)
+        self.send_button.pack(pady=5)
+
+    def open_file(self):
+        file_path = filedialog.askopenfilename(filetypes=[("Documents", "*.pdf *.docx *.txt")])
+        if file_path:
+            try:
+                ingest_file(file_path)
+                messagebox.showinfo("Success", "Document ingested successfully!")
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to ingest document: {str(e)}")
+
+    def send_query(self):
+        query = self.query_entry.get().strip()
+        if not query:
+            return
+        self.query_entry.delete(0, tk.END)
+        self.chat_display.insert(tk.END, f"You: {query}\n")
+        self.chat_display.see(tk.END)
+
+        # Run chat in thread to avoid blocking GUI
+        threading.Thread(target=self.process_query, args=(query,)).start()
+
+    def process_query(self, query):
+        try:
+            response = chat(query)
+            self.chat_display.insert(tk.END, f"AI: {response}\n\n")
+            self.chat_display.see(tk.END)
+        except Exception as e:
+            self.chat_display.insert(tk.END, f"Error: {str(e)}\n\n")
+            self.chat_display.see(tk.END)
+
+    def on_closing(self):
+        if self.backend_process:
+            self.backend_process.terminate()
+        self.root.destroy()
+
+if __name__ == "__main__":
+    # Tkinter GUI disabled - using Electron frontend instead
+    pass
+    # root = tk.Tk()
+    # app = IntelliFileApp(root)
+    # root.protocol("WM_DELETE_WINDOW", app.on_closing)
+    # root.mainloop()

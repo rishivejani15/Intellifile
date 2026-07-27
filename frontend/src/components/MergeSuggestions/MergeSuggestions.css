@@ -1,0 +1,275 @@
+/* =====================================================
+   IntelliFile MergeSuggestions v3.0 - Futuristic Design
+   ===================================================== */
+
+/* ───────────────────────────────────────────────────────
+   Suggestions Container
+   ─────────────────────────────────────────────────────── */
+.suggestions {
+  margin-top: var(--sp-5);
+}
+
+.suggestions h2 {
+  margin-bottom: var(--sp-5);
+  color: var(--t-primary);
+  font-size: var(--text-xl);
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+}
+
+.suggestions h2::before {
+  content: '💡';
+  font-size: 24px;
+}
+
+/* ───────────────────────────────────────────────────────
+   Suggestions List
+   ─────────────────────────────────────────────────────── */
+.suggestions-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: var(--sp-4);
+}
+
+/* ───────────────────────────────────────────────────────
+   Suggestion Card
+   ─────────────────────────────────────────────────────── */
+.suggestion-card {
+  border: 1px solid var(--bo);
+  border-radius: var(--rd-xl);
+  padding: var(--sp-5);
+  cursor: pointer;
+  transition: all var(--dur-200) var(--ease-spring-sm);
+  background: var(--s-elev);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  position: relative;
+  overflow: hidden;
+}
+
+.suggestion-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: var(--c-brand-gradient);
+  opacity: 0;
+  transition: opacity var(--dur-200) var(--ease-default);
+}
+
+.suggestion-card:hover {
+  border-color: var(--c-brand);
+  box-shadow: 0 4px 20px rgba(99, 102, 241, 0.2);
+  background: var(--s-hover);
+  transform: translateY(-2px);
+}
+
+.suggestion-card:hover::before {
+  opacity: 1;
+}
+
+.suggestion-card.selected {
+  border-color: var(--c-brand);
+  background: var(--c-brand-soft);
+  box-shadow: 0 8px 30px rgba(99, 102, 241, 0.3);
+  transform: translateY(-4px);
+}
+
+.suggestion-card.selected::before {
+  opacity: 1;
+}
+
+/* ───────────────────────────────────────────────────────
+   Suggestion Header
+   ─────────────────────────────────────────────────────── */
+.suggestion-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--sp-3);
+  gap: var(--sp-2);
+}
+
+.suggestion-header h3 {
+  margin: 0;
+  color: var(--t-primary);
+  font-size: var(--text-base);
+  font-weight: 700;
+  /* CRITICAL: Text overflow fix */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.score {
+  background: var(--c-brand);
+  color: var(--t-inverse);
+  padding: var(--sp-1) var(--sp-3);
+  border-radius: var(--rd-full);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  flex-shrink: 0;
+  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.3);
+}
+
+.score.high {
+  background: var(--c-success);
+}
+
+.score.medium {
+  background: var(--c-warning);
+}
+
+.score.low {
+  background: var(--t-muted);
+}
+
+/* ───────────────────────────────────────────────────────
+   Description
+   ─────────────────────────────────────────────────────── */
+.description {
+  margin: var(--sp-3) 0;
+  color: var(--t-secondary);
+  font-size: var(--text-sm);
+  line-height: 1.6;
+}
+
+/* ───────────────────────────────────────────────────────
+   Suggestion Meta
+   ─────────────────────────────────────────────────────── */
+.suggestion-meta {
+  display: flex;
+  gap: var(--sp-3);
+  margin: var(--sp-3) 0;
+  font-size: var(--text-xs);
+  color: var(--t-muted);
+  flex-wrap: wrap;
+}
+
+.suggestion-meta-item {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+}
+
+.suggestion-meta-item::before {
+  content: '▹';
+  color: var(--c-brand);
+  font-size: 10px;
+}
+
+/* ───────────────────────────────────────────────────────
+   Select Button
+   ─────────────────────────────────────────────────────── */
+.select-btn {
+  width: 100%;
+  padding: var(--sp-3);
+  background: var(--c-brand);
+  color: var(--t-inverse);
+  border: none;
+  border-radius: var(--rd-lg);
+  cursor: pointer;
+  font-weight: 700;
+  font-size: var(--text-sm);
+  transition: all var(--dur-200) var(--ease-spring-sm);
+  margin-top: var(--sp-3);
+}
+
+.select-btn:hover {
+  background: var(--c-brand-hover);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 14px rgba(99, 102, 241, 0.3);
+}
+
+.select-btn:active {
+  transform: translateY(0);
+}
+
+/* ───────────────────────────────────────────────────────
+   Empty State
+   ─────────────────────────────────────────────────────── */
+.suggestions-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: var(--sp-12);
+  text-align: center;
+  color: var(--t-muted);
+  border: 2px dashed var(--bo);
+  border-radius: var(--rd-xl);
+  background: var(--s-elev);
+}
+
+.suggestions-empty::before {
+  content: '🔍';
+  font-size: 48px;
+  margin-bottom: var(--sp-4);
+  opacity: 0.5;
+}
+
+.suggestions-empty p {
+  font-size: var(--text-base);
+  margin: 0;
+}
+
+/* ───────────────────────────────────────────────────────
+   Loading State
+   ─────────────────────────────────────────────────────── */
+.suggestions-loading {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+}
+
+.suggestion-skeleton {
+  border: 1px solid var(--bo);
+  border-radius: var(--rd-xl);
+  padding: var(--sp-5);
+  background: var(--s-hover);
+  animation: pulse var(--dur-1500) var(--ease-in-out) infinite;
+}
+
+.skeleton-header {
+  height: 24px;
+  background: var(--bo);
+  border-radius: var(--rd-md);
+  width: 60%;
+  margin-bottom: var(--sp-3);
+}
+
+.skeleton-description {
+  height: 16px;
+  background: var(--bo-light);
+  border-radius: var(--rd-md);
+  width: 100%;
+  margin-bottom: var(--sp-2);
+}
+
+.skeleton-description.short {
+  width: 80%;
+}
+
+.skeleton-meta {
+  display: flex;
+  gap: var(--sp-2);
+  margin-top: var(--sp-3);
+}
+
+.skeleton-meta-item {
+  height: 14px;
+  background: var(--bo-light);
+  border-radius: var(--rd-full);
+  width: 80px;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
+}
