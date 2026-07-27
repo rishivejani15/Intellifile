@@ -8,7 +8,7 @@ import ExplorerSidebar from '../ExplorerSidebar';
 import ExplorerNavbar from '../ExplorerNavbar';
 import PreviewPanel from '../PreviewPanel';
 import FileList from '../FileList';
-import ContextMenu from '../../components/ContextMenu_NEW';
+import ContextMenu from '../ContextMenu';
 import PropertiesModal from '../PropertiesModal';
 import SearchResults from '../SearchResults';
 import TabsBar from '../TabsBar';
@@ -17,7 +17,7 @@ import VersionTimeline from '../Versioning/VersionTimeline';
 import { smartCleanupVersions } from '../../services/versionService';
 import { showErrorToast, showToast } from '../../utils/toast';
 import './FileExplorer.css';
-import './FileExplorer_NEW.css';
+
 
 const ipcRenderer = window.electron?.ipcRenderer;
 const VERSIONING_BLOCKED_EXTENSIONS = new Set(['.zip', '.ppt', '.pptx', '.pptm']);
