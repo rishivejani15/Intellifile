@@ -263,6 +263,7 @@ contextBridge.exposeInMainWorld('intellifile', {
     ipcRenderer.on('backend-log', handler);
     return () => ipcRenderer.off('backend-log', handler);
   },
+  restartSyncServer: () => ipcRenderer.invoke('restart-sync-server'),
   onOfflineSetupProgress: (callback) => {
     const handler = (_event, progress) => callback(progress);
     ipcRenderer.on('offline-setup-progress', handler);

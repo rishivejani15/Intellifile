@@ -710,11 +710,26 @@ function forceCheckForUpdates() {
 }
 
 let logBuffer = [];
-const MAX_LOG_LINES = 1000;
+const MAX_LOG_LINES = 2000;
 
-function appendLog(category, message, isError = false) {
+// Derive a log level from message content and isError flag
+function _deriveLevel(message, isError) {
+  if (isError) return 'error';
+  const msg = String(message).toLowerCase();
+  if (msg.includes('warning') || msg.includes('warn') || msg.includes('deprecated') || msg.includes('timeout') || msg.includes('retrying') || msg.includes('skipping')) return 'warning';
+  if (
+    msg.includes('✅') || msg.includes('done') || msg.includes('success') ||
+    msg.includes('complete') || msg.includes('[ok]') || msg.includes('healthy') ||
+    msg.includes('ready') || msg.includes('loaded') || msg.includes('downloaded')
+  ) return 'success';
+  if (msg.includes('starting') || msg.includes('spawning') || msg.includes('connecting') || msg.includes('downloading') || msg.includes('initializ') || msg.includes('attempt')) return 'info';
+  return 'info';
+}
+
+function appendLog(category, message, isError = false, level = null) {
   const timestamp = new Date().toLocaleString();
-  const logEntry = { timestamp, category, message, isError };
+  const resolvedLevel = level || _deriveLevel(message, isError);
+  const logEntry = { timestamp, category, message, isError, level: resolvedLevel };
 
   logBuffer.push(logEntry);
   if (logBuffer.length > MAX_LOG_LINES) {
@@ -752,12 +767,12 @@ console.error = function (...args) {
   if (args.length > 0 && typeof args[0] === 'string' && args[0].startsWith('[')) {
     const match = args[0].match(/^\[(.*?)\]/);
     if (match) {
-      appendLog(match[1], args.join(' ').replace(/^\[.*?\]\s*/, ''), true);
+      appendLog(match[1], args.join(' ').replace(/^\[.*?\]\s*/, ''), true, 'error');
     } else {
-      appendLog('Main', args.join(' '), true);
+      appendLog('Main', args.join(' '), true, 'error');
     }
   } else {
-    appendLog('Main', args.join(' '), true);
+    appendLog('Main', args.join(' '), true, 'error');
   }
 };
 
@@ -766,12 +781,12 @@ console.warn = function (...args) {
   if (args.length > 0 && typeof args[0] === 'string' && args[0].startsWith('[')) {
     const match = args[0].match(/^\[(.*?)\]/);
     if (match) {
-      appendLog(match[1], args.join(' ').replace(/^\[.*?\]\s*/, ''), true);
+      appendLog(match[1], args.join(' ').replace(/^\[.*?\]\s*/, ''), false, 'warning');
     } else {
-      appendLog('Main', args.join(' '), true);
+      appendLog('Main', args.join(' '), false, 'warning');
     }
   } else {
-    appendLog('Main', args.join(' '), true);
+    appendLog('Main', args.join(' '), false, 'warning');
   }
 };
 
@@ -1487,18 +1502,34 @@ function checkInternetConnectivity(timeoutMs = 3000) {
     try {
       const dns = require('dns');
       let finished = false;
-      const finish = (value) => {
+      const finish = (value, err) => {
         if (finished) return;
         finished = true;
+        if (!value) {
+          // Emit a specific firewall/network log so it's visible in the Logs panel
+          const reason = err
+            ? (err.code === 'ENOTFOUND' ? 'DNS lookup failed (ENOTFOUND)'
+              : err.code === 'EAI_AGAIN' ? 'DNS temporarily unavailable (EAI_AGAIN)'
+              : err.code === 'ECONNREFUSED' ? 'Connection refused (ECONNREFUSED)'
+              : err.code === 'ETIMEDOUT' ? 'Connection timed out (ETIMEDOUT)'
+              : `Network error: ${err.code || err.message}`)
+            : 'DNS lookup timed out';
+          appendLog('Firewall', `Cannot reach huggingface.co — ${reason}. Check firewall/proxy/VPN settings.`, true, 'error');
+        }
         resolve(value);
       };
 
-      const timer = setTimeout(() => finish(false), timeoutMs);
+      const timer = setTimeout(() => finish(false, null), timeoutMs);
       dns.lookup('huggingface.co', (err) => {
         clearTimeout(timer);
-        finish(!err);
+        if (err) {
+          finish(false, err);
+        } else {
+          finish(true, null);
+        }
       });
     } catch (err) {
+      appendLog('Firewall', `Network connectivity check threw an exception: ${err && err.message ? err.message : err}`, true, 'error');
       resolve(false);
     }
   });
@@ -1621,12 +1652,34 @@ function attemptStartSyncServer() {
       handleSyncServerFailure(`Sync server binary crashed/failed to spawn: ${errorMsg}`);
     });
 
+    // SyncServer stdout: filter to only meaningful lines (skip raw HTTP request logs)
     syncServerProcess.stdout.on('data', (d) => {
-      console.log('[SyncServer stdout]', d.toString().trim());
+      const text = d.toString();
+      for (const rawLine of text.split(/\r?\n/)) {
+        const line = rawLine.trim();
+        if (!line) continue;
+        // Skip verbose HTTP access logs (e.g. '127.0.0.1 - GET /status 200')
+        if (/^\d+\.\d+\.\d+\.\d+.*\s(GET|POST|PUT|DELETE|HEAD|OPTIONS|PATCH)\s/i.test(line)) continue;
+        // Skip raw uvicorn/werkzeug request lines
+        if (/^\s*(GET|POST|PUT|DELETE|HEAD|OPTIONS)\s+\//.test(line)) continue;
+        // Skip empty JSON brackets and pure numeric lines
+        if (/^[{\[\]}\s]*$/.test(line) || /^\d+$/.test(line)) continue;
+        originalConsoleLog('[SyncServer stdout]', line);
+        appendLog('SyncServer', line, false, _deriveLevel(line, false));
+      }
     });
 
     syncServerProcess.stderr.on('data', (d) => {
-      console.error('[SyncServer stderr]', d.toString().trim());
+      const text = d.toString();
+      for (const rawLine of text.split(/\r?\n/)) {
+        const line = rawLine.trim();
+        if (!line) continue;
+        // Skip verbose HTTP access logs from stderr too
+        if (/^\d+\.\d+\.\d+\.\d+.*\s(GET|POST|PUT|DELETE|HEAD|OPTIONS|PATCH)\s/i.test(line)) continue;
+        if (/^\s*(GET|POST|PUT|DELETE|HEAD|OPTIONS)\s+\//.test(line)) continue;
+        originalConsoleError('[SyncServer stderr]', line);
+        appendLog('SyncServer', line, true, 'error');
+      }
     });
 
     syncServerProcess.on('close', (code) => {
@@ -2237,6 +2290,9 @@ ipcMain.handle('download-model', async () => {
       const args = isDev
         ? [path.join(__dirname, "../backend/setup_offline.py"), "--appdata-dir", appDataDir, "--json"]
         : ["--offline-setup", "--appdata-dir", appDataDir, "--json"];
+
+      appendLog('ModelDownload', 'Starting model download process...', false, 'info');
+
       const dl = spawn(exePath, args, {
         cwd: path.join(__dirname, '..'),
         env,
@@ -2246,17 +2302,57 @@ ipcMain.handle('download-model', async () => {
       dl.stdout.on('data', (d) => {
         const s = d.toString();
         if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('model-download-log', s);
+        // Also pipe JSON log/progress messages to the Logs panel
+        for (const rawLine of s.split(/\r?\n/)) {
+          const line = rawLine.trim();
+          if (!line) continue;
+          try {
+            const parsed = JSON.parse(line);
+            if (parsed.type === 'log' && parsed.message) {
+              appendLog('ModelDownload', parsed.message, false, _deriveLevel(parsed.message, false));
+            } else if (parsed.type === 'step') {
+              appendLog('ModelDownload', `Step ${parsed.step}/${parsed.total}: ${parsed.name} — ${parsed.status}`, false, parsed.status === 'done' ? 'success' : 'info');
+            } else if (parsed.type === 'error') {
+              appendLog('ModelDownload', `Error: ${parsed.message}`, true, 'error');
+            } else if (parsed.type === 'done') {
+              appendLog('ModelDownload', parsed.success ? '✅ All models downloaded successfully' : 'Download completed with errors', !parsed.success, parsed.success ? 'success' : 'error');
+            }
+          } catch (e) {
+            // Plain text line
+            if (line.length > 1) appendLog('ModelDownload', line, false, _deriveLevel(line, false));
+          }
+        }
       });
       dl.stderr.on('data', (d) => {
         const s = d.toString();
         if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('model-download-log', s);
+        // Check for common network/firewall errors
+        for (const rawLine of s.split(/\r?\n/)) {
+          const line = rawLine.trim();
+          if (!line) continue;
+          const lowerLine = line.toLowerCase();
+          if (lowerLine.includes('econnrefused') || lowerLine.includes('connection refused')) {
+            appendLog('Firewall', `Connection refused during model download — firewall may be blocking downloads. Detail: ${line}`, true, 'error');
+          } else if (lowerLine.includes('etimedout') || lowerLine.includes('timed out') || lowerLine.includes('timeout')) {
+            appendLog('Firewall', `Connection timed out during model download — check firewall/proxy. Detail: ${line}`, true, 'error');
+          } else if (lowerLine.includes('enotfound') || lowerLine.includes('name or service not known') || lowerLine.includes('could not resolve')) {
+            appendLog('Firewall', `DNS resolution failed during model download — huggingface.co unreachable. Check firewall/VPN. Detail: ${line}`, true, 'error');
+          } else if (lowerLine.includes('ssl') || lowerLine.includes('certificate')) {
+            appendLog('Firewall', `SSL/Certificate error during download — proxy or firewall may be intercepting traffic. Detail: ${line}`, true, 'error');
+          } else if (lowerLine.includes('error') || lowerLine.includes('exception') || lowerLine.includes('failed')) {
+            appendLog('ModelDownload', line, true, 'error');
+          } else if (lowerLine.includes('warning') || lowerLine.includes('warn')) {
+            appendLog('ModelDownload', line, false, 'warning');
+          }
+          // Skip verbose tqdm progress bars and empty lines
+        }
       });
 
       dl.on('close', (code) => {
-        // If download succeeded, restart python engine and chat backend so new models load
         if (code === 0) {
+          appendLog('ModelDownload', '✅ Model download complete. Restarting engine...', false, 'success');
           try {
-            console.log('[ModelDownload] Restarting Python engine to load new models');
+            originalConsoleLog('[ModelDownload] Restarting Python engine to load new models');
             if (pyProcess) {
               try { pyProcess.kill(); } catch (e) { /* ignore */ }
               pyProcess = null;
@@ -2271,13 +2367,17 @@ ipcMain.handle('download-model', async () => {
               startChatBackend();
             }, 800);
           } catch (e) {
-            console.error('[ModelDownload] Failed to restart engine:', e);
+            appendLog('ModelDownload', `Failed to restart engine after download: ${e && e.message ? e.message : e}`, true, 'error');
           }
+        } else {
+          appendLog('ModelDownload', `Model download process exited with code ${code}`, true, 'error');
         }
         resolve({ success: code === 0, code });
       });
     } catch (e) {
-      resolve({ success: false, error: e && e.message ? e.message : String(e) });
+      const msg = e && e.message ? e.message : String(e);
+      appendLog('ModelDownload', `Failed to start model download: ${msg}`, true, 'error');
+      resolve({ success: false, error: msg });
     }
   });
 });
@@ -3250,13 +3350,18 @@ function registerIpcHandlers() {
   ipcMain.handle('offline-setup-run', async (event) => {
     if (setupProcess) return { success: false, error: 'Setup already running' };
 
+    appendLog('ModelDownload', 'Checking internet connectivity before setup...', false, 'info');
     const hasInternet = await checkInternetConnectivity();
     if (!hasInternet) {
+      // Firewall log already emitted inside checkInternetConnectivity
+      appendLog('ModelDownload', 'Setup aborted: no internet connection detected.', true, 'error');
       return {
         success: false,
         error: 'Internet connection is required to download the AI models. Please turn on Wi-Fi or connect to the internet and try again.',
       };
     }
+
+    appendLog('ModelDownload', '✅ Internet connectivity confirmed. Starting offline model setup...', false, 'success');
 
     return new Promise((resolve) => {
       const appDataDir = app.getPath('userData');
@@ -3288,7 +3393,7 @@ function registerIpcHandlers() {
           });
         }
       } catch (e) {
-        console.warn('[Setup] Failed to send initial progress:', e.message || e);
+        originalConsoleWarn('[Setup] Failed to send initial progress:', e.message || e);
       }
 
       // collect stderr to return a useful error message if the process fails
@@ -3308,8 +3413,20 @@ function registerIpcHandlers() {
             if (mainWindow && !mainWindow.isDestroyed()) {
               mainWindow.webContents.send('offline-setup-progress', parsed);
             }
+            // Mirror to Logs panel
+            if (parsed.type === 'log' && parsed.message) {
+              appendLog('ModelDownload', parsed.message, false, _deriveLevel(parsed.message, false));
+            } else if (parsed.type === 'step') {
+              appendLog('ModelDownload', `Step ${parsed.step}/${parsed.total}: ${parsed.name} — ${parsed.status}`, false, parsed.status === 'done' ? 'success' : 'info');
+            } else if (parsed.type === 'error') {
+              appendLog('ModelDownload', `Setup error: ${parsed.message}`, true, 'error');
+            } else if (parsed.type === 'done') {
+              appendLog('ModelDownload', parsed.success ? '✅ Setup complete! Models ready.' : 'Setup completed with errors.', !parsed.success, parsed.success ? 'success' : 'error');
+            }
           } catch (e) {
-            console.log('[Setup Output]', line.trim());
+            // Plain text
+            const t = line.trim();
+            if (t.length > 1) appendLog('ModelDownload', t, false, _deriveLevel(t, false));
           }
         }
       });
@@ -3339,19 +3456,33 @@ function registerIpcHandlers() {
             }
             continue;
           }
+          // Check for firewall/network errors in stderr
+          const lowerLine = line.toLowerCase();
+          if (lowerLine.includes('econnrefused') || lowerLine.includes('connection refused')) {
+            appendLog('Firewall', `Connection refused during setup — firewall may be blocking downloads. ${line}`, true, 'error');
+          } else if (lowerLine.includes('etimedout') || lowerLine.includes('timed out')) {
+            appendLog('Firewall', `Connection timed out during setup — check firewall/proxy settings. ${line}`, true, 'error');
+          } else if (lowerLine.includes('enotfound') || lowerLine.includes('could not resolve') || lowerLine.includes('name or service not known')) {
+            appendLog('Firewall', `DNS resolution failed during setup — huggingface.co unreachable. Check firewall/VPN. ${line}`, true, 'error');
+          } else if (lowerLine.includes('ssl') || lowerLine.includes('certificate')) {
+            appendLog('Firewall', `SSL/Certificate error — proxy or firewall may be intercepting traffic. ${line}`, true, 'error');
+          } else if (!matchedProgress && (lowerLine.includes('error') || lowerLine.includes('exception') || lowerLine.includes('traceback'))) {
+            appendLog('ModelDownload', `Setup error: ${line}`, true, 'error');
+          }
         }
 
         if (!matchedProgress) {
-          console.error('[Setup Error]', s.trim());
+          originalConsoleError('[Setup Error]', s.trim());
         } else {
-          console.log('[Setup Progress]', s.trim());
+          originalConsoleLog('[Setup Progress]', s.trim());
         }
       });
 
       setupProcess.on('close', (code) => {
         setupProcess = null;
         if (code === 0) {
-          console.log('[Setup] Setup completed successfully. Marking setup as completed and restarting Python engine...');
+          appendLog('ModelDownload', '✅ Setup completed successfully. Restarting Python engine and sync server...', false, 'success');
+          originalConsoleLog('[Setup] Setup completed successfully. Marking setup as completed and restarting Python engine...');
           // Mark setup as completed so we don't show the dialog again
           indexingPreferences.offlineSetupCompleted = true;
           saveIndexingPreferences();
@@ -3362,10 +3493,16 @@ function registerIpcHandlers() {
           // Give it a tiny delay to ensure the port/locks are released
           setTimeout(() => {
             startPython();
+            // Also restart the sync server so it picks up the new environment without requiring an app restart
+            syncServerRetries = 0;
+            startSyncServer().catch(err => {
+              appendLog('SyncServer', `Failed to restart sync server after setup: ${err && err.message ? err.message : err}`, true, 'error');
+            });
             resolve({ success: true });
           }, 1000);
         } else {
           const errMsg = stderrBuffer.trim() || `Setup process exited with code ${code}`;
+          appendLog('ModelDownload', `Setup failed with exit code ${code}: ${errMsg.split('\n')[0]}`, true, 'error');
           try {
             if (mainWindow && !mainWindow.isDestroyed()) {
               mainWindow.webContents.send('offline-setup-progress', { type: 'error', message: errMsg });
@@ -3375,6 +3512,24 @@ function registerIpcHandlers() {
         }
       });
     });
+  });
+
+  // Manual sync server restart — visible in the UI (Logs toolbar)
+  ipcMain.handle('restart-sync-server', async () => {
+    try {
+      appendLog('SyncServer', 'Manual restart requested via UI...', false, 'info');
+      if (syncServerProcess && !syncServerProcess.killed) {
+        try { syncServerProcess.kill(); } catch (e) { /* ignore */ }
+        syncServerProcess = null;
+      }
+      syncServerRetries = 0;
+      await startSyncServer();
+      return { success: true };
+    } catch (err) {
+      const msg = err && err.message ? err.message : String(err);
+      appendLog('SyncServer', `Restart failed: ${msg}`, true, 'error');
+      return { success: false, error: msg };
+    }
   });
 
   ipcMain.handle('reset-offline-setup', async () => {
