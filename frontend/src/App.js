@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import './App.css';
 import FileExplorer from './components/FileExplorer/FileExplorer';
 import SyncManager from './components/Sync/SyncManager';
@@ -10,6 +10,15 @@ import Settings from './pages/Settings';
 
 const ipcRenderer = window.electron?.ipcRenderer;
 
+
+
+
+function getInitialTheme() {
+  const saved = localStorage.getItem('intellifile-theme');
+  if (saved && ['light', 'dark', 'system'].includes(saved)) return saved;
+  return 'system';
+}
+
 function App() {
   const [activeTab, setActiveTab] = useState('explorer');
   const [drives, setDrives] = useState([]);
@@ -20,6 +29,8 @@ function App() {
   const [updateAvailable, setUpdateAvailable] = useState(false);
   const [updateDownloaded, setUpdateDownloaded] = useState(false);
   const [updateVersion, setUpdateVersion] = useState('');
+  const [theme, setTheme] = useState(getInitialTheme);
+  const [showThemeDropdown, setShowThemeDropdown] = useState(false);
 
   useEffect(() => {
     console.log('App mounted, ipcRenderer available:', !!ipcRenderer);
@@ -99,6 +110,50 @@ function App() {
     console.log('[App] versioningFile:', versioningFile);
   }, [versioningFile]);
 
+  // Apply theme
+  useEffect(() => {
+    const doc = document.documentElement;
+    if (theme === 'system') {
+      const mql = window.matchMedia('(prefers-color-scheme: dark)');
+      const apply = () => {
+        if (mql.matches) {
+          doc.setAttribute('data-theme', 'dark');
+        } else {
+          doc.setAttribute('data-theme', 'light');
+        }
+      };
+      apply();
+      mql.addEventListener('change', apply);
+      return () => mql.removeEventListener('change', apply);
+    } else {
+      doc.setAttribute('data-theme', theme);
+    }
+    localStorage.setItem('intellifile-theme', theme);
+  }, [theme]);
+
+  // Close theme dropdown on outside click
+  useEffect(() => {
+    if (!showThemeDropdown) return;
+    const handler = (e) => {
+      if (!e.target.closest('.theme-toggle-wrapper')) {
+        setShowThemeDropdown(false);
+      }
+    };
+    window.addEventListener('click', handler);
+    return () => window.removeEventListener('click', handler);
+  }, [showThemeDropdown]);
+
+  const handleThemeChange = (newTheme) => {
+    setTheme(newTheme);
+    setShowThemeDropdown(false);
+  };
+
+  const themeLabel = useMemo(() => {
+    if (theme === 'light') return 'Light';
+    if (theme === 'dark') return 'Dark';
+    return 'Auto';
+  }, [theme]);
+
   return (
     <div className="App">
       <header className="App-header">
@@ -125,19 +180,62 @@ function App() {
           >
             Logs
           </button>
-          <button
+           <button
             className={`tab-btn ${activeTab === 'settings' ? 'active' : ''}`}
             onClick={() => setActiveTab('settings')}
           >
             Settings
           </button>
         </div>
+        <div className="theme-toggle-wrapper" style={{ position: 'relative' }}>
+          <button
+            className="theme-toggle"
+            onClick={(e) => { e.stopPropagation(); setShowThemeDropdown((prev) => !prev); }}
+            title={`Theme: ${themeLabel}`}
+          >
+            <span style={{ fontSize: '18px' }}>{theme === 'dark' ? '☽' : theme === 'light' ? '☀' : '◔'}</span>
+          </button>
+          {showThemeDropdown && (
+            <div className="theme-dropdown" onClick={(e) => e.stopPropagation()}>
+              <button
+                className={`theme-option ${theme === 'light' ? 'active' : ''}`}
+                onClick={() => handleThemeChange('light')}
+              >
+                <span>Light</span>{theme === 'light' && <span className="checkmark">✓</span>}
+              </button>
+              <button
+                className={`theme-option ${theme === 'dark' ? 'active' : ''}`}
+                onClick={() => handleThemeChange('dark')}
+              >
+                <span>Dark</span>{theme === 'dark' && <span className="checkmark">✓</span>}
+              </button>
+              <button
+                className={`theme-option ${theme === 'system' ? 'active' : ''}`}
+                onClick={() => handleThemeChange('system')}
+              >
+                <span>Auto</span>{theme === 'system' && <span className="checkmark">✓</span>}
+              </button>
+            </div>
+          )}
+        </div>
         {updateAvailable && (
           <div className="update-section">
             {!updateDownloaded ? (
-              <span className="update-status">
-                Update v{updateVersion} available - downloading...
-              </span>
+              <div className="update-status-container">
+                <span className="update-status">
+                  Update v{updateVersion} available
+                </span>
+                <button
+                  className="update-check-btn"
+                  onClick={() => {
+                    if (ipcRenderer) {
+                      ipcRenderer.send('check-for-updates');
+                    }
+                  }}
+                >
+                  Check Now
+                </button>
+              </div>
             ) : (
               <button
                 className="update-btn"
@@ -171,6 +269,16 @@ function App() {
                   onClick={handleResetOfflineSetup}
                 >
                   Reset AI Models
+                </button>
+                <button
+                  className="toolbar-btn update-check"
+                  onClick={() => {
+                    if (ipcRenderer) {
+                      ipcRenderer.send('check-for-updates');
+                    }
+                  }}
+                >
+                  Check for Updates
                 </button>
                 <span className="toolbar-hint">
                   {selectedFile ? 'Saving will trigger AI versioning.' : 'Select a file.'}

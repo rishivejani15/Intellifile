@@ -3,6 +3,7 @@
   overflow: auto;
   background: linear-gradient(180deg, rgba(15, 23, 42, 0.03), transparent 180px), var(--main-bg);
   padding: 20px;
+  color: var(--text-primary);
 }
 
 .settings-shell {
@@ -25,6 +26,7 @@
   border-radius: 18px;
   padding: 18px;
   box-shadow: 0 16px 40px rgba(15, 23, 42, 0.04);
+  color: var(--text-primary);
 }
 
 .settings-hero {
@@ -72,6 +74,11 @@
   border-radius: 14px;
   background: var(--card-hover);
   border: 1px solid var(--border-color);
+  cursor: pointer;
+}
+
+.settings-toggle-row:hover {
+  background: var(--card-hover);
 }
 
 .settings-toggle-row strong,
@@ -148,6 +155,11 @@
   font-size: 14px;
 }
 
+.settings-input-label input:focus {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--primary-blue);
+}
+
 .settings-button {
   border: 0;
   border-radius: 12px;
@@ -156,6 +168,11 @@
   color: #fff;
   font-weight: 700;
   cursor: pointer;
+  transition: opacity 0.2s;
+}
+
+.settings-button:hover {
+  opacity: 0.9;
 }
 
 .settings-button.secondary {
@@ -247,4 +264,27 @@
   .settings-recent-row {
     flex-direction: column;
   }
+}
+
+/* Updated Settings theme to match overall app */
+
+.settings-page {
+  color: var(--text-primary);
+}
+
+.settings-button {
+  transition: opacity 0.2s;
+}
+
+.settings-button:hover {
+  opacity: 0.9;
+}
+
+.settings-input-label input:focus {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--primary-blue);
+}
+
+.settings-toggle-row:hover {
+  background: var(--card-hover);
 }

@@ -6,6 +6,8 @@ if (!gotTheLock) {
 }
 
 const { autoUpdater } = require('electron-updater');
+const util = require('util');
+const execAsync = util.promisify(require('child_process').exec);
 const path = require('path');
 const { pathToFileURL } = require('url');
 const fs = require('fs');
@@ -15,6 +17,32 @@ const archiver = require('archiver');
 const unzipper = require('unzipper');
 const { registerSystemRoots, getSystemRoots } = require('./system_roots');
 const { SyncEngine } = require('./sync_engine');
+
+const candidateCache = new Map(); // Cache for open-with candidates
+const lookupInProgress = new Map(); // tracks in‑flight lookups per extension
+
+// Persistent map of extension → candidate list (saved in userData)
+const openWithMapPath = path.join(app.getPath('userData'), 'openWithMap.json');
+let openWithMap = {};
+function loadOpenWithMap() {
+  try {
+    if (fs.existsSync(openWithMapPath)) {
+      const data = fs.readFileSync(openWithMapPath, 'utf8');
+      openWithMap = JSON.parse(data);
+    }
+  } catch (e) {
+    console.warn('[OpenWith] Failed to load persisted map:', e);
+    openWithMap = {};
+  }
+}
+function saveOpenWithMap() {
+  try {
+    fs.writeFileSync(openWithMapPath, JSON.stringify(openWithMap, null, 2), 'utf8');
+  } catch (e) {
+    console.warn('[OpenWith] Failed to save persisted map:', e);
+  }
+}
+loadOpenWithMap();
 
 const PROJECT_ROOT = path.join(__dirname, '..');
 
@@ -335,15 +363,15 @@ app.on('second-instance', (event, commandLine) => {
                 }
               } catch (e) { } // ignore locked files
             }
-            // Only auto-select the guessed file if it was modified recently
-            const GUESS_WINDOW_MS = 2 * 60 * 1000; // 2 minutes
-            if (guessedFile && (Date.now() - maxTime) <= GUESS_WINDOW_MS) {
-              console.log('[Heuristic] Guessed recently downloaded file:', guessedFile, 'ageMs=', Date.now() - maxTime);
-              payload = { path: rawPath, selectFile: guessedFile };
-            } else {
-              console.log('[Heuristic] Not confident to auto-select file (guessedFile=', guessedFile, 'ageMs=', guessedFile ? (Date.now() - maxTime) : 'N/A', ') - showing recent chooser');
-              payload = { path: rawPath, selectFile: null };
-            }
+                // Only auto-select the guessed file if it was modified recently
+                const GUESS_WINDOW_MS = 2 * 60 * 1000; // 2 minutes
+                if (guessedFile && (Date.now() - maxTime) <= GUESS_WINDOW_MS) {
+                  console.log('[Heuristic] Guessed recently downloaded file:', guessedFile, 'ageMs=', Date.now() - maxTime);
+                  payload = { path: rawPath, selectFile: guessedFile };
+                } else {
+                  console.log('[Heuristic] Not confident to auto-select file (guessedFile=', guessedFile, 'ageMs=', guessedFile ? (Date.now() - maxTime) : 'N/A', ') - showing recent chooser');
+                  payload = { path: rawPath, selectFile: null };
+                }
           } catch (e) {
             payload = { path: rawPath, selectFile: null };
           }
@@ -642,6 +670,7 @@ function initializeUpdater() {
       console.warn('[Updater] Ignoring update error:', err.message || err);
     });
 
+    // Initial check
     checkGitHubUpdatesOncePerDay().then((result) => {
       if (result && result.skipped) {
         console.log('[Updater] Skipped daily GitHub version check:', result.reason);
@@ -660,6 +689,24 @@ function initializeUpdater() {
   } catch (err) {
     console.warn('[Updater] Initialization failed:', err.message || err);
   }
+}
+
+// Force update check function
+function forceCheckForUpdates() {
+  console.log('[Updater] Force checking for updates...');
+  checkGitHubUpdatesOncePerDay({ force: true }).then((result) => {
+    if (result && result.success) {
+      if (result.updateAvailable && result.updateInfo) {
+        updateAvailable = true;
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('update-available', { version: result.updateInfo.version });
+        }
+        console.log('[Updater] Force check found new release:', result.updateInfo.version);
+      } else {
+        console.log('[Updater] Force check completed; no update found');
+      }
+    }
+  });
 }
 
 let logBuffer = [];
@@ -834,6 +881,7 @@ let directoryIndexTimers = new Map();
 // Tracks files recently deleted through the UI so the watcher can suppress
 // the spurious unlink→re-add storm that chokidar's polling causes on Windows.
 const _recentlyDeletedPaths = new Set();
+let pyModelLoaded = false;
 
 function sendToPython(payload, timeoutMs = 120000) {
   return new Promise((resolve) => {
@@ -1087,7 +1135,6 @@ function startWatchingDirectory(directoryPath) {
       const item = buildDirectoryItem(filePath);
       if (item) {
         broadcastDirectoryChange(directoryPath, { action: 'add', item });
-        appendLog('FileWatch', `File added: ${path.basename(filePath)}`);
         if (item.type === 'file') {
           sendToPython({ action: 'index_file', file_path: filePath, allow_protected: getAllowProtectedIndexing() }).catch(() => { });
         }
@@ -1779,7 +1826,6 @@ function parseDateFromQuery(rawQuery) {
     const m2 = MONTHS[match[3].toLowerCase()];
     const y2 = parseInt(match[4]);
     // Handle second-instance events from Windows (Explorer / browser)
-
     dateTo = endOfMonth(y2, m2);
     query = query.replace(match[0], '').trim();
   }
@@ -2321,6 +2367,631 @@ ipcMain.handle('save-version', async (_event, payload) => {
   }
 
   return result;
+});
+
+// -------------------------------------------------------------------------
+// Open‑with helpers – expose Windows registry information to the renderer
+// -------------------------------------------------------------------------
+const { exec } = require('child_process');
+const { execSync } = require('child_process');
+
+function getAppInfo(exePath) {
+  try {
+    const fullPath = fs.realpathSync(exePath);
+    const appName = exePath.split('\\').find(f => f.endsWith('.exe'))?.replace('.exe', '') || 'Application';
+
+    // Get friendly name from file version info
+    let displayName = appName;
+    try {
+      const nameResult = execSync(`powershell -NoProfile -Command "(Get-Item '${fullPath}').VersionInfo.FileDescription"`, { encoding: 'utf8', windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'] });
+      if (nameResult && nameResult.trim()) {
+        displayName = nameResult.trim();
+      }
+    } catch {}
+
+    return { name: displayName || appName, exe: fullPath, icon: null };
+  } catch {
+    return { name: exePath.split('\\').pop().replace('.exe', ''), exe: exePath, icon: null };
+  }
+}
+
+// Return a list of candidate apps for a given extension (e.g. ".txt")
+ipcMain.handle('open-with:get-candidates', async (_, ext) => {
+  console.log('[OpenWith] get-candidates called for extension:', ext);
+  // Simple cache to avoid repeated heavy registry lookups
+  const cleanExt = ext.replace(/^\./, '').toLowerCase();
+  const now = Date.now();
+  const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+  const cached = candidateCache.get(cleanExt);
+  if (cached && now - cached.timestamp < CACHE_TTL && cached.candidates && cached.candidates.length > 0) {
+    return { candidates: cached.candidates };
+  }
+
+
+  // Blacklist common generic editors/interpreters that we don't want to show as primary candidates
+      const APP_BLACKLIST = ['notepad.exe', 'notepad++.exe', 'python.exe', 'pythonw.exe', 'py.exe'];
+      const candidates = [];
+      const seenExe = new Set();
+      // Quick fallback for image and code extensions – adds a default entry and returns early
+      const quickFallback = [];
+      const imageExts = ['jpg','jpeg','png','gif','bmp','webp','tiff','svg'];
+      if (imageExts.includes(cleanExt)) {
+        quickFallback.push({ name: 'Open with default app', exe: null });
+      }
+      const codeExts = ['js','jsx','ts','tsx','py','java','cpp','c','cs','rb','php'];
+      if (codeExts.includes(cleanExt)) {
+        quickFallback.push({ name: 'Open with default app', exe: null });
+      }
+      // Return early for these extensions
+      if (quickFallback.length) {
+        candidateCache.set(cleanExt, { candidates: quickFallback, timestamp: Date.now() });
+        openWithMap[cleanExt] = quickFallback;
+        saveOpenWithMap();
+        console.log('[OpenWith] Quick fallback used, returning early for', cleanExt);
+        return { candidates: quickFallback };
+      }
+  // const APP_BLACKLIST = ['notepad.exe', 'notepad++.exe', 'python.exe', 'pythonw.exe', 'py.exe']; // duplicate removed
+  // const candidates = []; // duplicate removed
+  // const seenExe = new Set(); // duplicate removed
+
+  const addApp = (exePath) => {
+    if (!exePath || !fs.existsSync(exePath)) return;
+    // Normalize path for deduplication
+    const normalized = exePath.toLowerCase().replace(/\\/g, '\\\\');
+    if (!seenExe.has(normalized)) {
+      const info = getAppInfo(exePath);
+      candidates.push(info);
+      seenExe.add(normalized);
+    }
+  };
+
+  const extractExeFromCommand = (cmd) => {
+    if (!cmd) return null;
+    // Handle quoted paths like "C:\Program Files\App\app.exe" "%1"
+    const match = cmd.match(/^"([^"]+)"|(^\S+)/);
+    if (match) {
+      return match[1] || match[2];
+    }
+    return cmd.split(' ')[0];
+  };
+
+  // Method 1: Enumerate ALL applications in HKCR\Applications that support this extension
+  // This is the primary method - finds Chrome, Edge, and all registered apps
+  try {
+    const psCmd = `$ext = '.${cleanExt}'; Get-ChildItem 'HKCR:\\Applications' -ErrorAction SilentlyContinue | ForEach-Object { $appKey = $_.PSChildName; $supportedPath = Join-Path $_.PSPath 'SupportedTypes'; $valueNames = (Get-ItemProperty $supportedPath -ErrorAction SilentlyContinue).PSObject.Properties.Name; if ($valueNames -contains $ext) { $cmd = (Get-ItemProperty (Join-Path $_.PSPath 'shell\\open\\command') -ErrorAction SilentlyContinue).'(Default)'; if ($cmd) { $exe = $cmd -replace '^"','' -replace '".*','' -replace ' .*',''; if ($exe -and (Test-Path $exe)) { Write-Output $exe } } } }`;
+    // const apps = execSync(`powershell -NoProfile -Command "${psCmd}"`, { encoding: 'utf8', windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'] })
+    //   .trim().split('\n').filter(Boolean);
+    const { stdout } = await execAsync(`powershell -NoProfile -Command "${psCmd}"`);
+    const apps = stdout.trim().split('\n').filter(Boolean);
+    apps.forEach(exe => addApp(exe.trim()));
+  } catch (e) {
+    // Registry not available
+  }
+
+  // Method 2: Query OpenWithProgids - Microsoft recommended method
+  // HKEY_CLASSES_ROOT\.{ext}\OpenWithProgids contains ProgIDs
+  try {
+    const psCmd = `$ext = '.${cleanExt}'; $progPath = "HKCR:\\$ext\\OpenWithProgids"; if (Test-Path $progPath) { $progIds = Get-ItemProperty $progPath -ErrorAction SilentlyContinue | Get-Member -MemberType NoteProperty | Select-Object -ExpandProperty Name; foreach ($pid in $progIds) { if ($pid -and (Test-Path "HKCR:\\$pid\\shell\\open\\command")) { $cmd = (Get-ItemProperty "HKCR:\\$pid\\shell\\open\\command" -ErrorAction SilentlyContinue).'(Default)'; if ($cmd) { $exe = $cmd -replace '^"','' -replace '".*','' -replace ' .*',''; if ($exe) { Write-Output $exe } } } } }`;
+    // const apps = execSync(`powershell -NoProfile -Command "${psCmd}"`, { encoding: 'utf8', windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'] })
+    //   .trim().split('\n').filter(Boolean);
+    const { stdout } = await execAsync(`powershell -NoProfile -Command "${psCmd}"`);
+    const apps = stdout.trim().split('\n').filter(Boolean);
+    apps.forEach(exe => addApp(exe.trim()));
+  } catch (e) {
+    // Registry not available
+  }
+
+  // Method 3: Query OpenWithList - legacy method with direct exe names
+  try {
+    const psCmd = `$ext = '.${cleanExt}'; $listPath = "HKCR:\\$ext\\OpenWithList"; if (Test-Path $listPath) { $exes = Get-ItemProperty $listPath -ErrorAction SilentlyContinue | Get-Member -MemberType NoteProperty | Select-Object -ExpandProperty Name; foreach ($exe in $exes) { if ($exe -like '*.exe' -and (Test-Path $exe)) { Write-Output $exe } } }`;
+    // const appNames = execSync(`powershell -Command "${psCmd}"`, { encoding: 'utf8', windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'] })
+    //   .trim().split('\n').filter(Boolean);
+    const { stdout } = await execAsync(`powershell -Command "${psCmd}"`);
+    const appNames = stdout.trim().split('\n').filter(Boolean);
+
+    // Resolve exe names to full paths
+    for (const exeName of appNames) {
+      const systemPaths = [
+        process.env.WINDIR + '\\System32\\' + exeName,
+        process.env.WINDIR + '\\SysWOW64\\' + exeName,
+        process.env.WINDIR + '\\' + exeName,
+      ];
+      for (const candidate of systemPaths) {
+        if (fs.existsSync(candidate)) {
+          addApp(candidate);
+          break;
+        }
+      }
+    }
+  } catch (e) {
+    // Registry not available
+  }
+
+  // Method 4: HKCU FileExts OpenWithList (user-specific choices)
+  try {
+    const psCmd = `$key = Get-Item "HKCU:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\.${cleanExt}\\OpenWithList" -ErrorAction SilentlyContinue; if ($key) { $key.GetValueNames() | Where-Object { $_ -match '^[a-z]+$' } | ForEach-Object { $val = $key.GetValue($_); if ($val -like '*.exe' -and $val -like '*:\\*' -and (Test-Path $val)) { $val } } }`;
+    // const apps = execSync(`powershell -Command "${psCmd}"`, { encoding: 'utf8', windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'] })
+    //   .trim().split('\n').filter(l => l.includes('\\') && l.includes('.exe'));
+    const { stdout } = await execAsync(`powershell -Command "${psCmd}"`);
+    const apps = stdout.trim().split('\n').filter(l => l.includes('\\') && l.includes('.exe'));
+    apps.forEach(exe => addApp(exe.trim()));
+  } catch (e) {
+    // Registry not available
+  }
+
+  // Method 5: Default association via assoc/ftype
+  try {
+    // const assocOut = execSync(`assoc .${cleanExt}`, { encoding: 'utf8', windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'] }).trim();
+    const { stdout: assocOut } = await execAsync(`assoc .${cleanExt}`);
+    const progId = assocOut.split('=')[1]?.trim();
+    if (progId) {
+      // const ftypeOut = execSync(`ftype ${progId}`, { encoding: 'utf8', windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'] }).trim();
+      const { stdout: ftypeOut } = await execAsync(`ftype ${progId}`);
+      const cmd = ftypeOut.split('=')[1];
+      if (cmd) {
+        const exe = extractExeFromCommand(cmd);
+        if (exe && fs.existsSync(exe)) addApp(exe);
+      }
+    }
+  } catch (e) {
+    // assoc/ftype not available
+  }
+
+  // Fallback: Common apps by extension - check hardcoded paths
+  const commonApps = {
+  // Expanded common editors for programming languages
+  // VS Code (code.exe) covers many, plus typical IDEs/editors
+  // .jsx/.tsx (React/TSX), .c/.cpp/.java/.go/.rb/.php/.sh etc.
+  // Add more entries as needed for broader detection.
+
+    txt: ['notepad.exe'],
+    log: ['notepad.exe'],
+    json: ['notepad.exe'],
+    xml: ['notepad.exe'],
+    csv: ['notepad.exe'],
+    md: ['notepad.exe'],
+    xlsx: ['excel.exe'],
+    xls: ['excel.exe'],
+    docx: ['winword.exe'],
+    doc: ['winword.exe'],
+    pptx: ['powerpnt.exe'],
+    pdf: ['AcroRd32.exe', 'msedge.exe', 'chrome.exe'],
+    html: ['msedge.exe', 'chrome.exe'],
+    htm: ['msedge.exe', 'chrome.exe'],
+    jpg: ['photos.exe', 'mspaint.exe'],
+    jpeg: ['photos.exe'],
+    png: ['photos.exe', 'mspaint.exe'],
+    gif: ['photos.exe'],
+    mp3: ['wmplayer.exe'],
+    mp4: ['wmplayer.exe'],
+    py: ['code.exe', 'notepad.exe'],
+    js: ['code.exe', 'notepad.exe'],
+    ts: ['code.exe', 'notepad.exe'],
+    css: ['code.exe', 'notepad.exe'],
+  };
+
+  // Office app paths
+  const officePaths = [
+    'C:\\Program Files\\Microsoft Office\\root\\Office16\\',
+    'C:\\Program Files (x86)\\Microsoft Office\\root\\Office16\\',
+    'C:\\Program Files\\Microsoft Office\\Office16\\',
+    'C:\\Program Files (x86)\\Microsoft Office\\Office16\\',
+    'C:\\Program Files\\Microsoft Office\\root\\Office15\\',
+    'C:\\Program Files (x86)\\Microsoft Office\\root\\Office15\\',
+  ];
+
+  // Edge paths
+  const edgePaths = [
+    'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+    'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
+  ];
+
+  // Chrome paths
+  const chromePaths = [
+    'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+    'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+  ];
+
+  // Adobe Reader paths
+  const adobePaths = [
+    'C:\\Program Files (x86)\\Adobe\\Acrobat Reader DC\\Reader\\AcroRd32.exe',
+    'C:\\Program Files\\Adobe\\Acrobat Reader DC\\Reader\\AcroRd32.exe',
+    'C:\\Program Files (x86)\\Adobe\\Acrobat DC\\Acrobat\\Acrobat.exe',
+  ];
+
+  // VS Code paths
+  const vscodePaths = [
+    'C:\\Users\\' + (process.env.USERPROFILE?.split('\\').pop() || '') + '\\AppData\\Local\\Programs\\Microsoft VS Code\\Code.exe',
+    'C:\\Program Files\\Microsoft VS Code\\Code.exe',
+  ];
+
+  if (commonApps[cleanExt]) {
+    for (const exeName of commonApps[cleanExt]) {
+      // Check System32 and Windows folder
+      const systemPaths = [
+        process.env.WINDIR + '\\System32\\' + exeName,
+        process.env.WINDIR + '\\SysWOW64\\' + exeName,
+        process.env.WINDIR + '\\' + exeName,
+      ];
+
+      for (const candidate of systemPaths) {
+        if (fs.existsSync(candidate)) {
+          addApp(candidate);
+        }
+      }
+
+      // Check Office paths for Office apps
+      if (['excel.exe', 'winword.exe', 'powerpnt.exe'].includes(exeName)) {
+        for (const officePath of officePaths) {
+          const candidate = officePath + exeName;
+          if (fs.existsSync(candidate)) {
+            addApp(candidate);
+          }
+        }
+      }
+
+      // Check Edge paths
+      if (exeName === 'msedge.exe') {
+        for (const candidate of edgePaths) {
+          if (fs.existsSync(candidate)) {
+            addApp(candidate);
+          }
+        }
+      }
+
+      // Check Chrome paths
+      if (exeName === 'chrome.exe') {
+        for (const candidate of chromePaths) {
+          if (fs.existsSync(candidate)) {
+            addApp(candidate);
+          }
+        }
+      }
+
+      // Check Adobe paths
+      if (exeName === 'AcroRd32.exe') {
+        for (const candidate of adobePaths) {
+          if (fs.existsSync(candidate)) {
+            addApp(candidate);
+          }
+        }
+      }
+
+      // Check VS Code paths
+      if (exeName === 'code.exe' || exeName === 'Code.exe') {
+        for (const candidate of vscodePaths) {
+          if (fs.existsSync(candidate)) {
+            addApp(candidate);
+          }
+        }
+      }
+    }
+  }
+
+  // Add Store search for office formats
+  if (['xlsx', 'docx', 'pptx', 'pdf'].includes(cleanExt)) {
+    candidates.push({
+      name: 'Search Microsoft Store',
+      exe: 'ms-windows-store://',
+      isStoreSearch: true
+    });
+  }
+
+  // Filter out blacklisted generic executables
+  let filtered = candidates.filter(c => {
+    try {
+      const base = require('path').basename(c.exe).toLowerCase();
+      return !APP_BLACKLIST.includes(base);
+    } catch (_) { return true; }
+  });
+
+  // If nothing found (including after hard‑coded common apps), fall back to a lightweight scan of Program Files directories.
+  // This catches apps like Antigravity that may not be registered in the registry yet expose an executable.
+  if (filtered.length === 0) {
+    const programDirs = [process.env.ProgramFiles, process.env['ProgramFiles(x86)'], path.join(process.env.LOCALAPPDATA || '', 'Microsoft', 'WindowsApps')].filter(Boolean); // fallback scan of Program Files and Windows Store apps
+    for (const dir of programDirs) {
+      try {
+        const entries = fs.readdirSync(dir);
+        for (const entry of entries) {
+          const fullPath = path.join(dir, entry);
+          try {
+            const stats = fs.statSync(fullPath);
+            if (stats.isFile() && fullPath.toLowerCase().endsWith('.exe')) {
+              // addApp ensures dedup and blacklist handling
+              addApp(fullPath);
+            }
+          } catch (_) {}
+        }
+      } catch (_) {}
+    }
+    // Re‑apply blacklist filter after scanning program files
+    filtered = candidates.filter(c => {
+      try {
+        const base = require('path').basename(c.exe).toLowerCase();
+        return !APP_BLACKLIST.includes(base);
+      } catch (_) { return true; }
+    });
+  }
+
+  // Additional recursive scan of Windows Store apps to catch UWP executables (Antigravity, Photos, etc.)
+      if (filtered.length === 0) {
+        const storeDir = path.join(process.env.LOCALAPPDATA || '', 'Microsoft', 'WindowsApps');
+        const scanDirForExes = (dir, depth = 0) => {
+          if (!dir || depth > 5) return; // increase depth to capture deeper UWP packages
+          try {
+            const entries = fs.readdirSync(dir);
+            for (const entry of entries) {
+              const fullPath = path.join(dir, entry);
+              try {
+                const stats = fs.statSync(fullPath);
+                if (stats.isFile() && fullPath.toLowerCase().endsWith('.exe')) {
+                  addApp(fullPath);
+                } else if (stats.isDirectory()) {
+                  scanDirForExes(fullPath, depth + 1);
+                }
+              } catch (_) {}
+            }
+          } catch (_) {}
+        };
+        scanDirForExes(storeDir);
+        // Re‑apply blacklist filter after scanning store apps
+        filtered = candidates.filter(c => {
+          try {
+            if (!c.exe) return true;
+            const base = require('path').basename(c.exe).toLowerCase();
+            return !APP_BLACKLIST.includes(base);
+          } catch (_) { return true; }
+        });
+      }
+
+      // If still empty after program‑files scan, add generic editors based on file type
+  if (filtered.length === 0) {
+    const imageExts = ['jpg','jpeg','png','gif','bmp','webp','tiff','svg'];
+    const isImage = imageExts.includes(cleanExt);
+    const genericList = isImage ? ['photos.exe','mspaint.exe'] : ['code.exe','notepad++.exe','sublime_text.exe','atom.exe'];
+    genericList.forEach(name => {
+      const possible = [
+        process.env.WINDIR + '\\System32\\' + name,
+        process.env.WINDIR + '\\SysWOW64\\' + name,
+        process.env.WINDIR + '\\' + name,
+        // Windows Store apps folder (symlinks for store apps)
+        path.join(process.env.LOCALAPPDATA || '', 'Microsoft', 'WindowsApps', name),
+        // Program Files paths
+        process.env.ProgramFiles && path.join(process.env.ProgramFiles, name),
+        process.env['ProgramFiles(x86)'] && path.join(process.env['ProgramFiles(x86)'], name)
+      ].filter(Boolean);
+      for (const p of possible) {
+        if (fs.existsSync(p)) {
+          addApp(p);
+        }
+      }
+    });
+    // Re‑filter after adding generic editors
+    filtered = candidates.filter(c => {
+      try {
+        const base = require('path').basename(c.exe).toLowerCase();
+        return !APP_BLACKLIST.includes(base);
+      } catch (_) { return true; }
+    });
+  }
+
+  // Store in runtime cache and persist to disk
+  candidateCache.set(cleanExt, { candidates: filtered, timestamp: Date.now() });
+  openWithMap[cleanExt] = filtered;
+  saveOpenWithMap();
+  console.log('[OpenWith] Handler finished for', cleanExt, '- candidates:', filtered.length);
+
+  // Final fallback: if no candidates were discovered, provide a generic default entry
+  if (filtered.length === 0) {
+    console.log('[OpenWith] No candidates found for', cleanExt, '- using generic fallback');
+    const generic = { name: 'Open with default app', exe: null };
+    candidateCache.set(cleanExt, { candidates: [generic], timestamp: Date.now() });
+    openWithMap[cleanExt] = [generic];
+    saveOpenWithMap();
+    return { candidates: [generic] };
+  }
+
+  return { candidates: filtered };
+
+});
+
+// Launch the selected executable with the target file
+ipcMain.handle('open-with:launch', async (_, { exe, file }) => {
+  // Handle Microsoft Store search URL
+  if (exe?.startsWith('ms-windows-store://')) {
+    const { shell } = require('electron');
+    await shell.openExternal(exe);
+    return;
+  }
+
+  // If no specific executable was found, fall back to the system default handler (works for UWP apps like Photos, Antigravity, etc.)
+  if (!exe) {
+    const { shell } = require('electron');
+    // Use the actual file path if provided; fallback to string if file is already a path.
+    const targetPath = typeof file === 'string' ? file : (file && file.path) || '';
+    if (targetPath) await shell.openPath(targetPath);
+    return;
+  }
+
+  return new Promise((resolve, reject) => {
+    const targetPath = typeof file === 'string' ? file : (file && file.path) || '';
+    exec(`"${exe}" "${targetPath}"`, { windowsHide: true }, (err) => {
+      if (err) reject(err);
+      else resolve();
+    });
+  });
+});
+
+// Show file picker for a custom executable ("Browse for app…")
+ipcMain.handle('open-with:browse', async () => {
+  const { canceled, filePaths } = await dialog.showOpenDialog({
+    title: 'Select an application',
+    properties: ['openFile'],
+    filters: [{ name: 'Executable', extensions: ['exe'] }]
+  });
+  return { canceled, filePaths };
+});
+
+// Open native Windows "Open With" dialog using SHOpenWithDialog API
+ipcMain.handle('open-with:show-native-dialog', async (_, filePath) => {
+  const path = require('path');
+
+  console.log('[open-with:show-native-dialog] Received filePath:', filePath);
+
+  // Validate the file exists and normalize the path
+  const normalizedPath = path.resolve(filePath);
+  console.log('[open-with:show-native-dialog] Normalized path:', normalizedPath);
+
+  if (!fs.existsSync(normalizedPath)) {
+    console.error('[open-with:show-native-dialog] File not found:', normalizedPath);
+    throw new Error('File not found: ' + normalizedPath);
+  }
+
+  try {
+    // Use C# compiled inline to call SHOpenWithDialog via P/Invoke
+    const { execSync } = require('child_process');
+
+    // Create a temporary C# script and compile it
+    const csScript = `
+using System;
+using System.Runtime.InteropServices;
+using System.Windows.Forms;
+
+public class OpenWithDialog {
+  [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+  private static extern int SHOpenWithDialog(IntPtr hWndParent, ref OPEN_AS_INFO pInfo);
+
+  [StructLayout(LayoutKind.Sequential)]
+  private struct OPEN_AS_INFO {
+    [MarshalAs(UnmanagedType.LPWStr)]
+    public string pcwszFile;
+    [MarshalAs(UnmanagedType.LPWStr)]
+    public string pcwszClass;
+    public uint fwFlags;
+  }
+
+  public static int Main(string[] args) {
+    if (args.Length == 0) return 1;
+
+    // Create hidden form for valid window handle
+    using (var form = new Form { Opacity = 0, ShowInTaskbar = false }) {
+      form.Show();
+
+      OPEN_AS_INFO info = new OPEN_AS_INFO();
+      info.pcwszFile = args[0];
+      info.pcwszClass = null;
+      info.fwFlags = 0;
+
+      int result = SHOpenWithDialog(form.Handle, ref info);
+      Application.DoEvents();
+      form.Close();
+      return result;
+    }
+  }
+}
+`;
+    // Write temp file and compile
+    const tempDir = require('os').tmpdir();
+    const tempCsPath = path.join(tempDir, 'openwith_' + Date.now() + '.cs');
+    const tempExePath = path.join(tempDir, 'openwith_' + Date.now() + '.exe');
+
+    fs.writeFileSync(tempCsPath, csScript);
+
+    // Compile with csc.exe (C# compiler) - reference System.Windows.Forms
+    const cscPath = 'C:\\Windows\\Microsoft.NET\\Framework\\v4.0.30319\\csc.exe';
+    if (fs.existsSync(cscPath)) {
+      execSync(`"${cscPath}" /target:exe /r:System.Windows.Forms.dll /out:"${tempExePath}" "${tempCsPath}"`, {
+        encoding: 'utf8',
+        windowsHide: true,
+        stdio: ['pipe', 'pipe', 'pipe']
+      });
+
+      // Run the compiled exe
+      execSync(`"${tempExePath}" "${normalizedPath}"`, {
+        encoding: 'utf8',
+        windowsHide: true,
+        stdio: ['pipe', 'pipe', 'pipe']
+      });
+
+      // Cleanup
+      try { fs.unlinkSync(tempCsPath); } catch {}
+      try { fs.unlinkSync(tempExePath); } catch {}
+
+      console.log('[open-with:show-native-dialog] Dialog launched via SHOpenWithDialog');
+      return true;
+    } else {
+      console.error('[open-with:show-native-dialog] csc.exe not found');
+      throw new Error('C# compiler not found');
+    }
+  } catch (e) {
+    console.error('[open-with:show-native-dialog] Error:', e.message);
+    throw e;
+  }
+});
+
+// Get file icon as data URL for an executable or any file
+ipcMain.handle('get-file-icon', async (_, filePath) => {
+  try {
+    const { execSync } = require('child_process');
+    // Escape single quotes and backslashes for PowerShell
+    const escPath = filePath.replace(/'/g, "''").replace(/\\/g, '\\\\');
+    const ps = `
+$ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.Drawing
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -Language CSharp @"
+using System;
+using System.Runtime.InteropServices;
+public static class Win32 {
+  [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+  public static extern IntPtr SHGetFileInfo(
+    string pszPath,
+    uint dwFileAttributes,
+    ref SHFILEINFO psfi,
+    uint cbFileInfo,
+    uint uFlags);
+  [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+  public struct SHFILEINFO {
+    public IntPtr hIcon;
+    public int iIcon;
+    public uint dwAttributes;
+    [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)]
+    public string szDisplayName;
+    [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 80)]
+    public string szTypeName;
+  }
+}
+"@
+
+$filePath = '${escPath}'
+$shfi = New-Object Win32+SHFILEINFO
+$SHGFI_ICON = 0x000000100
+$SHGFI_LARGEICON = 0x000000000
+[void] [Win32]::SHGetFileInfo($filePath, 0, [ref]$shfi, [System.Runtime.InteropServices.Marshal]::SizeOf($shfi), $SHGFI_ICON -bor $SHGFI_LARGEICON)
+if ($shfi.hIcon -ne [IntPtr]::Zero) {
+  $icon = [System.Drawing.Icon]::FromHandle($shfi.hIcon)
+  $bmp = $icon.ToBitmap()
+  $ms = New-Object System.IO.MemoryStream
+  $bmp.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
+  $bytes = [Convert]::ToBase64String($ms.ToArray())
+  $icon.Dispose()
+  $bmp.Dispose()
+  $ms.Dispose()
+  Write-Output $bytes
+}
+`;
+    const b64 = execSync(`powershell -NoProfile -Command "${ps}"`, {
+      encoding: 'utf8',
+      windowsHide: true,
+      maxBuffer: 10 * 1024 * 1024,
+    }).trim();
+    if (b64 && b64.length > 0) {
+      return { icon: 'data:image/png;base64,' + b64 };
+    }
+  } catch (e) {
+    console.log('[get-file-icon] Error:', e.message);
+  }
+  return { icon: null };
 });
 
 function isProtectedPath(filePath) {
@@ -3364,7 +4035,8 @@ function registerIpcHandlers() {
   });
 
   // ── Open With (native dialog) ──
-  ipcMain.handle('open-with', async (event, filePath) => {
+  ipcMain.handle('open-with', async (event, filePath) => { // custom open with (handled by UI)
+
     try {
       if (process.platform === 'win32') {
         const { exec } = require('child_process');
@@ -3377,6 +4049,13 @@ function registerIpcHandlers() {
     } catch (err) {
       return { success: false, error: err.message };
     }
+  });
+
+  // Open Default Apps Settings fallback (used when no apps are associated)
+  ipcMain.handle('open-default-apps-settings', async () => {
+    const { shell } = require('electron');
+    await shell.openExternal('ms-settings:defaultapps');
+    return true;
   });
 
   // ── Get File Details (extended metadata) ──
@@ -3662,8 +4341,8 @@ function registerIpcHandlers() {
 
   // Update handlers
   ipcMain.handle('check-for-updates', async () => {
-    const result = await checkGitHubUpdatesOncePerDay({ force: true });
-    return result;
+    console.log('[check-for-updates] Manual update check requested');
+    forceCheckForUpdates();
   });
 
   ipcMain.on('update-restart', () => {
@@ -3934,5 +4613,41 @@ app.on('before-quit', () => {
 app.on('activate', () => {
   if (mainWindow === null) {
     createWindow();
+  }
+});
+// Duplicate handler for open-default-apps-settings removed – original registration is at line 3500
+
+// Watch for installation/uninstallation changes to clear caches
+const watchDirs = [process.env.ProgramFiles, process.env['ProgramFiles(x86)']].filter(Boolean);
+const REBUILD_DEBOUNCE_MS = 3000;
+let rebuildTimer = null;
+// Temporary ignore window after system resume to avoid spurious cache clears.
+let ignoreCacheResetUntil = 0;
+app.on('resume', () => {
+  // Ignore cache resets for the next few seconds after resume.
+  ignoreCacheResetUntil = Date.now() + 5000;
+});
+function scheduleCacheReset() {
+  if (Date.now() < ignoreCacheResetUntil) {
+    // Skip clearing caches during the ignore window.
+    return;
+  }
+  if (rebuildTimer) clearTimeout(rebuildTimer);
+  rebuildTimer = setTimeout(() => {
+    console.log('[OpenWith] Detected program install/uninstall – clearing caches');
+    candidateCache.clear();
+    openWithMap = {};
+    saveOpenWithMap();
+  }, REBUILD_DEBOUNCE_MS);
+}
+watchDirs.forEach(dir => {
+  try {
+    fs.watch(dir, { recursive: true }, (eventType, filename) => {
+      if (filename && (filename.endsWith('.exe') || filename.endsWith('.lnk'))) {
+        scheduleCacheReset();
+      }
+    });
+  } catch (e) {
+    console.warn('[OpenWith] Failed to watch', dir, ':', e.message || e);
   }
 });

@@ -6,6 +6,7 @@ import os
 import sys
 import time
 import logging
+import threading
 import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
@@ -541,10 +542,14 @@ async def startup():
     # Pass explicit paths so watcher never uses wrong module-level defaults
     start_watcher(on_change, db_path=DB_PATH, sync_folder=SYNC_FOLDER)
 
-    try:
-        _zeroconf, _zeroconf_info = start_mdns()
-    except Exception as exc:
-        log.warning("mDNS startup skipped: %s", exc)
+    def _start_mdns_background():
+        global _zeroconf, _zeroconf_info
+        try:
+            _zeroconf, _zeroconf_info = start_mdns()
+        except Exception as exc:
+            log.warning("mDNS startup skipped: %s", exc)
+
+    threading.Thread(target=_start_mdns_background, daemon=True).start()
 
     log.info("IntelliFile local sync server running on 0.0.0.0:8765")
     log.info("Sync folder : %s", os.path.abspath(SYNC_FOLDER))

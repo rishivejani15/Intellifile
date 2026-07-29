@@ -180,7 +180,6 @@ function FileList({
                     </>
                   )}
                 </div>
-                {isFileSelected(item) && <div className="selected-badge">✓</div>}
               </div>
                );
           })}

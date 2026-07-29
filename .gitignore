@@ -70,3 +70,27 @@ Desktop.ini
 .vscode/
 *.swp
 *.swo
+
+.claude
+tools
+.claude-flow
+.swarm
+ruvector.db
+intellifile_app/build/
+
+intellifile_app/build/
+intellifile_app/.dart_tool/
+intellifile_app/android/.gradle/
+intellifile_app/**/ephemeral/
+intellifile_app/**/*.dill
+sync-dist/server/_internal/
+CLAUDE.md
+# Flutter generated files
+intellifile_app/.flutter-plugins-dependencies
+intellifile_app/**/GeneratedPluginRegistrant.*
+intellifile_app/android/local.properties
+intellifile_app/android/gradle/wrapper/gradle-wrapper.jar
+intellifile_app/**/ephemeral/
+intellifile_app/.dart_tool/
+intellifile_app/build/
+intellifile_app/android/.gradle/

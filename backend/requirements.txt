@@ -9,7 +9,6 @@ openpyxl
 python-pptx
 Pillow
 pytesseract
-winocr
 onnxruntime
 optimum
 fastapi
@@ -21,5 +20,3 @@ pydantic
 sentence-transformers[onnx] 
 llama-cpp-python==0.3.26
 huggingface_hub
-watchdog
-zeroconf

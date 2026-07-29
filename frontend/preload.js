@@ -43,7 +43,8 @@ contextBridge.exposeInMainWorld('electron', {
     },
   },
   shell: {
-    openPath: (path) => shell.openPath(path)
+    openPath: (path) => shell.openPath(path),
+    openExternal: (url) => shell.openExternal(url)
   }
 });
 

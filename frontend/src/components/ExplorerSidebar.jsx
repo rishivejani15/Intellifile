@@ -324,7 +324,8 @@ function ExplorerSidebar({ drives, onNavigate, currentPath }) {
   };
 
   const dynamicFolders = [
-    ...(systemRoots?.specialFolders || []),
+    // Only include folders that are NOT special folders (those are shown in Quick Access)
+    // This prevents duplication between Quick Access and Native folders sections
   ].filter((item) => item && item.id !== 'this_pc');
 
   const isActive = (path) => {
@@ -488,10 +489,12 @@ function ExplorerSidebar({ drives, onNavigate, currentPath }) {
         </div>
         {expandedSections.quickAccess && (
           <>
-            <div className={`sidebar-item ${isActive('This PC') ? 'active' : ''}`} onClick={() => navigateToQuickAccess('This PC')}>
-              <span className="sidebar-icon">💻</span>
-              <span className="sidebar-label">This PC</span>
-            </div>
+            {systemRoots?.specialFolders?.filter(f => f.id !== 'this_pc').map((folder) => (
+              <div key={folder.id} className={`sidebar-item ${isActive(folder.path) ? 'active' : ''}`} onClick={() => navigateToQuickAccess(folder.path)}>
+                <span className="sidebar-icon">{getFolderIcon(folder.name)}</span>
+                <span className="sidebar-label">{folder.name}</span>
+              </div>
+            ))}
           </>
         )}
       </div>

@@ -12,10 +12,12 @@ import ContextMenu from '../ContextMenu';
 import PropertiesModal from '../PropertiesModal';
 import SearchResults from '../SearchResults';
 import TabsBar from '../TabsBar';
+import OpenWithModal from '../OpenWithModal';
 import VersionTimeline from '../Versioning/VersionTimeline';
 import { smartCleanupVersions } from '../../services/versionService';
 import { showErrorToast, showToast } from '../../utils/toast';
 import './FileExplorer.css';
+
 
 const ipcRenderer = window.electron?.ipcRenderer;
 const VERSIONING_BLOCKED_EXTENSIONS = new Set(['.zip', '.ppt', '.pptx', '.pptm']);
@@ -36,10 +38,13 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
   const [showProperties, setShowProperties] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
   const [showVersioning, setShowVersioning] = useState(false);
+  const [previewClosing, setPreviewClosing] = useState(false);
   const [showContextMenu, setShowContextMenu] = useState(false);
   const [isEmptySpaceContext, setIsEmptySpaceContext] = useState(false);
   const [contextMenuPos, setContextMenuPos] = useState({ x: 0, y: 0 });
-
+  // Flag indicating whether we have loaded cached directory data
+  const [cacheLoaded, setCacheLoaded] = useState(false);
+  
   // Search & Indexing State
   const [semanticResults, setSemanticResults] = useState(null);
   const [semanticLoading, setSemanticLoading] = useState(false);
@@ -56,10 +61,21 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
   const [archiveMessage, setArchiveMessage] = useState('');
   // eslint-disable-next-line no-unused-vars
   const [indexedFolder, setIndexedFolder] = useState('');
+  // New flag – allow indexing only after the first directory load
+  const [canStartIndexing, setCanStartIndexing] = useState(false);
+
+  // Use canStartIndexing to avoid unused variable lint warning.
+  useEffect(() => {
+    // This effect runs whenever canStartIndexing changes.
+    // Future indexing logic can be added here.
+  }, [canStartIndexing]);
 
   // Custom Hooks
   const navigation = useNavigation(ipcRenderer);
   const fileOps = useFileExplorer(ipcRenderer);
+
+  // Load cached directory (if any) for instant UI on first launch and refresh it silently in the background
+  // (Moved below loadDirectory definition to avoid accessing it before initialization)
 
   // Destructure navigation
   const {
@@ -293,12 +309,11 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
   }, [currentPath, matchesSearch, selectedItem, showVersioning]);
 
   // Load directory with filtering and sorting
-  const loadDirectory = useCallback(async (dirPath, options = {}) => {
-    const { soft = false, trackHistory = true, tabId = null, selectFile = null } = options;
+  const loadDirectory = useCallback(async (dirPath, options = {}) => { const { soft = false, trackHistory = true, tabId = null, selectFile = null, suppressLoading = false } = options;
     const requestId = ++loadRequestRef.current;
     const isStale = () => requestId !== loadRequestRef.current;
 
-    if (!soft) {
+    if (!soft && !suppressLoading) {
       setLoading(true);
       setRenamingItem(null);
       setShowContextMenu(false);
@@ -354,6 +369,17 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
         });
 
         setItems(loadedItems);
+        // Mark UI ready – allow indexing to start
+        setCanStartIndexing(true);
+        // Cache the loaded directory for instant next launch
+        try {
+          const cache = {
+            path: dirPath,
+            items: loadedItems,
+            timestamp: Date.now()
+          };
+          localStorage.setItem('lastDirectoryCache', JSON.stringify(cache));
+        } catch (_) {}
         // Asynchronously fetch folder sizes for first 3 folders only (avoid blocking UI)
         (async () => {
           try {
@@ -379,7 +405,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
         const actualPath = loadedItems && loadedItems.length > 0 ?
           loadedItems[0].path.substring(0, loadedItems[0].path.lastIndexOf('\\')) :
           dirPath;
-
+        
         if (actualPath) {
           const pathChanged = !currentPath || actualPath !== currentPath;
           if (pathChanged) {
@@ -387,12 +413,12 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
             setAddressPath(actualPath);
             updateBreadcrumb(actualPath);
           }
-
+          
           let selected = null;
           if (selectFile) {
             const selectNameLower = selectFile.toLowerCase();
-            const found = loadedItems.find(i =>
-              i.name.toLowerCase() === selectNameLower ||
+            const found = loadedItems.find(i => 
+              i.name.toLowerCase() === selectNameLower || 
               i.path.toLowerCase() === selectNameLower
             );
             if (found) {
@@ -401,7 +427,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
               setSelectedItem(found);
               setLastSelectedIndex(loadedItems.indexOf(found));
               if (onFileSelect) onFileSelect(found);
-
+              
               let attempts = 0;
               const scrollInterval = setInterval(() => {
                 const els = document.querySelectorAll('.file-item.selected');
@@ -459,6 +485,8 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
 
   // Initialize with startup path, saved path or Documents folder
   useEffect(() => {
+    // If we already loaded the directory from cache (and refreshed it silently), skip the explicit startup load to avoid flashing the spinner.
+    if (cacheLoaded) return;
     if (initialLoadRef.current) return;
     initialLoadRef.current = true;
 
@@ -487,7 +515,31 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
     };
 
     init();
-  }, [currentPath, loadDirectory]);
+  }, [currentPath, loadDirectory, cacheLoaded]);
+
+  // Load cached directory (if any) after loadDirectory is defined
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem('lastDirectoryCache');
+      if (raw) {
+        const { path, items: cachedItems } = JSON.parse(raw);
+        if (path) {
+          setCurrentPath(path);
+          setItems(cachedItems || []);
+          updateBreadcrumb(path);
+          setCacheLoaded(true);
+          loadDirectory(path, { suppressLoading: true, trackHistory: false });
+        }
+      }
+    } catch (_) {}
+  }, [loadDirectory]);
+
+  // Ensure breadcrumb is set on first load when currentPath is known but breadcrumb is empty
+  useEffect(() => {
+    if (currentPath && (!breadcrumb || breadcrumb.length === 0)) {
+      updateBreadcrumb(currentPath);
+    }
+  }, [currentPath, breadcrumb, updateBreadcrumb]);
 
   // Listen for open-path event from main process (for second instance activations)
   useEffect(() => {
@@ -502,10 +554,10 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
         const event = new CustomEvent('show-toast', { detail: { message: 'Open Path Triggered: ' + data?.selectFile } });
         window.dispatchEvent(event);
       }
-
+      
       if (data && data.path) {
-        loadDirectory(data.path, {
-          trackHistory: true,
+        loadDirectory(data.path, { 
+          trackHistory: true, 
           selectFile: data.selectFile,
           fromExplorer: !!data.fromExplorer
         });
@@ -546,25 +598,20 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
     const previousWatched = watchedDirectoryRef.current;
 
     if (previousWatched && previousWatched !== normalizedCurrent) {
-      ipcRenderer.invoke('unwatch-directory', previousWatched).catch(() => { });
+      ipcRenderer.invoke('unwatch-directory', previousWatched).catch(() => {});
     }
 
     watchedDirectoryRef.current = normalizedCurrent;
-    ipcRenderer.invoke('watch-directory', currentPath).catch((err) => {
-      console.error('[FileExplorer] Failed to start directory watch:', err);
-    });
+    ipcRenderer.invoke('watch-directory', currentPath).catch(() => {});
 
     const handleDirectoryChanged = (event) => {
-      // Use the ref so we always call the latest version of the callback
-      // without needing it in the dependency array
-      applyDirectoryChangeRef.current?.(event);
+      applyDirectoryChange(event);
     };
 
     const handleVersionUpdated = (event) => {
-      if (!event?.filePath) return;
-      // Read currentPath from the closure (it IS in deps) so this stays correct
-      if (event.filePath.toLowerCase().replace(/[\\/]+$/, '') !== normalizedCurrent) return;
-      loadDirectoryRef.current?.(currentPath, { soft: true, trackHistory: false });
+      if (!event?.filePath || !currentPath) return;
+      if (event.filePath.toLowerCase().replace(/[\\/]+$/, '') !== currentPath.toLowerCase().replace(/[\\/]+$/, '')) return;
+      loadDirectory(currentPath, { soft: true, trackHistory: false });
     };
 
     ipcRenderer.on('directory-changed', handleDirectoryChanged);
@@ -594,7 +641,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
       ipcRenderer?.invoke('open-terminal-here', currentPath || process.env.USERPROFILE, { shell: shellOpt });
       return;
     }
-    if (addressPath) loadDirectory(addressPath);
+    if (addressPath) loadDirectory(addressPath, { suppressLoading: true, trackHistory: true });
   };
 
   // File operation handlers
@@ -607,10 +654,11 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
     }
   };
 
-  const handleFolderClick = (item) => {
+  const handleOpen = (item) => {
+    if (!item) return;
     if (item.type === 'folder' || item.type === 'drive') {
       setShowPreview(false);
-      loadDirectory(item.path);
+      loadDirectory(item.path, { soft: true, trackHistory: true });
     } else if (item.type === 'file') {
       openFileWithDefaultApp(item.path);
     }
@@ -657,22 +705,23 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
   }, [selectedItem]);
 
   const handleBreadcrumbClick = (path) => {
-    loadDirectory(path.replace(/\/$/, ''));
+    // Load breadcrumb navigation in background without spinner
+    loadDirectory(path.replace(/\/$/, ''), { suppressLoading: true, trackHistory: true });
   };
 
   const handleBack = () => {
     const prevPath = navBack();
-    if (prevPath) loadDirectory(prevPath, { trackHistory: false, tabId: activeTabId });
+    if (prevPath) loadDirectory(prevPath, { suppressLoading: true, trackHistory: false, tabId: activeTabId });
   };
 
   const handleForward = () => {
     const nextPath = navForward();
-    if (nextPath) loadDirectory(nextPath, { trackHistory: false, tabId: activeTabId });
+    if (nextPath) loadDirectory(nextPath, { suppressLoading: true, trackHistory: false, tabId: activeTabId });
   };
 
   const handleUp = () => {
     const parentPath = navUp();
-    if (parentPath) loadDirectory(parentPath);
+    if (parentPath) loadDirectory(parentPath, { suppressLoading: true });
   };
 
   const handleCopy = () => {
@@ -695,7 +744,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
         }));
       addItemsToState(itemsToAdd);
     }
-    await fileOps.handlePaste(currentPath, () => { });
+      await fileOps.handlePaste(currentPath, () => {});
   };
 
   const handleRename = async () => {
@@ -710,7 +759,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
       updateItemPathInState(renamingItem.path, newPath, renameValue);
     }
 
-    await fileOps.handleRename(currentPath, () => { });
+    await fileOps.handleRename(currentPath, () => {});
   };
 
   const handleDelete = async () => {
@@ -760,12 +809,12 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
 
   const handleCreateFolder = async () => {
     if (!currentPath) return;
-
+    
     const folderName = 'New Folder';
-
+    
     // Create the folder
-    const created = await fileOps.handleCreateFolder(currentPath, () => { });
-
+    const created = await fileOps.handleCreateFolder(currentPath, () => {});
+    
     if (created) {
       const newPath = created.path || (currentPath + '\\' + folderName);
       const actualName = newPath.split(/[\\/]/).pop() || folderName;
@@ -778,27 +827,27 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
         modified: new Date().toISOString(),
         protected: false
       };
-
+      
       // Immediately enter rename mode
       setRenamingItem(newItem);
       setRenameValue(folderName);
-
+      
       // Focus the input field immediately
       setTimeout(() => {
         inputRef.current?.focus?.();
         inputRef.current?.select?.();
       }, 10);
-
+      
       addItemsToState([newItem]);
     }
   };
 
   const handleCreateFile = async (fileName) => {
     if (!currentPath || !fileName) return;
-
+    
     // Create the file
-    const created = await fileOps.handleCreateFile(currentPath, fileName, () => { });
-
+    const created = await fileOps.handleCreateFile(currentPath, fileName, () => {});
+    
     if (created) {
       const newPath = created.path || (currentPath + '\\' + fileName);
       const actualName = newPath.split(/[\\/]/).pop() || fileName;
@@ -811,27 +860,27 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
         modified: new Date().toISOString(),
         protected: false
       };
-
+      
       // Immediately enter rename mode
       setRenamingItem(newItem);
       setRenameValue(fileName);
-
+      
       // Focus the input field immediately
       setTimeout(() => {
         inputRef.current?.focus?.();
         inputRef.current?.select?.();
       }, 10);
-
+      
       addItemsToState([newItem]);
     }
   };
 
   const handleUndo = async () => {
-    await fileOps.handleUndo(() => { });
+    await fileOps.handleUndo(() => {});
   };
 
   const handleRedo = async () => {
-    await fileOps.handleRedo(() => { });
+    await fileOps.handleRedo(() => {});
   };
 
   const handleCopyPath = async () => {
@@ -888,7 +937,20 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
     !!window.__intellifile_isFavorite?.(selectedItem.path);
 
   const handleRefresh = () => {
-    if (currentPath) loadDirectory(currentPath, { soft: true, trackHistory: false });
+    // Normal refresh without closing preview
+    if (currentPath) {
+      loadDirectory(currentPath, { soft: true, trackHistory: false });
+    }
+  };
+
+  // Preview close handling
+  const handlePreviewCloseStart = () => {
+    setPreviewClosing(true);
+  };
+
+  const handlePreviewCloseComplete = () => {
+    setShowPreview(false);
+    setPreviewClosing(false);
   };
 
   const handleVersioning = () => {
@@ -901,6 +963,16 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
       setShowPreview(false);
       setShowVersioning(true);
     }
+  };
+
+  // Open with handling – use custom OpenWithModal
+  const [openWithItem, setOpenWithItem] = React.useState(null);
+  const [showOpenWith, setShowOpenWith] = React.useState(false);
+
+  const handleOpenWith = async (item) => {
+    // Set the item and display the modal. Candidate fetching is done inside the modal.
+    setOpenWithItem(item);
+    setShowOpenWith(true);
   };
 
   const handleCompress = async () => {
@@ -930,7 +1002,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
       const deleted = Number(result?.deleted_versions || 0);
       const maintenance = Number(result?.maintenance_count || 0);
       const freedMb = Number(result?.freed_mb || 0);
-
+      
       let message = 'Cleanup complete: ';
       if (deleted > 0) {
         message += `removed ${deleted} version(s), `;
@@ -939,11 +1011,11 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
         message += `cleaned ${maintenance} cache files, `;
       }
       message += `freed ${freedMb.toFixed(2)} MB.`;
-
+      
       if (deleted === 0 && maintenance === 0) {
         message = 'Cleanup complete: No cleanup needed. Recent versions may be retained by policy.';
       }
-
+      
       showToast('Cleanup complete.', {
         type: 'success',
         message,
@@ -988,7 +1060,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
       } catch (err) {
       }
     }
-    await fileOps.handleDropOnItem(e, targetItem, currentPath, () => { });
+    await fileOps.handleDropOnItem(e, targetItem, currentPath, () => {});
   };
 
   const handleContextMenu = (e, item) => {
@@ -1043,7 +1115,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
             setIndexDetail(status.lastIndexStatus.detail || '');
             setIndexPct(typeof status.lastIndexStatus.pct === 'number' ? status.lastIndexStatus.pct : null);
           }
-
+          
           if (!status.ready) {
             setTimeout(checkEngine, 2000);
           }
@@ -1278,7 +1350,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
   };
 
   return (
-    <div className={`file-explorer ${showVersioning || showPreview ? 'with-versioning' : ''}`}>
+    <div className={`file-explorer ${showVersioning || showPreview ? 'with-versioning' : ''} ${previewClosing ? 'preview-closing' : ''}`}>
       <ExplorerSidebar drives={drives} onNavigate={loadDirectory} currentPath={currentPath} />
 
       <div className="explorer-main-area">
@@ -1377,32 +1449,32 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
                   </div>
                 )}
                 <FileList
-                  items={displayItems}
-                  viewMode={viewMode}
-                  groupBy={groupBy}
-                  loading={loading}
-                  renamingItem={renamingItem}
-                  renameValue={renameValue}
-                  selectedItems={selectedItems}
-                  selectedFiles={selectedFiles}
-                  clipboard={clipboard}
-                  isCutItem={isCutItem}
-                  inputRef={inputRef}
-                  onItemClick={handleItemClick}
-                  onItemDoubleClick={handleFolderClick}
-                  onContextMenu={handleContextMenu}
-                  onEmptySpaceContextMenu={handleEmptySpaceContextMenu}
-                  onDragStart={handleDragStart}
-                  onDragOver={handleDragOver}
-                  onDropOnItem={handleDropOnItem}
-                  onRenameValueChange={setRenameValue}
-                  onRenameBlur={handleRename}
-                  onRenameKeyDown={(e) => {
-                    if (e.key === 'Enter') handleRename();
-                    if (e.key === 'Escape') setRenamingItem(null);
-                  }}
-                />
-              </>
+                items={displayItems}
+                viewMode={viewMode}
+                groupBy={groupBy}
+                loading={loading}
+                renamingItem={renamingItem}
+                renameValue={renameValue}
+                selectedItems={selectedItems}
+                selectedFiles={selectedFiles}
+                clipboard={clipboard}
+                isCutItem={isCutItem}
+                inputRef={inputRef}
+                onItemClick={handleItemClick}
+                onItemDoubleClick={handleOpen}
+                onContextMenu={handleContextMenu}
+                onEmptySpaceContextMenu={handleEmptySpaceContextMenu}
+                onDragStart={handleDragStart}
+                onDragOver={handleDragOver}
+                onDropOnItem={handleDropOnItem}
+                onRenameValueChange={setRenameValue}
+                onRenameBlur={handleRename}
+                onRenameKeyDown={(e) => {
+                  if (e.key === 'Enter') handleRename();
+                  if (e.key === 'Escape') setRenamingItem(null);
+                }}
+              />
+                </>
             )}
 
           </div>
@@ -1474,8 +1546,8 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
         <PreviewPanel
           selectedItem={selectedItem}
           visible={showPreview}
-          onClose={() => setShowPreview(false)}
-          searchQuery={searchQuery}
+          onClose={handlePreviewCloseComplete}
+          onClosing={handlePreviewCloseStart}
         />
       )}
 
@@ -1485,7 +1557,8 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
         selectedItem={selectedItem}
         isEmptySpace={isEmptySpaceContext}
         clipboard={clipboard}
-        onOpen={() => selectedItem && openFileWithDefaultApp(selectedItem.path)}
+        onOpen={() => handleOpen(selectedItem)}
+          onOpenWith={() => handleOpenWith(selectedItem)}
         onCut={handleCut}
         onCopy={handleCopy}
         onPaste={handlePaste}
@@ -1514,6 +1587,13 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
         }}
         onClose={() => setShowContextMenu(false)}
       />
+      {showOpenWith && openWithItem && (
+        <OpenWithModal
+          file={openWithItem}
+          visible={showOpenWith}
+          onClose={() => setShowOpenWith(false)}
+        />
+      )}
 
       <PropertiesModal
         visible={showProperties}

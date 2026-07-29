@@ -1,101 +1,229 @@
+/* =====================================================
+   IntelliFile OfflineSetup v3.0 - Futuristic Design
+   ===================================================== */
+
+/* ───────────────────────────────────────────────────────
+   Overlay Container
+   ─────────────────────────────────────────────────────── */
 .offline-setup-overlay {
   position: fixed;
-  top: 0;
-  left: 0;
-  width: 100vw;
-  height: 100vh;
-  background: #1e1e1e;
-  z-index: 9999;
+  inset: 0;
+  background: radial-gradient(ellipse at center, #1a1f2e 0%, #0f141f 100%);
+  z-index: var(--z-fullscreen);
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #fff;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  color: var(--t-primary);
+  font-family: var(--font-sans);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
 }
 
+/* ───────────────────────────────────────────────────────
+   Setup Container - Glassmorphic Card
+   ─────────────────────────────────────────────────────── */
 .offline-setup-container {
-  background: #252526;
-  border: 1px solid #3c3c3c;
-  border-radius: 8px;
-  padding: 40px;
-  width: 500px;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  background: var(--s-elev-2);
+  backdrop-filter: blur(20px) saturate(1.2);
+  -webkit-backdrop-filter: blur(20px) saturate(1.2);
+  border: 1px solid var(--bo);
+  border-radius: var(--rd-xl);
+  padding: var(--sp-10);
+  width: 100%;
+  max-width: 520px;
+  box-shadow: var(--sh-xl);
   text-align: center;
+  animation: scaleIn var(--dur-400) var(--ease-spring-sm);
+  position: relative;
+  overflow: hidden;
+}
+
+.offline-setup-container::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 4px;
+  background: var(--c-brand-gradient);
 }
 
 .offline-setup-container h2 {
   margin-top: 0;
-  margin-bottom: 10px;
-  font-size: 24px;
-  color: #007acc;
+  margin-bottom: var(--sp-3);
+  font-size: var(--text-2xl);
+  font-weight: 800;
+  color: var(--t-primary);
+  background: var(--c-brand-gradient);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
 }
 
 .offline-setup-container p {
-  color: #cccccc;
-  margin-bottom: 30px;
-  line-height: 1.5;
+  color: var(--t-secondary);
+  margin-bottom: var(--sp-8);
+  line-height: 1.6;
+  font-size: var(--text-sm);
 }
 
+/* ───────────────────────────────────────────────────────
+   Setup Button
+   ─────────────────────────────────────────────────────── */
 .setup-button {
-  background: #007acc;
-  color: #fff;
+  background: var(--c-brand);
+  color: var(--t-inverse);
   border: none;
-  padding: 12px 24px;
-  font-size: 16px;
-  border-radius: 4px;
+  padding: var(--sp-3) var(--sp-6);
+  font-size: var(--text-base);
+  border-radius: var(--rd-lg);
   cursor: pointer;
-  transition: background 0.2s;
-  font-weight: bold;
+  transition: all var(--dur-200) var(--ease-spring-sm);
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  box-shadow: 0 4px 14px rgba(99, 102, 241, 0.4);
+}
+
+.setup-button::before {
+  content: '⚡';
+  font-size: 18px;
 }
 
 .setup-button:hover:not(:disabled) {
-  background: #005f9e;
+  background: var(--c-brand-hover);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(99, 102, 241, 0.5);
+}
+
+.setup-button:active:not(:disabled) {
+  transform: translateY(0);
 }
 
 .setup-button:disabled {
-  background: #333333;
-  color: #777;
+  background: var(--s-active);
+  color: var(--t-muted);
   cursor: not-allowed;
+  box-shadow: none;
+  opacity: 0.6;
 }
 
+.setup-button.loading::after {
+  content: '';
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top-color: white;
+  border-radius: 50%;
+  animation: spin var(--dur-700) linear infinite;
+}
+
+/* ───────────────────────────────────────────────────────
+   Progress Container
+   ─────────────────────────────────────────────────────── */
 .setup-progress-container {
   text-align: left;
+  margin-top: var(--sp-6);
 }
 
 .step-info {
-  margin-bottom: 15px;
+  margin-bottom: var(--sp-4);
+  padding: var(--sp-3);
+  background: var(--s-hover);
+  border-radius: var(--rd-md);
+  border-left: 3px solid var(--c-brand);
+  transition: all var(--dur-200) var(--ease-default);
+}
+
+.step-info.active {
+  border-left-color: var(--c-success);
+  background: var(--c-success-soft);
+}
+
+.step-info.completed {
+  border-left-color: var(--c-success);
+  opacity: 0.7;
+}
+
+.step-info.failed {
+  border-left-color: var(--c-error);
+  background: var(--c-error-soft);
 }
 
 .step-info h3 {
-  margin: 0 0 5px 0;
-  font-size: 16px;
-  color: #e0e0e0;
+  margin: 0 0 var(--sp-1) 0;
+  font-size: var(--text-sm);
+  font-weight: 700;
+  color: var(--t-primary);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.step-info h3::before {
+  content: '○';
+  font-size: 12px;
+}
+
+.step-info.active h3::before {
+  color: var(--c-brand);
+  content: '◉';
+  animation: pulse 1s var(--ease-in-out) infinite;
+}
+
+.step-info.completed h3::before {
+  color: var(--c-success);
+  content: '✓';
+}
+
+.step-info.failed h3::before {
+  color: var(--c-error);
+  content: '✕';
 }
 
 .step-info span {
-  font-size: 14px;
-  color: #999;
+  font-size: var(--text-xs);
+  color: var(--t-muted);
+  display: block;
 }
 
+/* ───────────────────────────────────────────────────────
+   Progress Bar
+   ─────────────────────────────────────────────────────── */
 .progress-bar-bg {
-  background: #333;
-  height: 12px;
-  border-radius: 6px;
+  background: var(--s-hover);
+  height: 10px;
+  border-radius: var(--rd-full);
   overflow: hidden;
-  margin-bottom: 10px;
+  margin-bottom: var(--sp-2);
+  position: relative;
 }
 
 .progress-bar-fill {
-  background: #007acc;
   height: 100%;
-  transition: width 0.3s ease;
+  background: var(--c-brand-gradient);
+  border-radius: inherit;
+  transition: width var(--dur-500) var(--ease-spring-sm);
+  position: relative;
+}
+
+.progress-bar-fill::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent);
+  animation: shimmer var(--dur-1500) infinite;
 }
 
 .progress-bar-fill.indeterminate {
   width: 100%;
-  background: linear-gradient(90deg, #333 25%, #007acc 50%, #333 75%);
+  background: linear-gradient(90deg, var(--s-hover) 25%, var(--c-brand) 50%, var(--s-hover) 75%);
   background-size: 200% 100%;
-  animation: loading 1.5s infinite;
+  animation: loading var(--dur-1500) var(--ease-in-out) infinite;
 }
 
 @keyframes loading {
@@ -106,17 +234,68 @@
 .progress-details {
   display: flex;
   justify-content: space-between;
-  font-size: 13px;
-  color: #aaa;
+  font-size: var(--text-xs);
+  color: var(--t-muted);
+  font-weight: 500;
 }
 
+.progress-percent {
+  color: var(--c-brand);
+  font-weight: 700;
+  font-family: var(--font-mono);
+}
+
+/* ───────────────────────────────────────────────────────
+   Error State
+   ─────────────────────────────────────────────────────── */
 .setup-error {
-  margin-top: 20px;
-  padding: 15px;
-  background: rgba(244, 67, 54, 0.1);
-  border: 1px solid #f44336;
-  border-radius: 4px;
-  color: #ff5252;
+  margin-top: var(--sp-5);
+  padding: var(--sp-3);
+  background: var(--c-error-soft);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-radius: var(--rd-md);
+  color: var(--c-error);
   text-align: left;
-  font-size: 14px;
+  font-size: var(--text-sm);
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-2);
+  animation: shake var(--dur-400) var(--ease-in-out);
+}
+
+.setup-error::before {
+  content: '⚠️';
+  font-size: 16px;
+  flex-shrink: 0;
+}
+
+.setup-error-message {
+  flex: 1;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+/* ───────────────────────────────────────────────────────
+   Success State
+   ─────────────────────────────────────────────────────── */
+.setup-success {
+  text-align: center;
+  padding: var(--sp-6);
+}
+
+.setup-success-icon {
+  font-size: 64px;
+  margin-bottom: var(--sp-4);
+  animation: scaleIn var(--dur-500) var(--ease-spring-sm);
+}
+
+.setup-success h3 {
+  color: var(--c-success);
+  font-size: var(--text-xl);
+  margin-bottom: var(--sp-2);
+}
+
+.setup-success p {
+  color: var(--t-secondary);
+  font-size: var(--text-sm);
 }
