@@ -1,11 +1,17 @@
 # -*- mode: python ; coding: utf-8 -*-
+import certifi
+from PyInstaller.utils.hooks import collect_data_files
 block_cipher = None
-
+_certifi_datas = [(certifi.where(), "certifi")]
 a = Analysis(
     ['engine_server.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+     datas=[
+        # Bundle certifi's CA bundle so frozen exe can verify HTTPS certs on
+        # any end-user machine without relying on the dev-machine venv path.
+        *_certifi_datas,
+    ],
     hiddenimports=[
         'onnxruntime',
         'tokenizers',
@@ -30,7 +36,14 @@ a = Analysis(
         'winrt.windows.storage.streams',
         'winrt.windows.globalization',
         'winrt.windows.foundation',
-        'winocr'
+          'winocr',
+        # SSL / TLS — must be present in the frozen exe
+        'ssl',
+        '_ssl',
+        '_socket',
+        'certifi',
+        'truststore',
+        'ssl_bootstrap',
     ],
     hookspath=[],
     hooksconfig={},

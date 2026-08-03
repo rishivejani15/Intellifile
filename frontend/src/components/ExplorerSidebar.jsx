@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { MdCloud, MdDelete, MdDesktopMac, MdDescription, MdDownload, MdFolder, MdImage, MdMusicNote, MdVideoLibrary } from 'react-icons/md';
 import './FileExplorer/FileExplorer.css';
 import { showErrorToast, showToast } from '../utils/toast';
 
@@ -20,15 +21,15 @@ const isPathWithin = (candidate, target) => {
 
 const getFolderIcon = (name = '') => {
   const lower = String(name).toLowerCase();
-  if (lower.includes('desktop')) return '🖥️';
-  if (lower.includes('document')) return '📄';
-  if (lower.includes('download')) return '⬇️';
-  if (lower.includes('picture') || lower.includes('photo')) return '🖼️';
-  if (lower.includes('music')) return '🎵';
-  if (lower.includes('video')) return '🎬';
-  if (lower.includes('onedrive')) return '☁️';
-  if (lower.includes('recycle')) return '🗑️';
-  return '📁';
+  if (lower.includes('desktop')) return <MdDesktopMac />;
+  if (lower.includes('document')) return <MdDescription />;
+  if (lower.includes('download')) return <MdDownload />;
+  if (lower.includes('picture') || lower.includes('photo')) return <MdImage />;
+  if (lower.includes('music')) return <MdMusicNote />;
+  if (lower.includes('video')) return <MdVideoLibrary />;
+  if (lower.includes('onedrive')) return <MdCloud />;
+  if (lower.includes('recycle')) return <MdDelete />;
+  return <MdFolder />;
 };
 
 function ExplorerSidebar({ drives, onNavigate, currentPath }) {
@@ -47,6 +48,8 @@ function ExplorerSidebar({ drives, onNavigate, currentPath }) {
   const [isSettingDefault, setIsSettingDefault] = useState(false);
   const [dragOverPath, setDragOverPath] = useState(null);
   const dragTimerRef = React.useRef(null);
+  const treeChildrenRef = React.useRef({});
+  const treeLoadingRef = React.useRef({});
 
   // Load favorites from localStorage
   useEffect(() => {
@@ -168,14 +171,21 @@ function ExplorerSidebar({ drives, onNavigate, currentPath }) {
   const loadTreeChildren = useCallback(async (dirPath) => {
     const key = normalizePath(dirPath);
     if (!dirPath || !ipcRenderer) return [];
-    if (treeChildren[key]) return treeChildren[key];
+    if (treeChildrenRef.current[key]) return treeChildrenRef.current[key];
+    if (treeLoadingRef.current[key]) return [];
 
-    setTreeLoading(prev => ({ ...prev, [key]: true }));
+    setTreeLoading(prev => {
+      const next = { ...prev, [key]: true };
+      treeLoadingRef.current = next;
+      return next;
+    });
     try {
       const result = await ipcRenderer.invoke('list-directory', dirPath, { showHidden: false });
       const entries = Array.isArray(result?.items) ? result.items : [];
       if (!Array.isArray(entries)) {
-        setTreeChildren(prev => ({ ...prev, [key]: [] }));
+        const nextChildren = { ...treeChildrenRef.current, [key]: [] };
+        treeChildrenRef.current = nextChildren;
+        setTreeChildren(nextChildren);
         return [];
       }
 
@@ -184,25 +194,33 @@ function ExplorerSidebar({ drives, onNavigate, currentPath }) {
         .map((item) => ({ path: item.path, name: item.name || getNodeName(item.path), isRoot: false }))
         .sort((a, b) => a.name.localeCompare(b.name));
 
-      setTreeChildren(prev => ({ ...prev, [key]: folders }));
+      const nextChildren = { ...treeChildrenRef.current, [key]: folders };
+      treeChildrenRef.current = nextChildren;
+      setTreeChildren(nextChildren);
       return folders;
     } catch (error) {
       showErrorToast('Could not load folder tree.', error?.message || 'The directory could not be expanded.', 'Try refreshing or opening the folder again.');
-      setTreeChildren(prev => ({ ...prev, [key]: [] }));
+      const nextChildren = { ...treeChildrenRef.current, [key]: [] };
+      treeChildrenRef.current = nextChildren;
+      setTreeChildren(nextChildren);
       return [];
     } finally {
-      setTreeLoading(prev => ({ ...prev, [key]: false }));
+      setTreeLoading(prev => {
+        const next = { ...prev, [key]: false };
+        treeLoadingRef.current = next;
+        return next;
+      });
     }
-  }, [treeChildren]);
+  }, []);
 
   const toggleTreeNode = useCallback(async (nodePath) => {
     const key = normalizePath(nodePath);
     const shouldExpand = !treeExpanded[key];
     setTreeExpanded(prev => ({ ...prev, [key]: shouldExpand }));
-    if (shouldExpand && !treeChildren[key]) {
+    if (shouldExpand && !treeChildrenRef.current[key]) {
       await loadTreeChildren(nodePath);
     }
-  }, [loadTreeChildren, treeChildren, treeExpanded]);
+  }, [loadTreeChildren, treeExpanded]);
 
   useEffect(() => {
     let cancelled = false;
@@ -218,7 +236,6 @@ function ExplorerSidebar({ drives, onNavigate, currentPath }) {
       if (!root) return;
 
       const rootKey = normalizePath(root.path);
-      // Don't auto-expand drive roots, only their children
       const isRootADrive = drives && drives.some(d => normalizePath(d.device) === rootKey);
       
       let cursor = root.path;

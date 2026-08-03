@@ -75,6 +75,7 @@
     "archiver-utils": "^5.0.2",
     "chokidar": "^4.0.3",
     "electron-updater": "^6.8.3",
+    "react-icons": "^5.7.0",
     "unzipper": "^0.12.3",
     "wrtc": "^0.4.7",
     "ws": "^8.20.0"

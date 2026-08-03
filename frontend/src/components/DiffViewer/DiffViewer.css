@@ -64,7 +64,7 @@
 }
 
 .diff-content::-webkit-scrollbar-thumb:hover {
-  background: var(--c-brand);
+  background: var(--color-primary);
 }
 
 /* ───────────────────────────────────────────────────────
@@ -162,7 +162,7 @@
 }
 
 .legend-color.added {
-  background: var(--c-success);
+  background: var(--color-primary);
 }
 
 .legend-color.deleted {
@@ -198,7 +198,7 @@
 
 .inline-diff-line.added {
   background: var(--c-success-soft);
-  border-left: 3px solid var(--c-success);
+  border-left: 3px solid var(--color-primary);
 }
 
 .inline-diff-line.deleted {
@@ -222,7 +222,7 @@
 }
 
 .inline-diff-line.added .line-prefix {
-  color: var(--c-success);
+  color: var(--color-primary);
 }
 
 .inline-diff-line.deleted .line-prefix {
@@ -257,7 +257,7 @@
 }
 
 .diff-stat.added {
-  color: var(--c-success);
+  color: var(--color-primary);
 }
 
 .diff-stat.deleted {

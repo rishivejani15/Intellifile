@@ -10,6 +10,8 @@ Usage:
 
 import os
 import sys
+import ssl
+import time
 import urllib.request
 import shutil
 import json
@@ -93,6 +95,18 @@ def main():
     global _json_mode
     _json_mode = args.json
 
+    # ── Bootstrap SSL *before* any network call ──────────────────────────────
+    # This is critical inside the frozen PyInstaller exe: certifi.where() must
+    # point at the bundled cacert.pem, and the Windows trust store must be
+    # injected for corporate proxy / TLS-interception environments.
+    try:
+        import ssl_bootstrap
+        _ssl_status = ssl_bootstrap.bootstrap_ssl()
+        ssl_bootstrap.log_ssl_status(_ssl_status)
+    except Exception as _ssl_ex:
+        sys.stderr.write(f"[setup] ssl_bootstrap failed (non-fatal): {_ssl_ex}\n")
+        sys.stderr.flush()
+
     _log("=" * 60)
     _log("  IntelliFile — Offline Model Setup")
     _log("=" * 60)
@@ -137,17 +151,109 @@ def main():
             def flush(self):
                 self.dest.flush()
 
-        old_stderr = sys.stderr
-        sys.stderr = _FilteredStderr(old_stderr)
-        try:
-            snapshot_download(
-                repo_id=model_name,
-                cache_dir=_MODELS_DIR,
-                allow_patterns=["*.onnx", "*.json", "tokenizer*"],
-                ignore_patterns=["*model_fp16*", "*model_int8*", "*model_quantized*"]
+        # Retry parameters
+        _MAX_RETRIES = 3
+        _truststore_injected = False
+
+        def _is_ssl_cert_error(exc):
+            """Walk the full exception chain to detect SSLCertVerificationError.
+
+            huggingface_hub wraps SSL errors several layers deep:
+              EnvironmentError -> MaxRetryError -> SSLError -> SSLCertVerificationError
+            A bare `except ssl.SSLCertVerificationError` misses all of those.
+            This helper checks every link in the chain.
+            """
+            _SSL_FINGERPRINTS = (
+                "CERTIFICATE_VERIFY_FAILED",
+                "SSLCertVerificationError",
+                "certificate verify failed",
+                "unable to get local issuer certificate",
+                "terminated in a root certificate which is not trusted",
             )
-        finally:
-            sys.stderr = old_stderr
+            visited = set()
+            current = exc
+            while current is not None and id(current) not in visited:
+                visited.add(id(current))
+                if isinstance(current, ssl.SSLCertVerificationError):
+                    return True
+                if any(fp in str(current) for fp in _SSL_FINGERPRINTS):
+                    return True
+                # Walk both __cause__ (explicit chaining) and __context__ (implicit)
+                next_exc = getattr(current, '__cause__', None)
+                if next_exc is None:
+                    next_exc = getattr(current, '__context__', None)
+                current = next_exc
+            return False
+
+        for _attempt in range(1, _MAX_RETRIES + 1):
+            try:
+                old_stderr = sys.stderr
+                sys.stderr = _FilteredStderr(old_stderr)
+                try:
+                    snapshot_download(
+                        repo_id=model_name,
+                        cache_dir=_MODELS_DIR,
+                        allow_patterns=["*.onnx", "*.json", "tokenizer*"],
+                        ignore_patterns=["*model_fp16*", "*model_int8*", "*model_quantized*"]
+                    )
+                finally:
+                    sys.stderr = old_stderr
+            except Exception as exc:
+                sys.stderr = old_stderr  # always restore
+                _e = exc
+                _ssl_detected = _is_ssl_cert_error(_e)
+            else:
+                break  # success — no exception raised
+
+            if _ssl_detected:
+                _log(f"      [SSL] Certificate verification failed (attempt {_attempt}): {_e}")
+
+                if _attempt == 1 and not _truststore_injected:
+                    # First failure: try injecting the Windows trust store in case
+                    # a corporate proxy/antivirus is doing TLS interception with an
+                    # IT-managed root CA that isn't in certifi's bundle.
+                    try:
+                        import truststore
+                        truststore.inject_into_ssl()
+                        _truststore_injected = True
+                        _log("      [SSL] Retrying with Windows OS trust store (corporate proxy mode)...")
+                        _emit_json("log", message="SSL cert error detected — retrying with OS trust store")
+                        continue  # retry immediately with truststore active
+                    except ImportError:
+                        pass  # truststore not available, fall through to error
+
+                # All retry opportunities exhausted — surface a clear, actionable message.
+                _manual_path = os.path.join(_MODELS_DIR, f"models--{model_name.replace('/', '--')}")
+                _ssl_guidance = (
+                    "SSL certificate verification failed. This is usually caused by:\n"
+                    "  • A corporate network or VPN intercepting secure connections\n"
+                    "  • Antivirus software performing TLS inspection\n"
+                    "  • Missing or expired root certificates on this machine\n\n"
+                    "Suggested actions:\n"
+                    "  1. If on a corporate network/VPN, contact IT to install the company root certificate.\n"
+                    "  2. Retry once connected directly (no VPN/proxy).\n"
+                    "  3. Manual install: download the model files from\n"
+                    f"       https://huggingface.co/{model_name}\n"
+                    f"     and place them in:\n"
+                    f"       {_manual_path}\n"
+                    "     then re-launch the app — it will detect the model automatically."
+                )
+                _log(f"      [ERROR] {_ssl_guidance}")
+                _emit_json("error", message=_ssl_guidance, code="SSL_CERT_VERIFY_FAILED",
+                           manual_install_path=_manual_path)
+                sys.exit(1)
+
+            else:
+                # Non-SSL exception — apply exponential back-off and retry
+                if _attempt < _MAX_RETRIES:
+                    _wait = 2 ** _attempt  # exponential back-off: 2s, 4s
+                    _log(f"      [WARN] Download attempt {_attempt} failed: {_e}")
+                    _log(f"      [WARN] Retrying in {_wait}s...")
+                    _emit_json("log", message=f"Download attempt {_attempt} failed, retrying in {_wait}s")
+                    time.sleep(_wait)
+                else:
+                    raise _e  # re-raise on final attempt to fall through to outer handler
+
 
         _log(f"      [OK] ONNX embedding model downloaded directly")
         _log(f"      [OK] Saved to -> {_MODELS_DIR}")
@@ -155,8 +261,17 @@ def main():
         _emit_json("step", step=1, total=3, name="Embedding Model", status="done")
 
     except Exception as e:
-        _log(f"      [ERROR] Failed to setup embedding model (ONNX export is mandatory): {e}")
-        _emit_json("error", message=str(e))
+        # Graceful degradation: tell the user the exact path where they can
+        # manually place model files — core/model.py will auto-detect them on
+        # the next launch via glob, so no re-download is needed.
+        _manual_path = os.path.join(_MODELS_DIR, f"models--{model_name.replace('/', '--')}")
+        _log(f"      [ERROR] Failed to setup embedding model: {e}")
+        _log(f"      ")
+        _log(f"      As a workaround, you can manually place the model files in:")
+        _log(f"        {_manual_path}")
+        _log(f"      Download from: https://huggingface.co/{model_name}")
+        _log(f"      The app will detect the model automatically on next launch.")
+        _emit_json("error", message=str(e), manual_install_path=_manual_path)
         sys.exit(1)
 
     # ── Step 2: Qwen chat model (GGUF) ───────────────────────────────

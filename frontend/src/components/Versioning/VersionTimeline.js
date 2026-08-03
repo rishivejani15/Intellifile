@@ -195,14 +195,13 @@ const VersionTimeline = ({ filePath }) => {
   }
   return (
         <div className="version-timeline">
-            {compareA && (
-                <div className="compare-banner">
-                    <span>Select version to compare with <strong>{compareA.substring(0, 8)}</strong></span>
-                    <button className="btn-compare-now" onClick={() => setCompareA(null)}>Cancel</button>
-                </div>
-            )}
-
-            <div className={`timeline-list ${refreshing ? 'is-refreshing' : ''}`}>
+    <div className={`timeline-list ${refreshing ? 'is-refreshing' : ''}`}>
+        {compareA && (
+            <div className="compare-banner">
+                <span>Select version to compare with <strong>{compareA.substring(0, 8)}</strong></span>
+                <button className="btn-compare-now" onClick={() => setCompareA(null)}>Cancel</button>
+            </div>
+        )}
               {refreshing && (
                 <div className="timeline-refresh-indicator" aria-live="polite">
                   Updating timeline...

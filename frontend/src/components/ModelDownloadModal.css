@@ -164,7 +164,7 @@
   padding: var(--sp-1) var(--sp-2);
   border-radius: var(--rd-full);
   background: var(--c-brand-soft);
-  color: var(--c-brand);
+  color: var(--color-primary);
 }
 
 /* ───────────────────────────────────────────────────────
@@ -183,7 +183,7 @@
 }
 
 .progress-label .status {
-  color: var(--c-brand);
+  color: var(--color-primary);
 }
 
 .progress-bar-bg {
@@ -296,14 +296,14 @@
 }
 
 .model-modal .btn.primary {
-  background: var(--c-brand);
+  background: var(--color-primary);
   color: var(--t-inverse);
   border: none;
   box-shadow: 0 4px 14px rgba(99, 102, 241, 0.3);
 }
 
 .model-modal .btn.primary:hover:not([disabled]) {
-  background: var(--c-brand-hover);
+  background: var(--color-primary-hover);
   transform: translateY(-1px);
   box-shadow: 0 6px 20px rgba(99, 102, 241, 0.4);
 }
@@ -316,8 +316,8 @@
 
 .model-modal .btn.ghost:hover {
   background: var(--s-hover);
-  border-color: var(--c-brand);
-  color: var(--c-brand);
+  border-color: var(--color-primary);
+  color: var(--color-primary);
 }
 
 .model-modal .btn[disabled] {
@@ -346,13 +346,13 @@
 }
 
 .model-option:hover {
-  border-color: var(--c-brand);
+  border-color: var(--color-primary);
   background: var(--s-hover);
   transform: translateY(-2px);
 }
 
 .model-option.selected {
-  border-color: var(--c-brand);
+  border-color: var(--color-primary);
   background: var(--c-brand-soft);
   box-shadow: 0 4px 20px rgba(99, 102, 241, 0.2);
 }

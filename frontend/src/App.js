@@ -218,41 +218,10 @@ function App() {
             </div>
           )}
         </div>
-        {updateAvailable && (
-          <div className="update-section">
-            {!updateDownloaded ? (
-              <div className="update-status-container">
-                <span className="update-status">
-                  Update v{updateVersion} available
-                </span>
-                <button
-                  className="update-check-btn"
-                  onClick={() => {
-                    if (ipcRenderer) {
-                      ipcRenderer.send('check-for-updates');
-                    }
-                  }}
-                >
-                  Check Now
-                </button>
-              </div>
-            ) : (
-              <button
-                className="update-btn"
-                onClick={() => {
-                  if (ipcRenderer) {
-                    ipcRenderer.send('update-restart');
-                  }
-                }}
-              >
-                Restart to Update
-              </button>
-            )}
-          </div>
-        )}
       </header>
 
-      <div className="app-container">
+      {setupComplete && (
+        <div className="app-container">
         <main className="app-main">
           <div style={{ display: activeTab === 'explorer' ? 'block' : 'none', height: '100%' }}>
             <div className="explorer-wrapper">
@@ -307,13 +276,13 @@ function App() {
             <Settings />
           </div>
         </main>
-      </div>
+      </div>) }
       <ToastHost />
       <AutoSortToastHost />
-
+                
       {!setupComplete && <OfflineSetup key={offlineSetupKey} onComplete={handleOfflineSetupComplete} />}
     </div>
-  );
+);
 }
 
 export default App;

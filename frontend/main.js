@@ -17,6 +17,7 @@ const archiver = require('archiver');
 const unzipper = require('unzipper');
 const { registerSystemRoots, getSystemRoots } = require('./system_roots');
 const { SyncEngine } = require('./sync_engine');
+const { createListDirectoryController } = require('./listDirectoryCache');
 
 const candidateCache = new Map(); // Cache for open-with candidates
 const lookupInProgress = new Map(); // tracks in‑flight lookups per extension
@@ -3566,109 +3567,115 @@ function registerIpcHandlers() {
   });
 
   // IPC Handlers for file operations
-  ipcMain.handle('list-directory', async (event, dirPath, options = {}) => {
-    const showHidden = options?.showHidden || false;
-    try {
-      console.log('[list-directory] called with:', dirPath);
-      let resolvedPath = dirPath;
-
-      // Handle special folder names
-      if (dirPath === 'This PC') {
-        // Return list of drives for This PC view
-        const drivesResult = await getDrivesInfo();
-        if (drivesResult.success) {
-          const driveItems = drivesResult.drives.map(drive => ({
-            name: drive.description,
-            path: drive.device,
-            type: 'drive',
-            ext: '',
-            editable: false,
-            size: drive.size,
-            available: drive.available,
-            modified: Date.now()
-          }));
-          return { items: driveItems, error: null };
-        }
-        return { items: [], error: 'Could not load drives' };
-      } else if (!dirPath || dirPath === 'Documents') {
-        resolvedPath = path.join(process.env.USERPROFILE, 'Documents');
-      } else if (dirPath === 'Desktop') {
-        resolvedPath = path.join(process.env.USERPROFILE, 'Desktop');
-      } else if (dirPath === 'Downloads') {
-        resolvedPath = path.join(process.env.USERPROFILE, 'Downloads');
-      } else if (dirPath === 'Pictures') {
-        resolvedPath = path.join(process.env.USERPROFILE, 'Pictures');
-      } else if (dirPath === 'Music') {
-        resolvedPath = path.join(process.env.USERPROFILE, 'Music');
-      } else if (dirPath === 'Videos') {
-        resolvedPath = path.join(process.env.USERPROFILE, 'Videos');
-      } else if (dirPath && dirPath.match(/^[A-Z]:$/i)) {
-        // Handle drive letters like "C:" by converting to "C:\\"
-        resolvedPath = dirPath + '\\';
-      }
-
-      console.log('[list-directory] resolved path:', resolvedPath);
-
-      // Use async exists check
+  const listDirectoryController = createListDirectoryController({
+    readDirectory: async (dirPath, options = {}) => {
+      const showHidden = options?.showHidden || false;
       try {
-        await fs.promises.access(resolvedPath);
-      } catch {
-        console.warn('[list-directory] Path not found:', resolvedPath);
-        return { items: [], error: 'Path not found' };
-      }
+        console.log('[list-directory] called with:', dirPath);
+        let resolvedPath = dirPath;
 
-      console.log('[list-directory] reading directory...');
-      const fileList = await fs.promises.readdir(resolvedPath);
-      console.log('[list-directory] found', fileList.length, 'items');
-
-      const filteredList = fileList.filter(item => !isSystemFile(item, showHidden));
-      const items = [];
-      const CHUNK_SIZE = 100;
-
-      // Process items in batches to prevent UV thread pool starvation
-      for (let i = 0; i < filteredList.length; i += CHUNK_SIZE) {
-        const chunk = filteredList.slice(i, i + CHUNK_SIZE);
-        const chunkPromises = chunk.map(async item => {
-          try {
-            const fullPath = path.join(resolvedPath, item);
-            const stats = await fs.promises.stat(fullPath);
-            const ext = path.extname(item).toLowerCase();
-            const isEditable = EDITABLE_EXTENSIONS.includes(ext);
-            const isProtected = isProtectedPath(fullPath);
-
-            const size = stats.isDirectory() ? 0 : stats.size;
-
-            return {
-              name: item,
-              path: fullPath,
-              type: stats.isDirectory() ? 'folder' : 'file',
-              ext: ext,
-              editable: !stats.isDirectory() && isEditable && !isProtected,
-              protected: isProtected,
-              size: size,
-              modified: stats.mtimeMs
-            };
-          } catch (err) {
-            return null;
+        // Handle special folder names
+        if (dirPath === 'This PC') {
+          // Return list of drives for This PC view
+          const drivesResult = await getDrivesInfo();
+          if (drivesResult.success) {
+            const driveItems = drivesResult.drives.map(drive => ({
+              name: drive.description,
+              path: drive.device,
+              type: 'drive',
+              ext: '',
+              editable: false,
+              size: drive.size,
+              available: drive.available,
+              modified: Date.now()
+            }));
+            return { items: driveItems, error: null };
           }
+          return { items: [], error: 'Could not load drives' };
+        } else if (!dirPath || dirPath === 'Documents') {
+          resolvedPath = path.join(process.env.USERPROFILE, 'Documents');
+        } else if (dirPath === 'Desktop') {
+          resolvedPath = path.join(process.env.USERPROFILE, 'Desktop');
+        } else if (dirPath === 'Downloads') {
+          resolvedPath = path.join(process.env.USERPROFILE, 'Downloads');
+        } else if (dirPath === 'Pictures') {
+          resolvedPath = path.join(process.env.USERPROFILE, 'Pictures');
+        } else if (dirPath === 'Music') {
+          resolvedPath = path.join(process.env.USERPROFILE, 'Music');
+        } else if (dirPath === 'Videos') {
+          resolvedPath = path.join(process.env.USERPROFILE, 'Videos');
+        } else if (dirPath && dirPath.match(/^[A-Z]:$/i)) {
+          // Handle drive letters like "C:" by converting to "C:\\"
+          resolvedPath = dirPath + '\\';
+        }
+
+        console.log('[list-directory] resolved path:', resolvedPath);
+
+        // Use async exists check
+        try {
+          await fs.promises.access(resolvedPath);
+        } catch {
+          console.warn('[list-directory] Path not found:', resolvedPath);
+          return { items: [], error: 'Path not found' };
+        }
+
+        console.log('[list-directory] reading directory...');
+        const fileList = await fs.promises.readdir(resolvedPath);
+        console.log('[list-directory] found', fileList.length, 'items');
+
+        const filteredList = fileList.filter(item => !isSystemFile(item, showHidden));
+        const items = [];
+        const CHUNK_SIZE = 100;
+
+        // Process items in batches to prevent UV thread pool starvation
+        for (let i = 0; i < filteredList.length; i += CHUNK_SIZE) {
+          const chunk = filteredList.slice(i, i + CHUNK_SIZE);
+          const chunkPromises = chunk.map(async item => {
+            try {
+              const fullPath = path.join(resolvedPath, item);
+              const stats = await fs.promises.stat(fullPath);
+              const ext = path.extname(item).toLowerCase();
+              const isEditable = EDITABLE_EXTENSIONS.includes(ext);
+              const isProtected = isProtectedPath(fullPath);
+
+              const size = stats.isDirectory() ? 0 : stats.size;
+
+              return {
+                name: item,
+                path: fullPath,
+                type: stats.isDirectory() ? 'folder' : 'file',
+                ext: ext,
+                editable: !stats.isDirectory() && isEditable && !isProtected,
+                protected: isProtected,
+                size: size,
+                modified: stats.mtimeMs
+              };
+            } catch (err) {
+              return null;
+            }
+          });
+
+          const chunkResults = await Promise.all(chunkPromises);
+          items.push(...chunkResults.filter(Boolean));
+        }
+
+        items.sort((a, b) => {
+          if (a.type !== b.type) return a.type === 'folder' ? -1 : 1;
+          return a.name.localeCompare(b.name);
         });
 
-        const chunkResults = await Promise.all(chunkPromises);
-        items.push(...chunkResults.filter(Boolean));
+        console.log('[list-directory] returning', items.length, 'items');
+        return { items, error: null };
+      } catch (err) {
+        console.error('[list-directory] error:', err);
+        return { items: [], error: err && err.message ? err.message : String(err) };
       }
-
-      items.sort((a, b) => {
-        if (a.type !== b.type) return a.type === 'folder' ? -1 : 1;
-        return a.name.localeCompare(b.name);
-      });
-
-      console.log('[list-directory] returning', items.length, 'items');
-      return { items, error: null };
-    } catch (err) {
-      console.error('[list-directory] error:', err);
-      return { items: [], error: err && err.message ? err.message : String(err) };
     }
   });
+
+ipcMain.handle('list-directory', async (event, dirPath, options = {}) => {
+  return listDirectoryController.get(dirPath, options);
+});
 
   ipcMain.handle('get-files-to-merge', async () => {
     const docsPath = path.join(process.env.USERPROFILE, 'Documents');

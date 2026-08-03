@@ -1,15 +1,39 @@
 # -*- mode: python ; coding: utf-8 -*-
+import certifi
+from PyInstaller.utils.hooks import collect_data_files
 
 block_cipher = None
+
+# Resolve the CA bundle path at spec-parse time so it works regardless of
+# where the venv lives on the build machine.
+_certifi_datas = [(certifi.where(), "certifi")]
+
 
 a = Analysis(
     ['setup_offline.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+     datas=[
+        # Bundle certifi's CA bundle so frozen exe can verify HTTPS certs on
+        # any end-user machine without relying on the dev-machine venv path.
+        *_certifi_datas,
+    ],
     hiddenimports=[
         'sentence_transformers',
-        'onnxruntime'
+        
+        'onnxruntime',
+        # SSL / TLS — must be present in the frozen exe
+        'ssl',
+        '_ssl',
+        '_socket',
+        'certifi',
+        'truststore',
+        # huggingface_hub / requests SSL helpers
+        'urllib3',
+        'urllib3.contrib',
+        'urllib3.contrib.pyopenssl',
+        'requests',
+        'ssl_bootstrap',
     ],
     hookspath=[],
     hooksconfig={},
@@ -20,7 +44,7 @@ a = Analysis(
         'scipy', 'pandas', 'sklearn', 'skimage',
         'tensorflow', 'keras',
         'asyncio', 'asyncore',
-        'antigravity', '_tkinter', '_ssl', '_socket',
+        'antigravity', '_tkinter',
     ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,

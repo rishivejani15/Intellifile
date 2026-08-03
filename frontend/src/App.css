@@ -8,14 +8,44 @@
    Root Design Tokens - Futuristic Palette
    ─────────────────────────────────────────────────────── */
 :root {
-  /* Brand - Electric Indigo Gradient */
-  --c-brand: #6366f1;
-  --c-brand-hover: #4f46e5;
-  --c-brand-soft: rgba(99, 102, 241, 0.12);
-  --c-brand-glow: rgba(99, 102, 241, 0.4);
-  --c-brand-gradient: linear-gradient(135deg, #6366f1 0%, #a855f7 100%);
+  /* Global hover background – light & dark */
+  --global-hover-bg-light: var(--s-hover);
+  --global-hover-bg-dark: rgba(255, 255, 255, 0.08);
+  /* Default hover background variable – overridden in dark mode */
+  --global-hover-bg: var(--global-hover-bg-light);
+
+  /* Context menu colors – light mode */
+  /* Background of the context menu panel */
+  --context-menu-bg-light: var(--s-elev-2);
+  /* Border colour for the context menu */
+  --context-menu-border-light: var(--color-border);
+  /* Hover background for menu items (light) */
+  --context-menu-hover-bg-light: var(--s-hover);
+  /* Text colour on hover (light) */
+  --context-menu-hover-text-light: var(--color-primary-pressed);
+
+  /* Context menu colours – dark mode */
+  /* Background of the context menu panel in dark mode */
+  --context-menu-bg-dark: var(--c-brand-soft);
+  /* Border colour for the context menu in dark mode */
+  --context-menu-border-dark: var(--color-border);
+  /* Hover background for menu items (dark) – using brand‑soft as requested */
+  --context-menu-hover-bg-dark: var(--c-brand-soft);
+  /* Text colour on hover (dark) */
+  --context-menu-hover-text-dark: var(--color-primary);
 
   /* Functional Colors */
+  /* Emerald + Gold Seal Tokens */
+  --color-primary: #1E5E42;
+  --color-primary-hover: #16472F;
+  --color-primary-pressed: #0F3620;
+  --color-secondary: #B8902E;
+  --color-secondary-hover: #9C7A26;
+  --color-text-primary: #0D1B0F;
+  --color-text-secondary: #4A5A50;
+  --color-border: #D8DDD9;
+  --color-danger: #A32C2C;
+  --color-success: #1E5E42;
   --c-success: #10b981;
   --c-success-soft: rgba(16, 185, 129, 0.12);
   --c-warning: #f59e0b;
@@ -46,7 +76,7 @@
   /* Borders */
   --bo: rgba(148, 163, 184, 0.25);
   --bo-light: rgba(148, 163, 184, 0.12);
-  --bo-focus: var(--c-brand);
+  --bo-focus: var(--color-primary);
 
   /* Shadows - Layered Elevation */
   --sh-sm: 0 1px 2px rgba(0, 0, 0, 0.05), 0 2px 4px rgba(0, 0, 0, 0.03);
@@ -138,10 +168,23 @@
    Dark Mode - Cyberpunk Noir
    ─────────────────────────────────────────────────────── */
 [data-theme="dark"] {
-  --c-brand: #818cf8;
-  --c-brand-hover: #6366f1;
-  --c-brand-soft: rgba(129, 140, 248, 0.15);
-  --c-brand-glow: rgba(129, 140, 248, 0.5);
+  /* Override global hover background for dark mode */
+  --global-hover-bg: var(--global-hover-bg-dark);
+
+
+  --c-brand-soft: #185b3837;
+
+  /* Emerald + Gold Seal Tokens (Dark) */
+  --color-primary: #3FA372;
+  --color-primary-hover: #55B885;
+  --color-primary-pressed: #2E8A5C;
+  --color-secondary: #DDB35B;
+  --color-secondary-hover: #E8C378;
+  --color-text-primary: #E8ECE9;
+  --color-text-secondary: #9BAAA0;
+  --color-border: #2A2F2C;
+  --color-danger: #D65C5C;
+  --color-success: #3FA372;
 
   --s-bg: #09090b;
   --s-elev: rgba(24, 24, 27, 0.9);
@@ -240,13 +283,13 @@ body {
 
 /* Selection */
 ::selection {
-  background: var(--c-brand);
+  background: var(--color-primary);
   color: var(--t-inverse);
 }
 
 /* Focus States - Accessible */
 *:focus-visible {
-  outline: 2px solid var(--c-brand);
+  outline: 2px solid var(--color-primary);
   outline-offset: 2px;
   border-radius: var(--rd-sm);
 }
@@ -254,6 +297,11 @@ body {
 /* ───────────────────────────────────────────────────────
    App Shell
    ─────────────────────────────────────────────────────── */
+/* Hide top navigation when offline setup overlay is active */
+:has(.offline-setup-overlay) .App-header {
+  display: none !important;
+}
+
 .App {
   display: flex;
   flex-direction: column;
@@ -302,10 +350,6 @@ body {
   color: var(--t-primary);
   margin: 0;
   letter-spacing: -0.5px;
-  background: var(--c-brand-gradient);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
   white-space: nowrap;
 }
 
@@ -364,7 +408,7 @@ body {
 }
 
 .tab-btn.active {
-  color: var(--c-brand);
+  color: var(--color-primary);
   font-weight: 700;
   background: var(--c-brand-soft);
 }
@@ -404,8 +448,8 @@ body {
 }
 
 .theme-toggle:hover {
-  color: var(--c-brand);
-  border-color: var(--c-brand);
+  color: var(--color-primary);
+  border-color: var(--color-primary);
   transform: translateY(-2px) scale(1.05);
   box-shadow: var(--sh-md), 0 0 20px var(--c-brand-glow);
 }
@@ -481,11 +525,11 @@ body {
 }
 
 .theme-option:hover {
-  color: var(--c-brand);
+  color: var(--color-primary);
 }
 
 .theme-option.active {
-  color: var(--c-brand);
+  color: var(--color-primary);
   font-weight: 700;
   background: var(--c-brand-soft);
 }
@@ -493,7 +537,7 @@ body {
 .theme-option .checkmark {
   margin-left: auto;
   font-size: 14px;
-  color: var(--c-brand);
+  color: var(--color-primary);
 }
 
 /* ───────────────────────────────────────────────────────
@@ -601,7 +645,7 @@ body {
 }
 
 .toolbar-btn.primary {
-  background: var(--c-brand);
+  background: var(--color-primary);
   color: var(--t-inverse);
   box-shadow: 0 2px 8px var(--c-brand-glow);
 }
@@ -611,7 +655,7 @@ body {
 }
 
 .toolbar-btn.primary:hover:not(:disabled) {
-  background: var(--c-brand-hover);
+  background: var(--color-primary-hover);
   box-shadow: 0 4px 16px var(--c-brand-glow);
 }
 
@@ -623,8 +667,8 @@ body {
 
 .toolbar-btn.secondary:hover:not(:disabled) {
   background: var(--s-active);
-  border-color: var(--c-brand);
-  color: var(--c-brand);
+  border-color: var(--color-primary);
+  color: var(--color-primary);
 }
 
 .toolbar-btn.ghost {
@@ -679,8 +723,8 @@ body {
 }
 
 .update-check-btn {
-  color: var(--c-brand);
-  border: 1px solid var(--c-brand);
+  color: var(--color-primary);
+  border: 1px solid var(--color-primary);
   padding: var(--sp-1) var(--sp-3);
   border-radius: var(--rd-full);
   font-size: var(--text-xs);
@@ -771,7 +815,7 @@ body {
 }
 
 .btn-primary {
-  background: var(--c-brand);
+  background: var(--color-primary);
   color: var(--t-inverse);
   box-shadow: 0 2px 8px var(--c-brand-glow);
 }
@@ -790,7 +834,7 @@ body {
 }
 
 .btn-primary:hover:not(:disabled) {
-  background: var(--c-brand-hover);
+  background: var(--color-primary-hover);
   transform: translateY(-2px);
   box-shadow: 0 4px 16px var(--c-brand-glow);
 }
@@ -803,8 +847,8 @@ body {
 
 .btn-secondary:hover:not(:disabled) {
   background: var(--s-active);
-  border-color: var(--c-brand);
-  color: var(--c-brand);
+  border-color: var(--color-primary);
+  color: var(--color-primary);
   transform: translateY(-1px);
 }
 
@@ -815,7 +859,7 @@ body {
 
 .btn-ghost:hover:not(:disabled) {
   background: var(--s-hover);
-  color: var(--c-brand);
+  color: var(--color-primary);
 }
 
 .btn-danger {
@@ -895,7 +939,7 @@ body {
 
 .input:focus {
   outline: none;
-  border-color: var(--c-brand);
+  border-color: var(--color-primary);
   box-shadow: 0 0 0 3px var(--c-brand-soft);
   transform: translateY(-1px);
 }
@@ -932,14 +976,14 @@ body {
 }
 
 .card:hover {
-  border-color: var(--c-brand);
+  border-color: var(--color-primary);
   box-shadow: var(--sh-md);
   transform: translateY(-4px);
 }
 
 .card-selected {
   background: var(--s-selected);
-  border-color: var(--c-brand);
+  border-color: var(--color-primary);
   box-shadow: var(--sh-md), 0 0 0 2px var(--c-brand-soft);
 }
 
@@ -960,7 +1004,7 @@ body {
 
 .badge-brand {
   background: var(--c-brand-soft);
-  color: var(--c-brand);
+  color: var(--color-primary);
 }
 
 .badge-success {

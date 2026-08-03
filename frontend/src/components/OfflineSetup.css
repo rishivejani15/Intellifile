@@ -8,7 +8,7 @@
 .offline-setup-overlay {
   position: fixed;
   inset: 0;
-  background: radial-gradient(ellipse at center, #1a1f2e 0%, #0f141f 100%);
+  background: var(--s-bg);
   z-index: var(--z-fullscreen);
   display: flex;
   align-items: center;
@@ -45,7 +45,7 @@
   left: 0;
   right: 0;
   height: 4px;
-  background: var(--c-brand-gradient);
+  background: var(--color-primary);
 }
 
 .offline-setup-container h2 {
@@ -54,10 +54,6 @@
   font-size: var(--text-2xl);
   font-weight: 800;
   color: var(--t-primary);
-  background: var(--c-brand-gradient);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
 }
 
 .offline-setup-container p {
@@ -66,12 +62,21 @@
   line-height: 1.6;
   font-size: var(--text-sm);
 }
+/* Dark mode overlay */
+/* Hide explorer toolbar/tabs in offline setup */
+.offline-setup-container .explorer-toolbar,
+.offline-setup-container .explorer-tabs {
+  display: none !important;
+}
+[data-theme="dark"] .offline-setup-overlay {
+  background: var(--s-bg);
+}
 
 /* ───────────────────────────────────────────────────────
    Setup Button
    ─────────────────────────────────────────────────────── */
 .setup-button {
-  background: var(--c-brand);
+  background: var(--color-primary);
   color: var(--t-inverse);
   border: none;
   padding: var(--sp-3) var(--sp-6);
@@ -83,7 +88,7 @@
   display: inline-flex;
   align-items: center;
   gap: var(--sp-2);
-  box-shadow: 0 4px 14px rgba(99, 102, 241, 0.4);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
 }
 
 .setup-button::before {
@@ -92,7 +97,7 @@
 }
 
 .setup-button:hover:not(:disabled) {
-  background: var(--c-brand-hover);
+  background: var(--color-primary-hover);
   transform: translateY(-2px);
   box-shadow: 0 8px 24px rgba(99, 102, 241, 0.5);
 }
@@ -130,19 +135,19 @@
 .step-info {
   margin-bottom: var(--sp-4);
   padding: var(--sp-3);
-  background: var(--s-hover);
+  background: var(--global-hover-bg) !important;
   border-radius: var(--rd-md);
-  border-left: 3px solid var(--c-brand);
+  border-left: 3px solid var(--color-primary);
   transition: all var(--dur-200) var(--ease-default);
 }
 
 .step-info.active {
-  border-left-color: var(--c-success);
+  border-left-color: var(--color-primary);
   background: var(--c-success-soft);
 }
 
 .step-info.completed {
-  border-left-color: var(--c-success);
+  border-left-color: var(--color-primary);
   opacity: 0.7;
 }
 
@@ -167,7 +172,7 @@
 }
 
 .step-info.active h3::before {
-  color: var(--c-brand);
+  color: var(--color-primary);
   content: '◉';
   animation: pulse 1s var(--ease-in-out) infinite;
 }
@@ -192,7 +197,7 @@
    Progress Bar
    ─────────────────────────────────────────────────────── */
 .progress-bar-bg {
-  background: var(--s-hover);
+  background: var(--global-hover-bg) !important;
   height: 10px;
   border-radius: var(--rd-full);
   overflow: hidden;
@@ -202,7 +207,7 @@
 
 .progress-bar-fill {
   height: 100%;
-  background: var(--c-brand-gradient);
+  background: var(--color-primary);
   border-radius: inherit;
   transition: width var(--dur-500) var(--ease-spring-sm);
   position: relative;
@@ -221,7 +226,7 @@
 
 .progress-bar-fill.indeterminate {
   width: 100%;
-  background: linear-gradient(90deg, var(--s-hover) 25%, var(--c-brand) 50%, var(--s-hover) 75%);
+  background: linear-gradient(90deg, var(--s-hover) 25%, var(--color-primary) 50%, var(--s-hover) 75%);
   background-size: 200% 100%;
   animation: loading var(--dur-1500) var(--ease-in-out) infinite;
 }
@@ -240,7 +245,7 @@
 }
 
 .progress-percent {
-  color: var(--c-brand);
+  color: var(--color-primary);
   font-weight: 700;
   font-family: var(--font-mono);
 }
@@ -248,33 +253,159 @@
 /* ───────────────────────────────────────────────────────
    Error State
    ─────────────────────────────────────────────────────── */
-.setup-error {
+.setup-error-card {
   margin-top: var(--sp-5);
-  padding: var(--sp-3);
+  padding: var(--sp-4) var(--sp-5);
   background: var(--c-error-soft);
-  border: 1px solid rgba(239, 68, 68, 0.3);
-  border-radius: var(--rd-md);
-  color: var(--c-error);
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  border-radius: var(--rd-lg);
+  color: var(--t-primary);
   text-align: left;
   font-size: var(--text-sm);
-  display: flex;
-  align-items: flex-start;
-  gap: var(--sp-2);
   animation: shake var(--dur-400) var(--ease-in-out);
 }
 
-.setup-error::before {
-  content: '⚠️';
-  font-size: 16px;
+.setup-error-ssl {
+  border-color: rgba(245, 158, 11, 0.4);
+  background: rgba(245, 158, 11, 0.07);
+}
+
+.setup-error-header {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-weight: 700;
+  font-size: var(--text-base);
+  color: var(--c-error);
+  margin-bottom: var(--sp-3);
+}
+
+.setup-error-ssl .setup-error-header {
+  color: #f59e0b;
+}
+
+.setup-error-icon {
+  font-size: 20px;
   flex-shrink: 0;
 }
 
-.setup-error-message {
-  flex: 1;
-  line-height: 1.5;
-  word-break: break-word;
+.setup-error-body {
+  color: var(--t-secondary);
+  line-height: 1.55;
+  margin: 0 0 var(--sp-3) 0;
+  display: block;
 }
 
+.setup-error-causes {
+  margin: 0 0 var(--sp-3) var(--sp-4);
+  padding: 0;
+  color: var(--t-secondary);
+  font-size: var(--text-xs);
+  line-height: 1.8;
+}
+
+.setup-error-causes li::marker {
+  color: #f59e0b;
+}
+
+.setup-error-actions-list {
+  background: rgba(0,0,0,0.15);
+  border-radius: var(--rd-md);
+  padding: var(--sp-3) var(--sp-4);
+  margin-bottom: var(--sp-3);
+}
+
+.setup-error-actions-list p {
+  margin: 0 0 var(--sp-1) 0;
+  font-size: var(--text-xs);
+  color: var(--t-muted);
+}
+
+.setup-error-actions-list ol {
+  margin: 0;
+  padding-left: var(--sp-5);
+  font-size: var(--text-xs);
+  color: var(--t-secondary);
+  line-height: 1.8;
+}
+
+/* ───────────────────────────────────────────────────────
+   Manual Install Path
+   ─────────────────────────────────────────────────────── */
+.setup-manual-install {
+  margin: var(--sp-3) 0;
+  padding: var(--sp-3) var(--sp-4);
+  background: rgba(0,0,0,0.2);
+  border: 1px solid var(--bo);
+  border-radius: var(--rd-md);
+}
+
+.setup-manual-label {
+  margin: 0 0 var(--sp-2) 0;
+  font-size: var(--text-xs);
+  color: var(--t-secondary);
+  line-height: 1.5;
+}
+
+.setup-hf-link {
+  color: var(--c-brand);
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.setup-hf-link:hover {
+  text-decoration: underline;
+}
+
+.setup-path-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+
+.setup-path-code {
+  flex: 1;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  background: rgba(0,0,0,0.3);
+  border: 1px solid var(--bo);
+  border-radius: var(--rd-sm);
+  padding: var(--sp-1) var(--sp-2);
+  color: var(--t-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  display: block;
+}
+
+.setup-copy-btn {
+  flex-shrink: 0;
+  background: var(--s-active);
+  border: 1px solid var(--bo);
+  border-radius: var(--rd-sm);
+  color: var(--t-secondary);
+  font-size: var(--text-xs);
+  padding: var(--sp-1) var(--sp-2);
+  cursor: pointer;
+  transition: all var(--dur-150) var(--ease-default);
+  white-space: nowrap;
+}
+
+.setup-copy-btn:hover {
+  background: var(--c-brand);
+  color: white;
+  border-color: var(--c-brand);
+}
+
+/* ───────────────────────────────────────────────────────
+   Retry Button Row
+   ─────────────────────────────────────────────────────── */
+.setup-error-retry {
+  margin-top: var(--sp-4);
+  text-align: center;
+}
 /* ───────────────────────────────────────────────────────
    Success State
    ─────────────────────────────────────────────────────── */

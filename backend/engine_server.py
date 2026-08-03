@@ -18,6 +18,17 @@ _BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
 if _BACKEND_DIR not in sys.path:
     sys.path.insert(0, _BACKEND_DIR)
 
+# Bootstrap SSL before any network calls (certifi CA bundle + Windows trust store).
+# Critical in the frozen PyInstaller build where certifi.where() would otherwise
+# resolve to a dev-machine venv path that doesn't exist on end-user machines.
+try:
+    import ssl_bootstrap as _ssl_bootstrap
+    _ssl_status = _ssl_bootstrap.bootstrap_ssl()
+    _ssl_bootstrap.log_ssl_status(_ssl_status)
+except Exception as _ssl_ex:
+    sys.stderr.write(f"[engine] ssl_bootstrap warning (non-fatal): {_ssl_ex}\n")
+    sys.stderr.flush()
+    
 sys.stderr.write("[engine] Starting resilient process...\n")
 sys.stderr.flush()
 

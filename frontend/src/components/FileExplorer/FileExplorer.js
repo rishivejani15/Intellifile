@@ -100,6 +100,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
   const watchedDirectoryRef = useRef(null);
   const initialLoadRef = useRef(false);
   const archiveMessageTimerRef = useRef(null);
+  const directoryLoadInFlightRef = useRef(new Map());
 
   // Toast debouncing for watch events — batch rapid events into a single toast
   const watchToastTimerRef = useRef(null);
@@ -311,6 +312,13 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
   // Load directory with filtering and sorting
   const loadDirectory = useCallback(async (dirPath, options = {}) => {
     const { soft = false, trackHistory = true, tabId = null, selectFile = null, suppressLoading = false } = options;
+    const normalizedPath = (dirPath || '').replace(/[\\/]+$/, '');
+    const loadKey = `${normalizedPath}::${soft ? 'soft' : 'full'}::${suppressLoading ? 'suppress' : 'show'}`;
+    const inFlight = directoryLoadInFlightRef.current.get(loadKey);
+    if (inFlight) {
+      return inFlight;
+    }
+
     const requestId = ++loadRequestRef.current;
     const isStale = () => requestId !== loadRequestRef.current;
 
@@ -319,8 +327,10 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
       setRenamingItem(null);
       setShowContextMenu(false);
     }
-    try {
-      const result = await ipcRenderer?.invoke('list-directory', dirPath, { showHidden });
+
+    const requestPromise = (async () => {
+      try {
+        const result = await ipcRenderer?.invoke('list-directory', dirPath, { showHidden });
       if (isStale()) return;
       if (!result || result.error) {
         console.error('Error loading directory:', result?.error || 'Unknown error');
@@ -468,14 +478,19 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
           }
         }
       }
-    } catch (error) {
-      if (isStale()) return;
-      console.error('Error:', error);
-    } finally {
-      if (!soft && !isStale()) {
-        setLoading(false);
+      } catch (error) {
+        if (isStale()) return;
+        console.error('Error:', error);
+      } finally {
+        directoryLoadInFlightRef.current.delete(loadKey);
+        if (!soft && !isStale()) {
+          setLoading(false);
+        }
       }
-    }
+    })();
+
+    directoryLoadInFlightRef.current.set(loadKey, requestPromise);
+    return requestPromise;
   }, [updateBreadcrumb, searchQuery, sortBy, sortDirection, showHidden, updateHistory, updateActiveTab, setCurrentPath, setAddressPath, setRenamingItem, onFileSelect, currentPath]);
 
   const handleRecentChooserSelect = (file) => {
@@ -696,8 +711,9 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
 
     setSelectedItems(newSelection);
     setSelectedItem(item);
-    // Only show preview for files, not for folders - this prevents window resize on first click
-    if (item.type === 'file') {
+    // In icon view mode we keep the preview pane hidden on single click.
+    // Only reveal preview for files when not in icon view.
+    if (item.type === 'file' && viewMode !== 'icons') {
       setShowPreview(true);
     } else {
       setShowPreview(false);
@@ -707,13 +723,13 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
   };
 
   useEffect(() => {
-    // Only show preview for selected files, not folders
-    if (selectedItem && selectedItem.type === 'file') {
+    // Only show preview for selected files, not folders, and not in icon view mode
+    if (selectedItem && selectedItem.type === 'file' && viewMode !== 'icons') {
       setShowPreview(true);
     } else {
       setShowPreview(false);
     }
-  }, [selectedItem]);
+  }, [selectedItem, viewMode]);
 
   const handleBreadcrumbClick = (path) => {
     // Load breadcrumb navigation in background without spinner
@@ -1040,9 +1056,23 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
 
   const handleCloseVersioning = () => {
     setShowVersioning(false);
-    setShowPreview(true);
+    // Do not automatically reopen the preview panel after closing versioning
+    // Users can manually reopen preview if needed
+    // setShowPreview(true);
   };
 
+  // Close versioning panel on Escape key
+  useEffect(() => {
+    const onKeyDown = (e) => {
+      if (e.key === 'Escape' && showVersioning) {
+        setShowVersioning(false);
+        // Do not auto-open preview when versioning is closed via Escape
+        // setShowPreview(true);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [showVersioning]);
   // eslint-disable-next-line no-unused-vars
   const isCutItem = (item) => {
     return clipboard?.operation === 'cut' &&
@@ -1311,7 +1341,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
 
     setSelectedItem(searchItem);
     setSelectedItems([searchItem]);
-    setShowPreview(true);
+    setShowPreview(viewMode !== 'icons');
   };
 
   const handleSearchResultDoubleClick = (filePath) => {

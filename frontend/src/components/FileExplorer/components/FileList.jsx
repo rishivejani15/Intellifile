@@ -39,31 +39,33 @@ function FileList({
         {semanticResults.length === 0 ? (
           <div className="empty-state">No matching files found</div>
         ) : (
-          <div className="file-list list">
-            {semanticResults.map((result, idx) => {
-              const fileName = result.path.split('\\').pop() || result.path.split('/').pop();
-              const scorePercent = Math.round(result.score * 100);
-              return (
-                <div
-                  key={result.path + idx}
-                  className="file-item file search-result-item"
-                  onClick={() => onSearchResultClick(result.path)}
-                  title={result.path}
-                >
-                  <div className="file-icon">📄</div>
-                  <div className="file-info">
-                    <div className="file-name">{fileName}</div>
-                    <div className="file-meta">{result.path}</div>
-                  </div>
-                  <div className="search-score">
-                    <div className="score-bar">
-                      <div className="score-fill" style={{ width: `${scorePercent}%` }} />
+          <div className="semantic-results-body">
+            <div className="file-list list">
+              {semanticResults.map((result, idx) => {
+                const fileName = result.path.split('\\').pop() || result.path.split('/').pop();
+                const scorePercent = Math.round(result.score * 100);
+                return (
+                  <div
+                    key={result.path + idx}
+                    className="file-item file search-result-item"
+                    onClick={() => onSearchResultClick(result.path)}
+                    title={result.path}
+                  >
+                    <div className="file-icon">📄</div>
+                    <div className="file-info">
+                      <div className="file-name">{fileName}</div>
+                      <div className="file-meta">{result.path}</div>
                     </div>
-                    <span className="score-text">{scorePercent}%</span>
+                    <div className="search-score">
+                      <div className="score-bar">
+                        <div className="score-fill" style={{ width: `${scorePercent}%` }} />
+                      </div>
+                      <span className="score-text">{scorePercent}%</span>
+                    </div>
                   </div>
-                </div>
-              );
-            })}
+                );
+              })}
+            </div>
           </div>
         )}
       </div>

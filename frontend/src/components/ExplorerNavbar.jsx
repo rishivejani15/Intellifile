@@ -1,4 +1,5 @@
 import React from 'react';
+import { MdArrowBack, MdArrowDownward, MdArrowForward, MdArrowUpward, MdRefresh, MdSearch, MdHistory, MdOutlineVisibility, MdOutlineVisibilityOff, MdViewModule, MdViewList, MdTableChart, MdSort, MdUnfoldMore, MdUnfoldLess, MdCalendarToday, MdOutlineDateRange, MdHourglassEmpty, MdDelete } from 'react-icons/md';
 import './FileExplorer/FileExplorer.css';
 
 function ExplorerNavbar({
@@ -53,7 +54,7 @@ function ExplorerNavbar({
             disabled={historyIndex <= 0}
             title="Back (Alt+←)"
           >
-            ◀
+            <MdArrowBack />
           </button>
           <button
             className="nav-btn forward-btn"
@@ -61,26 +62,27 @@ function ExplorerNavbar({
             disabled={historyIndex >= history.length - 1}
             title="Forward (Alt+→)"
           >
-            ▶
+            <MdArrowForward />
           </button>
           <button
             className="nav-btn up-btn"
             onClick={onUp}
             title="Up (Alt+↑)"
           >
-            ⬆️
+            <MdArrowUpward />
           </button>
           <button
             className="nav-btn refresh-btn"
             onClick={onRefresh}
             title="Refresh (F5)"
           >
-            🔄
+            <MdRefresh />
           </button>
         </div>
 
         {/* Breadcrumb */}
         <div className="breadcrumb">
+          <MdHistory className="breadcrumb-history-icon" />
           {breadcrumb.map((crumb, idx) => (
             <React.Fragment key={idx}>
               {idx > 0 && <span className="breadcrumb-sep">›</span>}
@@ -109,20 +111,31 @@ function ExplorerNavbar({
       {/* Toolbar */}
       <div className="explorer-toolbar">
         <div className="search-box">
+          <MdSearch className="search-input-icon" />
           <input
             type="text"
-            placeholder={engineReady ? "🔍 Search (Enter for AI search)" : "🔍 Search (engine loading...)"}
+            placeholder={engineReady ? "Search (Enter for AI search)" : "Search (engine loading...)"}
             value={searchQuery}
             onChange={(e) => onSearchChange?.(e, 'query')}
             onKeyDown={onSearchKeyDown}
           />
-          {semanticLoading && <span className="search-spinner">⏳</span>}
-          {searchQuery && /\b(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec|\d{4}|yesterday|today|last\s+week|last\s+month|this\s+month|this\s+year)\b/i.test(searchQuery) && (
-            <div className="date-filter-badge">
-              📅 Date filter active
-            </div>
+          {searchQuery && !semanticLoading && (
+            <button
+              type="button"
+              className="search-clear-btn"
+              onClick={() => onSearchChange?.({ target: { value: '' } }, 'query')}
+              title="Clear search"
+            >
+              <MdDelete />
+            </button>
           )}
+          {semanticLoading && <span className="search-spinner"><MdHourglassEmpty /></span>}
         </div>
+        {searchQuery && /\b(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec|\d{4}|yesterday|today|last\s+week|last\s+month|this\s+month|this\s+year)\b/i.test(searchQuery) && (
+          <div className="date-filter-badge">
+            <MdOutlineDateRange /> Date filter active
+          </div>
+        )}
 
         <div className="view-controls">
           <button
@@ -130,25 +143,26 @@ function ExplorerNavbar({
             onClick={() => onViewModeChange('icons')}
             title="Icons view"
           >
-            ⊞
+            <MdViewModule />
           </button>
           <button
             className={`view-btn ${viewMode === 'list' ? 'active' : ''}`}
             onClick={() => onViewModeChange('list')}
             title="List view"
           >
-            ≡
+            <MdViewList />
           </button>
           <button
             className={`view-btn ${viewMode === 'details' ? 'active' : ''}`}
             onClick={() => onViewModeChange('details')}
             title="Details view"
           >
-            📋
+            <MdTableChart />
           </button>
         </div>
 
         <div className="sort-controls">
+          <MdSort className="sort-icon" />
           <select value={sortBy} onChange={(e) => onSortByChange(e.target.value)} className="sort-select">
             <option value="name">Sort by Name</option>
             <option value="date">Sort by Date</option>
@@ -160,7 +174,7 @@ function ExplorerNavbar({
             onClick={() => onSortDirectionChange?.(sortDirection === 'asc' ? 'desc' : 'asc')}
             title={`Sort ${sortDirection === 'asc' ? 'Ascending' : 'Descending'} — Click to toggle`}
           >
-            {sortDirection === 'asc' ? '▲' : '▼'}
+            {sortDirection === 'asc' ? <MdUnfoldMore /> : <MdUnfoldLess />}
           </button>
         </div>
 
@@ -179,7 +193,7 @@ function ExplorerNavbar({
             onClick={() => onShowHiddenChange?.(!showHidden)}
             title={showHidden ? 'Hide hidden files' : 'Show hidden files'}
           >
-            {showHidden ? '👁️' : '👁️‍🗨️'}
+            {showHidden ? <MdOutlineVisibility /> : <MdOutlineVisibilityOff />}
           </button>
           <div className={`index-status ${indexing ? 'running' : (indexMessage && indexMessage.toLowerCase().includes('failed') ? 'error' : 'done')}`} title={indexDetail || indexMessage}>
             <span className="index-dot" />

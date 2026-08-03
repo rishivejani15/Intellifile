@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import './OfflineSetup.css';
 import { showErrorToast, showToast } from '../utils/toast';
 
@@ -6,7 +6,9 @@ const OfflineSetup = ({ onComplete }) => {
   const [status, setStatus] = useState('checking'); // checking, needed, running, error
   const [progress, setProgress] = useState(null);
   const [errorMsg, setErrorMsg] = useState('');
-
+  const [errorCode, setErrorCode] = useState(null);       // e.g. "SSL_CERT_VERIFY_FAILED"
+  const [manualPath, setManualPath] = useState(null);     // manual model install path
+  const [copied, setCopied] = useState(false);
   useEffect(() => {
     const checkStatus = async () => {
       try {
@@ -25,6 +27,15 @@ const OfflineSetup = ({ onComplete }) => {
     checkStatus();
   }, [onComplete]);
 
+
+  const copyPath = useCallback(() => {
+    if (!manualPath) return;
+    navigator.clipboard.writeText(manualPath).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  }, [manualPath]);
+
   const startSetup = async () => {
     if (status === 'running') return;
 
@@ -33,6 +44,8 @@ const OfflineSetup = ({ onComplete }) => {
       if (!networkCheck?.success || !networkCheck?.online) {
         const message = 'Internet connection is required to download the AI models. Please turn on Wi-Fi or connect to the internet, then try again.';
         setErrorMsg(message);
+        setErrorCode(null);
+        setManualPath(null);
         setStatus('error');
         showErrorToast('Offline setup needs internet.', message, 'Once the connection is back, click Retry Setup.');
         return;
@@ -40,6 +53,8 @@ const OfflineSetup = ({ onComplete }) => {
     } catch (e) {
       const message = 'Could not verify network connectivity. Please check your internet connection and try again.';
       setErrorMsg(message);
+      setErrorCode(null);
+      setManualPath(null);
       setStatus('error');
       showErrorToast('Offline setup needs internet.', message, 'Once the connection is back, click Retry Setup.');
       return;
@@ -47,6 +62,9 @@ const OfflineSetup = ({ onComplete }) => {
 
     setStatus('running');
     setErrorMsg('');
+    setErrorCode(null);
+    setManualPath(null);
+    setCopied(false);
     // Don't assume total steps here; wait for the first 'step' message from the backend
     setProgress({ step: 1, total: null, name: 'Initializing...', status: 'processing', pct: 0 });
 
@@ -66,6 +84,9 @@ const OfflineSetup = ({ onComplete }) => {
         }));
       } else if (msg.type === 'error') {
         setErrorMsg(msg.message);
+        setErrorMsg(msg.message || 'Model download or setup failed.');
+        setErrorCode(msg.code || null);
+        setManualPath(msg.manual_install_path || null);
         setStatus('error');
         showErrorToast('Offline setup failed.', msg.message || 'Model download or setup failed.', 'Check your internet connection and try again.');
       } else if (msg.type === 'done') {
@@ -81,11 +102,15 @@ const OfflineSetup = ({ onComplete }) => {
       const result = await window.intellifile.offlineSetupRun();
       if (!result.success && status !== 'error') {
         setErrorMsg(result.error || 'Setup process exited with an error.');
+        setErrorCode(null);
+        setManualPath(null);
         setStatus('error');
         showErrorToast('Offline setup failed.', result.error || 'Setup process exited with an error.', 'Check your internet connection and try again.');
       }
     } catch (e) {
       setErrorMsg(e.message);
+      setErrorCode(null);
+      setManualPath(null);
       setStatus('error');
       showErrorToast('Offline setup failed.', e?.message || 'Setup could not start.', 'Check your internet connection and try again.');
     } finally {
@@ -94,6 +119,8 @@ const OfflineSetup = ({ onComplete }) => {
   };
 
   if (status === 'checking') return null;
+
+    const isSSLError = errorCode === 'SSL_CERT_VERIFY_FAILED';
 
   return (
     <div className="offline-setup-overlay">
@@ -146,10 +173,64 @@ const OfflineSetup = ({ onComplete }) => {
         )}
 
         {status === 'error' && (
-          <div className="setup-error">
-            <strong>Error:</strong> {errorMsg}
-            <div style={{ marginTop: '15px', textAlign: 'center' }}>
-              <button className="setup-button" onClick={startSetup}>Retry Setup</button>
+          <div className={`setup-error-card ${isSSLError ? 'setup-error-ssl' : ''}`}>
+            {isSSLError ? (
+              <>
+                <div className="setup-error-header">
+                  <span className="setup-error-icon">🔒</span>
+                  <strong>Secure connection failed</strong>
+                </div>
+                <p className="setup-error-body">
+                  Your network or security software is blocking the secure download.
+                  This is common on corporate networks, VPNs, or when antivirus 
+                  software intercepts HTTPS traffic.
+                </p>
+                <ul className="setup-error-causes">
+                  <li>Corporate network / VPN intercepting connections</li>
+                  <li>Antivirus performing TLS/SSL inspection</li>
+                  <li>Missing or expired root certificates</li>
+                </ul>
+                <div className="setup-error-actions-list">
+                  <p><strong>What you can do:</strong></p>
+                  <ol>
+                    <li>Disconnect from VPN, then click <em>Retry Setup</em></li>
+                    <li>Ask IT to install the company root certificate</li>
+                    <li>Or place the model files manually (see below)</li>
+                  </ol>
+                </div>
+              </>
+            ) : (
+              <div className="setup-error-header">
+                <span className="setup-error-icon">⚠️</span>
+                <span className="setup-error-body">{errorMsg}</span>
+              </div>
+            )}
+
+            {manualPath && (
+              <div className="setup-manual-install">
+                <p className="setup-manual-label">
+                  📁 <strong>Manual install path</strong> — download the model from{' '}
+                  <a
+                    href="https://huggingface.co/Xenova/bge-small-en-v1.5"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="setup-hf-link"
+                  >
+                    HuggingFace ↗
+                  </a>{' '}
+                  and place the files in this folder, then relaunch the app:
+                </p>
+                <div className="setup-path-row">
+                  <code className="setup-path-code">{manualPath}</code>
+                  <button className="setup-copy-btn" onClick={copyPath} title="Copy path">
+                    {copied ? '✓ Copied' : '📋 Copy'}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            <div className="setup-error-retry">
+              <button className="setup-button" onClick={startSetup}>⚡ Retry Setup</button>
             </div>
           </div>
         )}

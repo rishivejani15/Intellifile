@@ -1,7 +1,1 @@
-{
-  "cls_token": "[CLS]",
-  "mask_token": "[MASK]",
-  "pad_token": "[PAD]",
-  "sep_token": "[SEP]",
-  "unk_token": "[UNK]"
-}
+../../blobs/a8b3208c2884c4efb86e49300fdd3dc877220cdf

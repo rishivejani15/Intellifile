@@ -23,3 +23,6 @@ llama-cpp-python==0.3.26
 huggingface_hub
 watchdog
 zeroconf
+# SSL / TLS fixes for frozen PyInstaller builds and corporate proxies
+certifi
+truststore

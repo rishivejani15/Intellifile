@@ -4,6 +4,7 @@ import { useEffect } from 'react';
 import 'react-diff-view/style/index.css';
 import './versioning.css';
 
+import ReactDOM from 'react-dom';
 const VersionDiffViewer = ({ diffText, versionA, versionB, onClose }) => {
      useEffect(() => {
         const handleKeyDown = (e) => {
@@ -19,7 +20,8 @@ const VersionDiffViewer = ({ diffText, versionA, versionB, onClose }) => {
 
     const files = typeof diffText === 'string' ? parseDiff(diffText) : [];
 
-    return (
+    return ReactDOM.createPortal(
+        (
         <div className="diff-viewer-overlay">
             <div className="diff-viewer-container">
                 <div className="diff-header">
@@ -137,7 +139,7 @@ const VersionDiffViewer = ({ diffText, versionA, versionB, onClose }) => {
                 </div>
             </div>
         </div>
-    );
+    ), document.body);
 };
 
 export default VersionDiffViewer;
