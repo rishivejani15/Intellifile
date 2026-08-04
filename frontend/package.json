@@ -11,6 +11,7 @@
     "pack": "electron-builder --dir",
     "electron-start": "wait-on http://localhost:3000 && electron .",
     "electron-dev": "electron .",
+    "backend": "cd.. && cd backend && python app.py",
     "dev": "concurrently \"npm run backend\" \"npm start\"",
     "dist": "cd .. && powershell -NoProfile -ExecutionPolicy Bypass -File .\\build.ps1"
   },
