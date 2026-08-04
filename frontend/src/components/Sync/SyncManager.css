@@ -108,16 +108,18 @@
   display: flex;
   align-items: center;
   gap: var(--sp-3);
-  background: var(--c-brand-gradient);
+  /* Ensure header text is always readable in all themes */
+  color: var(--t-primary);
+  /* Decorative gradient if provided; do not rely on it for visibility */
+  background: var(--c-brand-gradient, none);
   -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
   background-clip: text;
 }
 
 .sync-header-left h2::before {
   content: '🔄';
   font-size: 28px;
-  -webkit-text-fill-color: initial;
+  margin-right: 6px;
 }
 
 .sync-header-left p {
@@ -795,6 +797,8 @@
 .sync-empty-state p {
   font-size: var(--text-sm);
   margin: 0;
+  /* Improve readability for the 'start' instruction text */
+  color: var(--t-primary);
 }
 
 /* ───────────────────────────────────────────────────────

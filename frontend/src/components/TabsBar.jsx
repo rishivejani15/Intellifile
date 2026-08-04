@@ -10,8 +10,10 @@ function TabsBar({ tabs, activeTabId, onSelectTab, onCloseTab, onNewTab }) {
             key={tab.id}
             className={`tab ${tab.id === activeTabId ? 'active' : ''}`}
             onClick={() => onSelectTab(tab)}
+            title={tab.path || tab.title}
           >
-            <span className="tab-title">{tab.title}</span>
+            <span className="tab-icon">📁</span>
+            <span className="tab-title">{tab.title || 'New Tab'}</span>
             {tabs.length > 1 && (
               <button
                 className="tab-close"

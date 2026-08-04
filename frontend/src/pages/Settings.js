@@ -1,5 +1,12 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import './Settings.css';
+import confirmApp from '../utils/confirm';
+
+// Lightweight toast helper (uses exposed bridge or dispatches event)
+const toast = (title, options = {}) => {
+  if (window.intellifile?.showToast) return window.intellifile.showToast(title, options);
+  window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: title, ...options } }));
+};
 
 const DEFAULT_WATCH_FOLDERS = ['Downloads', 'Desktop'];
 const ipc = window.intellifile;
@@ -24,6 +31,7 @@ export default function Settings() {
   const [sortRoot, setSortRoot] = useState('Sorted');
   const [recentSorts, setRecentSorts] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [initialSettings, setInitialSettings] = useState({});
   const [, setSaving] = useState(false);
   const [indexEnabled, setIndexEnabled] = useState(false);
   const [aiModelPath, setAiModelPath] = useState('');
@@ -49,6 +57,17 @@ export default function Settings() {
     }
   };
 
+  // Persist theme as a setting so it survives restarts (and apply immediately)
+  const applyAndPersistTheme = async (newTheme) => {
+    applyTheme(newTheme);
+    try {
+      await persistSetting('theme', newTheme);
+      toast('Theme applied', { type: 'success' });
+    } catch (e) {
+      console.warn('Failed to persist theme', e);
+    }
+  };
+
   // ==== Load settings ==== //
   const loadSettings = async () => {
     try {
@@ -60,18 +79,82 @@ export default function Settings() {
         ipc?.getSetting?.('ai_model_path'),
         ipc?.getSetting?.('telemetry_enabled'),
         ipc?.getSetting?.('auto_update_wifi'),
+        // theme may be stored too
+        ipc?.getSetting?.('theme'),
       ]);
-      setAutoSortEnabled(!!enabled?.value);
-      setWatchedFolders(Array.isArray(folders?.value) ? folders.value : []);
-      setSortRoot(root?.value || 'Sorted');
-      setIndexEnabled(!!idx?.value);
-      setAiModelPath(model?.value || '');
-      setTelemetryEnabled(!!telemetry?.value);
-      setAutoUpdateWiFi(!!autoWi?.value);
+      let themeSetting = (await ipc?.getSetting?.('theme'))?.value;
+      if (!themeSetting) {
+        themeSetting = localStorage.getItem('intellifile-theme') || 'system';
+      }
+      const values = {
+        auto_sort_enabled: !!enabled?.value,
+        watched_folders: Array.isArray(folders?.value) ? folders.value : [],
+        sort_root: root?.value || 'Sorted',
+        index_enabled: !!idx?.value,
+        ai_model_path: model?.value || '',
+        telemetry_enabled: !!telemetry?.value,
+        auto_update_wifi: !!autoWi?.value,
+        theme: themeSetting,
+      };
+
+      setInitialSettings(values);
+      setAutoSortEnabled(values.auto_sort_enabled);
+      setWatchedFolders(values.watched_folders);
+      setSortRoot(values.sort_root);
+      setIndexEnabled(values.index_enabled);
+      setAiModelPath(values.ai_model_path);
+      setTelemetryEnabled(values.telemetry_enabled);
+      setAutoUpdateWiFi(values.auto_update_wifi);
+      setTheme(values.theme);
     } catch (e) {
       console.warn('Failed to load settings', e);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const sectionList = [
+    { id: 'general', title: 'General' },
+    { id: 'appearance', title: 'Appearance' },
+    { id: 'file-management', title: 'File Management' },
+    { id: 'about', title: 'About' }
+  ];
+
+  const matchesSection = (sectionId) => {
+    if (!searchTerm || !searchTerm.trim()) return true;
+    const q = searchTerm.toLowerCase();
+    const map = {
+      general: ['reset', 'defaults', 'settings'],
+      appearance: ['theme', 'light', 'dark', 'system'],
+      'file-management': ['auto', 'index', 'model', 'watched', 'sort'],
+      about: ['version', 'help', 'about']
+    };
+    const tokens = map[sectionId] || [];
+    return tokens.some(t => t.includes(q) || q.includes(t));
+  };
+
+  const saveSection = async (sectionId) => {
+    try {
+      if (sectionId === 'appearance') {
+        applyAndPersistTheme(theme);
+        toast('Appearance saved', { type: 'success' });
+        return;
+      }
+      if (sectionId === 'file-management') {
+        await persistSetting('auto_sort_enabled', !!autoSortEnabled);
+        await persistSetting('watched_folders', watchedFolders);
+        await persistSetting('sort_root', sortRoot);
+        await persistSetting('index_enabled', !!indexEnabled);
+        await persistSetting('ai_model_path', aiModelPath || '');
+        await persistSetting('telemetry_enabled', !!telemetryEnabled);
+        await persistSetting('auto_update_wifi', !!autoUpdateWiFi);
+        toast('File management settings saved', { type: 'success' });
+        return;
+      }
+      toast('No settings to save for this section', { type: 'info' });
+    } catch (e) {
+      console.warn('Save failed', e);
+      toast('Save failed', { type: 'error' });
     }
   };
 
@@ -115,7 +198,51 @@ export default function Settings() {
         default:
           break;
       }
+      // update initialSettings snapshot to reflect persisted value
+      setInitialSettings(prev => ({ ...prev, [key]: value }));
       await loadRecent();
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // compute dirty state comparing current UI values to initialSettings
+  const isDirty = useMemo(() => {
+    if (!initialSettings) return false;
+    if ((initialSettings.auto_sort_enabled ?? false) !== !!autoSortEnabled) return true;
+    if (JSON.stringify(initialSettings.watched_folders || []) !== JSON.stringify(watchedFolders || [])) return true;
+    if ((initialSettings.sort_root || '') !== (sortRoot || '')) return true;
+    if ((initialSettings.index_enabled ?? false) !== !!indexEnabled) return true;
+    if ((initialSettings.ai_model_path || '') !== (aiModelPath || '')) return true;
+    if ((initialSettings.telemetry_enabled ?? false) !== !!telemetryEnabled) return true;
+    if ((initialSettings.auto_update_wifi ?? false) !== !!autoUpdateWiFi) return true;
+    if ((initialSettings.theme || 'system') !== (theme || 'system')) return true;
+    return false;
+  }, [initialSettings, autoSortEnabled, watchedFolders, sortRoot, indexEnabled, aiModelPath, telemetryEnabled, autoUpdateWiFi, theme]);
+
+  const applyAllSettings = async () => {
+    const toSave = [];
+    if ((initialSettings.auto_sort_enabled ?? false) !== !!autoSortEnabled) toSave.push(['auto_sort_enabled', !!autoSortEnabled]);
+    if (JSON.stringify(initialSettings.watched_folders || []) !== JSON.stringify(watchedFolders || [])) toSave.push(['watched_folders', watchedFolders]);
+    if ((initialSettings.sort_root || '') !== (sortRoot || '')) toSave.push(['sort_root', sortRoot]);
+    if ((initialSettings.index_enabled ?? false) !== !!indexEnabled) toSave.push(['index_enabled', !!indexEnabled]);
+    if ((initialSettings.ai_model_path || '') !== (aiModelPath || '')) toSave.push(['ai_model_path', aiModelPath]);
+    if ((initialSettings.telemetry_enabled ?? false) !== !!telemetryEnabled) toSave.push(['telemetry_enabled', !!telemetryEnabled]);
+    if ((initialSettings.auto_update_wifi ?? false) !== !!autoUpdateWiFi) toSave.push(['auto_update_wifi', !!autoUpdateWiFi]);
+    if ((initialSettings.theme || 'system') !== (theme || 'system')) toSave.push(['theme', theme]);
+
+    if (toSave.length === 0) return;
+    setSaving(true);
+    try {
+      for (const [k, v] of toSave) {
+        // persist sequentially to avoid hammering bridge
+        // eslint-disable-next-line no-await-in-loop
+        await persistSetting(k, v);
+      }
+      toast('Applied all changes', { type: 'success' });
+    } catch (e) {
+      console.warn('Failed to apply settings', e);
+      toast('Failed to apply some settings', { type: 'error' });
     } finally {
       setSaving(false);
     }
@@ -144,6 +271,19 @@ export default function Settings() {
 
   const toggleAutoSort = async () => {
     await persistSetting('auto_sort_enabled', !autoSortEnabled);
+  };
+
+  const handleBrowseModel = async () => {
+    try {
+      const res = await ipc?.selectFolder?.();
+      if (!res?.filePaths?.length) return;
+      const p = res.filePaths[0];
+      setAiModelPath(p);
+      await persistSetting('ai_model_path', p);
+      toast('Model path updated', { type: 'success' });
+    } catch (e) {
+      console.warn('Model browse failed', e);
+    }
   };
 
   const undoRecentSort = async (row) => {
@@ -206,18 +346,24 @@ export default function Settings() {
         {/* Navigation (vertical sidebar) */}
         <nav className="settings-nav" aria-label="Settings navigation">
           <ul className="settings-nav-list" role="tablist">
-            {['general', 'appearance', 'file-management', 'about'].map((tab) => (
+            {[
+              { id: 'general', label: 'General', icon: '⚙️' },
+              { id: 'appearance', label: 'Appearance', icon: '🎨' },
+              { id: 'file-management', label: 'File Management', icon: '🗂️' },
+              { id: 'about', label: 'About', icon: 'ℹ️' }
+            ].map((tab) => (
               <li
-                key={tab}
-                className={`settings-nav-item ${activeTab === tab ? 'active' : ''}`}
+                key={tab.id}
+                className={`settings-nav-item ${activeTab === tab.id ? 'active' : ''}`}
                 role="tab"
-                aria-selected={activeTab === tab}
+                aria-selected={activeTab === tab.id}
                 tabIndex={0}
-                onClick={() => setActiveTab(tab)}
-                onKeyPress={(e) => e.key === 'Enter' && setActiveTab(tab)}
-                aria-current={activeTab === tab ? 'page' : undefined}
+                onClick={() => setActiveTab(tab.id)}
+                onKeyPress={(e) => e.key === 'Enter' && setActiveTab(tab.id)}
+                aria-current={activeTab === tab.id ? 'page' : undefined}
               >
-                {tab.charAt(0).toUpperCase() + tab.slice(1)}
+                <span className="nav-icon" aria-hidden="true">{tab.icon}</span>
+                <span className="nav-label">{tab.label}</span>
               </li>
             ))}
           </ul>
@@ -225,15 +371,31 @@ export default function Settings() {
 
         {/* Main content */}
         <div className="settings-content">
+          {/* Apply All bar */}
+          {isDirty && (
+            <div className="settings-apply-bar">
+              <div className="settings-apply-text">You have unsaved changes.</div>
+              <div className="settings-apply-actions">
+                <button className="settings-button" onClick={() => { loadSettings(); }}>Discard</button>
+                <button className="settings-button primary" onClick={applyAllSettings}>Apply All</button>
+              </div>
+            </div>
+          )}
           {/* General */}
           {activeTab === 'general' && (
             <section className="settings-panel">
-              <div className="settings-panel-header">Reset Settings</div>
+                      <div className="settings-panel-header">
+                        <div className="settings-panel-title">Reset Settings</div>
+                        <div className="section-actions">
+                          <button className="settings-button" onClick={() => saveSection('general')}>Save</button>
+                        </div>
+                      </div>
               <div className="settings-panel-content">
                 <button
                   className="settings-button destructive"
                   onClick={async () => {
-                    if (window.confirm('Reset all settings to default? This cannot be undone.')) {
+                    const ok = await confirmApp('Reset all settings to default? This cannot be undone.', []);
+                    if (ok) {
                       setSaving(true);
                       await ipc?.invoke?.('reset-all-settings');
                       await loadSettings();
@@ -248,9 +410,14 @@ export default function Settings() {
           )}
 
           {/* Appearance */}
-          {activeTab === 'appearance' && (
-            <section className="settings-panel">
-              <div className="settings-panel-header">Theme</div>
+          {activeTab === 'appearance' && matchesSection('appearance') && (
+            <section className="settings-panel" data-section="appearance">
+              <div className="settings-panel-header">
+                <div className="settings-panel-title">Theme</div>
+                <div className="section-actions">
+                  <button className="settings-button" onClick={() => saveSection('appearance')}>Save</button>
+                </div>
+              </div>
               <div className="settings-panel-content">
                 <div className="theme-radio-group" role="radiogroup" aria-label="Theme selection">
                   {['light', 'dark', 'system'].map((t) => (
@@ -259,7 +426,7 @@ export default function Settings() {
                         type="radio"
                         name="theme"
                         checked={theme === t}
-                        onChange={() => applyTheme(t)}
+                        onChange={() => applyAndPersistTheme(t)}
                       />
                       <span>{t.charAt(0).toUpperCase() + t.slice(1)}</span>
                     </label>
@@ -273,8 +440,13 @@ export default function Settings() {
           {activeTab === 'file-management' && (
             <>
               {/* Updates */}
-              <section className="settings-panel">
-                <div className="settings-panel-header">Application Updates</div>
+              <section className="settings-panel" data-section="file-management">
+                <div className="settings-panel-header">
+                  <div className="settings-panel-title">Application Updates</div>
+                  <div className="section-actions">
+                    <button className="settings-button" onClick={() => saveSection('file-management')}>Save</button>
+                  </div>
+                </div>
                 <div className="settings-panel-content">
                   {updateAvailable && !updateDownloaded && (
                     <div className="update-status-container" style={{ marginBottom: '1rem' }}>
@@ -307,11 +479,10 @@ export default function Settings() {
                     <span>
                       <strong>{autoUpdateWiFi ? 'Wi‑Fi Auto‑Download Enabled' : 'Wi‑Fi Auto‑Download Disabled'}</strong>
                     </span>
-                    <input
-                      type="checkbox"
-                      checked={autoUpdateWiFi}
-                      onChange={() => persistSetting('auto_update_wifi', !autoUpdateWiFi)}
-                    />
+                    <label className="switch">
+                      <input type="checkbox" checked={autoUpdateWiFi} onChange={() => persistSetting('auto_update_wifi', !autoUpdateWiFi)} />
+                      <span className="slider"></span>
+                    </label>
                   </label>
                 </div>
               </section>
@@ -325,7 +496,10 @@ export default function Settings() {
                     <span>
                       <strong>{autoSortEnabled ? 'Enabled' : 'Disabled'}</strong>
                     </span>
-                    <input type="checkbox" checked={autoSortEnabled} onChange={toggleAutoSort} />
+                    <label className="switch">
+                      <input type="checkbox" checked={autoSortEnabled} onChange={() => persistSetting('auto_sort_enabled', !autoSortEnabled)} />
+                      <span className="slider"></span>
+                    </label>
                   </label>
                 </div>
               </section>
@@ -339,17 +513,17 @@ export default function Settings() {
                     <span>
                       <strong>{indexEnabled ? 'Enabled' : 'Disabled'}</strong>
                     </span>
-                    <input
-                      type="checkbox"
-                      checked={indexEnabled}
-                      onChange={() => persistSetting('index_enabled', !indexEnabled)}
-                    />
+                    <label className="switch">
+                      <input type="checkbox" checked={indexEnabled} onChange={() => persistSetting('index_enabled', !indexEnabled)} />
+                      <span className="slider"></span>
+                    </label>
                   </label>
                   <button
                     className="settings-button destructive"
                     style={{ marginTop: '0.75rem' }}
                     onClick={async () => {
-                      if (window.confirm('Reset the entire index? This cannot be undone.')) {
+                      const ok = await confirmApp('Reset the entire index? This cannot be undone.', []);
+                      if (ok) {
                         setSaving(true);
                         await ipc?.invoke?.('reset-index');
                         await loadSettings();
@@ -368,18 +542,23 @@ export default function Settings() {
                 <div className="settings-panel-content">
                   <label className="settings-input-label">
                     <span>Model path</span>
-                    <input
-                      value={aiModelPath}
-                      onChange={(e) => setAiModelPath(e.target.value)}
-                      onBlur={() => persistSetting('ai_model_path', aiModelPath)}
-                      placeholder="C:\\Models\\my-model"
-                    />
+                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                      <input
+                        value={aiModelPath}
+                        onChange={(e) => setAiModelPath(e.target.value)}
+                        onBlur={() => persistSetting('ai_model_path', aiModelPath)}
+                        placeholder="C:\\Models\\my-model"
+                        style={{ flex: 1 }}
+                      />
+                      <button className="settings-button secondary" onClick={handleBrowseModel} type="button">Browse</button>
+                    </div>
                   </label>
                   <button
                     className="settings-button destructive"
                     style={{ marginTop: '0.75rem' }}
                     onClick={async () => {
-                      if (window.confirm('Delete the local AI model? You will need to re‑download it.')) {
+                      const ok = await confirmApp('Delete the local AI model? You will need to re‑download it.', []);
+                      if (ok) {
                         setSaving(true);
                         await ipc?.invoke?.('delete-ai-model');
                         await loadSettings();
@@ -401,11 +580,10 @@ export default function Settings() {
                     <span>
                       <strong>{telemetryEnabled ? 'Enabled' : 'Disabled'}</strong>
                     </span>
-                    <input
-                      type="checkbox"
-                      checked={telemetryEnabled}
-                      onChange={() => persistSetting('telemetry_enabled', !telemetryEnabled)}
-                    />
+                    <label className="switch">
+                      <input type="checkbox" checked={telemetryEnabled} onChange={() => persistSetting('telemetry_enabled', !telemetryEnabled)} />
+                      <span className="slider"></span>
+                    </label>
                   </label>
                 </div>
               </section>
@@ -512,7 +690,7 @@ export default function Settings() {
           )}
 
           {/* About */}
-          {activeTab === 'about' && (
+          {activeTab === 'about' && matchesSection('about') && (
             <section className="settings-panel">
               <div className="settings-panel-header">About IntelliFile</div>
               <div className="settings-panel-content">

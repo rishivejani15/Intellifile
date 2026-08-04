@@ -19,6 +19,20 @@
   padding: 1.5rem;
 }
 
+.settings-apply-bar {
+  position: sticky;
+  top: 0;
+  z-index: var(--z-sticky-top);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--sp-3) var(--sp-4);
+  background: linear-gradient(90deg, rgba(0,0,0,0.02), rgba(0,0,0,0));
+  border-bottom: 1px solid var(--bo-light);
+  margin-bottom: var(--sp-3);
+}
+.settings-apply-text { font-weight: 600; color: var(--t-primary); }
+.settings-apply-actions { display: flex; gap: var(--sp-2); }
 @media (min-width: 768px) {
   .settings-layout {
     flex-direction: row;
@@ -73,6 +87,9 @@
   border: 1px solid var(--bo);
   border-radius: var(--rd-lg);
   padding: 1rem;
+  position: sticky;
+  top: 72px;
+  align-self: flex-start;
 }
 
 .settings-nav-list {
@@ -94,6 +111,22 @@
   position: relative;
 }
 
+.settings-nav-item .nav-icon {
+  display: inline-block;
+  width: 22px;
+  text-align: center;
+  margin-right: 0.5rem;
+  font-size: 16px;
+}
+.settings-nav-item .nav-label {
+  flex: 1;
+}
+
+.section-actions .settings-button {
+  padding: 0.375rem 0.75rem;
+  font-size: 0.9rem;
+}
+
 .settings-nav-item:hover,
 .settings-nav-item:focus {
   background: var(--s-hover);
@@ -102,7 +135,7 @@
 }
 
 .settings-nav-item.active {
-  background: var(--c-brand);
+  background: var(--c-brand, var(--color-primary));
   color: #fff;
 }
 
@@ -114,7 +147,7 @@
   top: 0;
   bottom: 0;
   width: 4px;
-  background: var(--c-accent, var(--c-brand));
+  background: var(--c-accent, var(--color-primary));
   border-radius: 2px;
   animation: slideIn 0.3s ease-out forwards;
 }
@@ -141,11 +174,64 @@
 }
 
 .settings-panel-header {
-  background: var(--c-brand);
+  background: var(--c-brand, var(--color-primary));
   color: #fff;
   padding: 1rem 1.25rem;
   font-size: 1.125rem;
   font-weight: 600;
+}
+
+.settings-panel-header .settings-panel-title {
+  display: inline-block;
+}
+.section-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 0.5rem;
+}
+
+/* Custom toggle switch */
+.switch {
+  position: relative;
+  width: 48px;
+  height: 28px;
+  display: inline-block;
+}
+.switch input { 
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+.slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: var(--s-hover);
+  transition: .2s;
+  border-radius: 999px;
+  border: 1px solid var(--bo-light);
+}
+.slider:before {
+  position: absolute;
+  content: "";
+  height: 20px;
+  width: 20px;
+  left: 4px;
+  bottom: 3px;
+  background-color: white;
+  transition: .2s;
+  border-radius: 50%;
+  box-shadow: var(--sh-sm);
+}
+.switch input:checked + .slider {
+  background-color: var(--color-primary);
+  border-color: var(--color-primary-hover);
+}
+.switch input:checked + .slider:before {
+  transform: translateX(20px);
 }
 
 .settings-panel-content {
@@ -166,12 +252,12 @@
 }
 
 .settings-button.primary {
-  background: var(--c-brand);
+  background: var(--c-brand, var(--color-primary));
   color: #fff;
 }
 
 .settings-button.primary:hover {
-  background: var(--c-brand-hover);
+  background: var(--c-brand-hover, var(--color-primary-hover));
 }
 
 .settings-button.secondary {
@@ -213,9 +299,16 @@
 }
 
 .settings-toggle-row input {
-  width: 1.25rem;
-  height: 1.25rem;
+  width: 40px;
+  height: 22px;
   cursor: pointer;
+  accent-color: var(--color-primary);
+  border-radius: 999px;
+}
+
+/* Folder checkboxes use accent color for consistency */
+.settings-folder-option input[type="checkbox"] {
+  accent-color: var(--color-primary);
 }
 
 /* Grid for watched folders & sort root */

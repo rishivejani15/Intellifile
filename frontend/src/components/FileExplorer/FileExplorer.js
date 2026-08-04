@@ -13,6 +13,8 @@ import PropertiesModal from '../PropertiesModal';
 import SearchResults from '../SearchResults';
 import TabsBar from '../TabsBar';
 import OpenWithModal from '../OpenWithModal';
+import DeleteConfirmModal from '../DeleteConfirmModal';
+import MoveConfirmModal from '../MoveConfirmModal';
 import VersionTimeline from '../Versioning/VersionTimeline';
 import { smartCleanupVersions } from '../../services/versionService';
 import { showErrorToast, showToast } from '../../utils/toast';
@@ -26,16 +28,77 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
   // UI State
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [viewMode, setViewMode] = useState('icons');
-  const [sortBy, setSortBy] = useState('date');
-  const [sortDirection, setSortDirection] = useState('desc');
-  const [groupBy, setGroupBy] = useState('none');
+  // UI State with localStorage persistence (Default: Name, Ascending)
+  const [viewMode, setViewMode] = useState(() => {
+    try {
+      const saved = localStorage.getItem('intellifile_sort_prefs');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed.viewMode) return parsed.viewMode;
+      }
+    } catch (_) {}
+    return 'icons';
+  });
+
+  const [sortBy, setSortBy] = useState(() => {
+    try {
+      const saved = localStorage.getItem('intellifile_sort_prefs');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed.sortBy) return parsed.sortBy;
+      }
+    } catch (_) {}
+    return 'name';
+  });
+
+  const [sortDirection, setSortDirection] = useState(() => {
+    try {
+      const saved = localStorage.getItem('intellifile_sort_prefs');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed.sortDirection) return parsed.sortDirection;
+      }
+    } catch (_) {}
+    return 'asc';
+  });
+
+  const [groupBy, setGroupBy] = useState(() => {
+    try {
+      const saved = localStorage.getItem('intellifile_sort_prefs');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed.groupBy) return parsed.groupBy;
+      }
+    } catch (_) {}
+    return 'none';
+  });
+
+  // Save sort/group/view preferences to localStorage on change
+  useEffect(() => {
+    try {
+      localStorage.setItem('intellifile_sort_prefs', JSON.stringify({
+        viewMode,
+        sortBy,
+        sortDirection,
+        groupBy
+      }));
+    } catch (_) {}
+  }, [viewMode, sortBy, sortDirection, groupBy]);
   const [showHidden, setShowHidden] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedItem, setSelectedItem] = useState(null);
   const [selectedItems, setSelectedItems] = useState([]);
   const [lastSelectedIndex, setLastSelectedIndex] = useState(null);
+  const anchorIndexRef = useRef(null); // always-fresh ref; avoids stale closures in handleItemClick
+  const [tempHighlightedPath, setTempHighlightedPath] = useState(null);
+  const typeBufferRef = useRef('');
+  const typeTimerRef = useRef(null);
+  const highlightTimerRef = useRef(null);
   const [showProperties, setShowProperties] = useState(false);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [itemsPendingDelete, setItemsPendingDelete] = useState([]);
+  const [showMoveModal, setShowMoveModal] = useState(false);
+  const [moveModalData, setMoveModalData] = useState({ items: [], targetFolder: null, onConfirm: null });
   const [showPreview, setShowPreview] = useState(false);
   const [showVersioning, setShowVersioning] = useState(false);
   const [previewClosing, setPreviewClosing] = useState(false);
@@ -331,153 +394,157 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
     const requestPromise = (async () => {
       try {
         const result = await ipcRenderer?.invoke('list-directory', dirPath, { showHidden });
-      if (isStale()) return;
-      if (!result || result.error) {
-        console.error('Error loading directory:', result?.error || 'Unknown error');
-        setItems([]);
-        if (dirPath && dirPath !== 'C:\\') {
-          const parentPath = dirPath.substring(0, dirPath.lastIndexOf('\\'));
-          if (parentPath && parentPath !== dirPath) {
-            setTimeout(() => {
-              if (!isStale()) {
-                loadDirectory(parentPath, { soft, trackHistory, tabId });
-              }
-            }, 100);
-          }
-        }
-      } else {
-        let loadedItems = result.items || [];
-
-        // Apply search filter
-        if (searchQuery) {
-          loadedItems = loadedItems.filter(item =>
-            item.name.toLowerCase().includes(searchQuery.toLowerCase())
-          );
-        }
-
-        // Apply sorting
-        loadedItems.sort((a, b) => {
-          // Folders always first
-          if (a.type === 'folder' && b.type !== 'folder') return -1;
-          if (a.type !== 'folder' && b.type === 'folder') return 1;
-
-          let cmp = 0;
-          switch (sortBy) {
-            case 'date':
-              cmp = a.modified - b.modified;
-              break;
-            case 'size':
-              cmp = a.size - b.size;
-              break;
-            case 'type':
-              cmp = a.ext.localeCompare(b.ext);
-              break;
-            default:
-              cmp = a.name.localeCompare(b.name);
-          }
-
-          return sortDirection === 'desc' ? -cmp : cmp;
-        });
-
-        setItems(loadedItems);
-        // Mark UI ready – allow indexing to start
-        setCanStartIndexing(true);
-        // Cache the loaded directory for instant next launch
-        try {
-          const cache = {
-            path: dirPath,
-            items: loadedItems,
-            timestamp: Date.now()
-          };
-          localStorage.setItem('lastDirectoryCache', JSON.stringify(cache));
-        } catch (_) { }
-        // Asynchronously fetch folder sizes for first 3 folders only (avoid blocking UI)
-        (async () => {
-          try {
-            const folders = loadedItems.filter(i => i.type === 'folder');
-            const limit = 3; // limit to 3 to avoid UI lag
-            for (let i = 0; i < Math.min(folders.length, limit); i++) {
-              const folder = folders[i];
-              // Add small yield to allow UI to remain responsive
-              await new Promise(resolve => setImmediate(resolve));
-              try {
-                const details = await ipcRenderer?.invoke('get-file-details', folder.path);
-                if (details && details.success && typeof details.details?.size === 'number') {
-                  setItems(prev => prev.map(it => it.path === folder.path ? { ...it, size: details.details.size } : it));
+        if (isStale()) return;
+        if (!result || result.error) {
+          console.error('Error loading directory:', result?.error || 'Unknown error');
+          setItems([]);
+          if (dirPath && dirPath !== 'C:\\') {
+            const parentPath = dirPath.substring(0, dirPath.lastIndexOf('\\'));
+            if (parentPath && parentPath !== dirPath) {
+              setTimeout(() => {
+                if (!isStale()) {
+                  loadDirectory(parentPath, { soft, trackHistory, tabId });
                 }
-              } catch (err) {
-                // ignore errors for individual folders
-              }
+              }, 100);
             }
-          } catch (e) {
-            // ignore
           }
-        })();
-        const actualPath = loadedItems && loadedItems.length > 0 ?
-          loadedItems[0].path.substring(0, loadedItems[0].path.lastIndexOf('\\')) :
-          dirPath;
+        } else {
+          let loadedItems = result.items || [];
 
-        if (actualPath) {
-          const pathChanged = !currentPath || actualPath !== currentPath;
-          if (pathChanged) {
-            setCurrentPath(actualPath);
-            setAddressPath(actualPath);
-            updateBreadcrumb(actualPath);
-          }
-
-          let selected = null;
-          if (selectFile) {
-            const selectNameLower = selectFile.toLowerCase();
-            const found = loadedItems.find(i =>
-              i.name.toLowerCase() === selectNameLower ||
-              i.path.toLowerCase() === selectNameLower
+          // Apply search filter
+          if (searchQuery) {
+            loadedItems = loadedItems.filter(item =>
+              item.name.toLowerCase().includes(searchQuery.toLowerCase())
             );
-            if (found) {
-              selected = found;
-              setSelectedItems([found]);
-              setSelectedItem(found);
-              setLastSelectedIndex(loadedItems.indexOf(found));
-              if (onFileSelect) onFileSelect(found);
+          }
 
-              let attempts = 0;
-              const scrollInterval = setInterval(() => {
-                const els = document.querySelectorAll('.file-item.selected');
-                if (els.length > 0) {
-                  els[0].scrollIntoView({ behavior: 'auto', block: 'center' });
-                  clearInterval(scrollInterval);
+          // Apply sorting
+          loadedItems.sort((a, b) => {
+            // Folders always first
+            if (a.type === 'folder' && b.type !== 'folder') return -1;
+            if (a.type !== 'folder' && b.type === 'folder') return 1;
+
+            let cmp = 0;
+            switch (sortBy) {
+              case 'date':
+                cmp = a.modified - b.modified;
+                break;
+              case 'size':
+                cmp = a.size - b.size;
+                break;
+              case 'type':
+                cmp = a.ext.localeCompare(b.ext);
+                break;
+              default:
+                cmp = a.name.localeCompare(b.name);
+            }
+
+            return sortDirection === 'desc' ? -cmp : cmp;
+          });
+
+          setItems(loadedItems);
+          // Mark UI ready – allow indexing to start
+          setCanStartIndexing(true);
+          // Cache the loaded directory for instant next launch
+          try {
+            const cache = {
+              path: dirPath,
+              items: loadedItems,
+              timestamp: Date.now()
+            };
+            localStorage.setItem('lastDirectoryCache', JSON.stringify(cache));
+          } catch (_) { }
+          // Asynchronously fetch folder sizes for first 3 folders only (avoid blocking UI)
+          (async () => {
+            try {
+              const folders = loadedItems.filter(i => i.type === 'folder');
+              const limit = 3; // limit to 3 to avoid UI lag
+              for (let i = 0; i < Math.min(folders.length, limit); i++) {
+                const folder = folders[i];
+                // Add small yield to allow UI to remain responsive
+                await new Promise(resolve => setImmediate(resolve));
+                try {
+                  const details = await ipcRenderer?.invoke('get-file-details', folder.path);
+                  if (details && details.success && typeof details.details?.size === 'number') {
+                    setItems(prev => prev.map(it => it.path === folder.path ? { ...it, size: details.details.size } : it));
+                  }
+                } catch (err) {
+                  // ignore errors for individual folders
                 }
-                if (++attempts > 20) clearInterval(scrollInterval);
-              }, 50);
+              }
+            } catch (e) {
+              // ignore
+            }
+          })();
+          const actualPath = loadedItems && loadedItems.length > 0 ?
+            loadedItems[0].path.substring(0, loadedItems[0].path.lastIndexOf('\\')) :
+            dirPath;
+
+          if (actualPath) {
+            const pathChanged = !currentPath || actualPath !== currentPath;
+            if (pathChanged) {
+              setCurrentPath(actualPath);
+              setAddressPath(actualPath);
+              updateBreadcrumb(actualPath);
+              // Notify sidebar to track this folder visit for "Frequently used"
+              try {
+                window.dispatchEvent(new CustomEvent('intellifile-folder-visited', { detail: { path: actualPath } }));
+              } catch (_) {}
+            }
+
+            let selected = null;
+            if (selectFile) {
+              const selectNameLower = selectFile.toLowerCase();
+              const found = loadedItems.find(i =>
+                i.name.toLowerCase() === selectNameLower ||
+                i.path.toLowerCase() === selectNameLower
+              );
+              if (found) {
+                selected = found;
+                setSelectedItems([found]);
+                setSelectedItem(found);
+                setLastSelectedIndex(loadedItems.indexOf(found));
+                if (onFileSelect) onFileSelect(found);
+
+                let attempts = 0;
+                const scrollInterval = setInterval(() => {
+                  const els = document.querySelectorAll('.file-item.selected');
+                  if (els.length > 0) {
+                    els[0].scrollIntoView({ behavior: 'auto', block: 'center' });
+                    clearInterval(scrollInterval);
+                  }
+                  if (++attempts > 20) clearInterval(scrollInterval);
+                }, 50);
+              }
+            }
+
+            if (!selected) {
+              setSelectedItem(prev => (prev && loadedItems.some(i => i.path === prev.path)) ? prev : null);
+              setSelectedItems(prev => prev.filter(pItem => loadedItems.some(i => i.path === pItem.path)));
+              setLastSelectedIndex(null);
+            }
+
+            if (trackHistory && pathChanged) {
+              updateHistory(actualPath, tabId);
+            }
+            if (pathChanged) {
+              updateActiveTab(actualPath, tabId);
+            }
+            // If this navigation was triggered from Explorer and no exact file was provided,
+            // show a small recent-file chooser instead of guessing the newest file.
+            if (pathChanged && options && options.fromExplorer && !selectFile) {
+              const recentFiles = loadedItems
+                .filter(i => i.type === 'file')
+                .sort((a, b) => b.modified - a.modified)
+                .slice(0, 6);
+              setRecentChooserFiles(recentFiles);
+              setShowRecentChooser(true);
+            } else {
+              setShowRecentChooser(false);
+              setRecentChooserFiles([]);
             }
           }
-
-          if (!selected) {
-            setSelectedItem(prev => (prev && loadedItems.some(i => i.path === prev.path)) ? prev : null);
-            setSelectedItems(prev => prev.filter(pItem => loadedItems.some(i => i.path === pItem.path)));
-            setLastSelectedIndex(null);
-          }
-
-          if (trackHistory && pathChanged) {
-            updateHistory(actualPath, tabId);
-          }
-          if (pathChanged) {
-            updateActiveTab(actualPath, tabId);
-          }
-          // If this navigation was triggered from Explorer and no exact file was provided,
-          // show a small recent-file chooser instead of guessing the newest file.
-          if (pathChanged && options && options.fromExplorer && !selectFile) {
-            const recentFiles = loadedItems
-              .filter(i => i.type === 'file')
-              .sort((a, b) => b.modified - a.modified)
-              .slice(0, 6);
-            setRecentChooserFiles(recentFiles);
-            setShowRecentChooser(true);
-          } else {
-            setShowRecentChooser(false);
-            setRecentChooserFiles([]);
-          }
         }
-      }
       } catch (error) {
         if (isStale()) return;
         console.error('Error:', error);
@@ -694,42 +761,97 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
     if (renamingItem) return;
     const isCtrl = e.ctrlKey || e.metaKey;
     const isShift = e.shiftKey;
+
+    // Clear text selection when shift-clicking to avoid browser text highlight
+    if (isShift) {
+      try { window.getSelection()?.removeAllRanges(); } catch (_) { }
+    }
+
     let newSelection = [];
 
-    if (isShift && lastSelectedIndex !== null) {
-      const start = Math.min(lastSelectedIndex, idx);
-      const end = Math.max(lastSelectedIndex, idx);
+    if (isShift && anchorIndexRef.current !== null) {
+      // anchorIndexRef is always up-to-date (no stale closure)
+      const anchor = anchorIndexRef.current;
+      const start = Math.min(anchor, idx);
+      const end = Math.max(anchor, idx);
       newSelection = displayItems.slice(start, end + 1);
+      // Do NOT update anchor on shift-click (anchor stays at original click)
     } else if (isCtrl) {
       const alreadySelected = selectedItems.find(i => i.path === item.path);
       newSelection = alreadySelected
         ? selectedItems.filter(i => i.path !== item.path)
         : [...selectedItems, item];
+      anchorIndexRef.current = idx;
+      setLastSelectedIndex(idx);
     } else {
       newSelection = [item];
+      anchorIndexRef.current = idx;
+      setLastSelectedIndex(idx);
     }
 
     setSelectedItems(newSelection);
     setSelectedItem(item);
-    // In icon view mode we keep the preview pane hidden on single click.
-    // Only reveal preview for files when not in icon view.
-    if (item.type === 'file' && viewMode !== 'icons') {
+    // Auto-open preview whenever a file is selected (any view mode)
+    if (item.type === 'file') {
       setShowPreview(true);
     } else {
       setShowPreview(false);
     }
-    setLastSelectedIndex(idx);
     if (onFileSelect) onFileSelect(item);
   };
 
   useEffect(() => {
-    // Only show preview for selected files, not folders, and not in icon view mode
-    if (selectedItem && selectedItem.type === 'file' && viewMode !== 'icons') {
+    // Auto-show preview for any selected file regardless of view mode
+    if (selectedItem && selectedItem.type === 'file') {
       setShowPreview(true);
-    } else {
+    } else if (!selectedItem || selectedItem.type !== 'file') {
       setShowPreview(false);
     }
-  }, [selectedItem, viewMode]);
+  }, [selectedItem]);
+
+  const handleCharacterType = useCallback((char) => {
+    if (renamingItem || !displayItems || displayItems.length === 0) return;
+
+    if (typeTimerRef.current) clearTimeout(typeTimerRef.current);
+    typeBufferRef.current += char.toLowerCase();
+
+    typeTimerRef.current = setTimeout(() => {
+      typeBufferRef.current = '';
+    }, 1000);
+
+    const query = typeBufferRef.current;
+    let match = displayItems.find(item => (item.name || '').toLowerCase().startsWith(query));
+
+    if (!match && query.length > 1) {
+      match = displayItems.find(item => (item.name || '').toLowerCase().startsWith(char.toLowerCase()));
+      if (match) typeBufferRef.current = char.toLowerCase();
+    }
+
+    if (match) {
+      setSelectedItem(match);
+      setSelectedItems([match]);
+      const normPath = (p) => (p || '').toLowerCase().replace(/[\\/]+/g, '/');
+      const idx = displayItems.findIndex(i => normPath(i.path) === normPath(match.path));
+      if (idx !== -1) {
+        anchorIndexRef.current = idx;
+        setLastSelectedIndex(idx);
+      }
+      setTempHighlightedPath(match.path);
+
+      if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
+      highlightTimerRef.current = setTimeout(() => {
+        setTempHighlightedPath(null);
+      }, 2000);
+
+      setTimeout(() => {
+        try {
+          const escapedPath = (match.path || '').replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+          const el = document.querySelector(`[data-path="${escapedPath}"]`);
+          el?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        } catch (_) {}
+      }, 50);
+    }
+  }, [renamingItem, displayItems]);
 
   const handleBreadcrumbClick = (path) => {
     // Load breadcrumb navigation in background without spinner
@@ -789,6 +911,27 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
     await fileOps.handleRename(currentPath, () => { });
   };
 
+  const confirmDeleteItems = async (itemsToDelete) => {
+    const ok = await fileOps.handleDelete(
+      itemsToDelete,
+      null,
+      currentPath,
+      null,
+      { skipConfirm: true }
+    );
+
+    if (ok) {
+      const normPath = (p) => (p || '').toLowerCase().replace(/[\\/]+/g, '/');
+      setItems(prev => prev.filter(item => !itemsToDelete.some(del => normPath(del.path) === normPath(item.path))));
+      setSelectedItems([]);
+      setSelectedItem(null);
+      anchorIndexRef.current = null;
+      setLastSelectedIndex(null);
+    } else {
+      showErrorToast('Delete failed.', 'The delete operation did not complete.', 'Check whether the file is open or protected, then try again.');
+    }
+  };
+
   const handleDelete = async () => {
     const itemsToDelete = selectedItems.length > 0 ? selectedItems : (selectedItem ? [selectedItem] : []);
     if (itemsToDelete.length === 0) {
@@ -802,35 +945,14 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
       return;
     }
 
-    const names = itemsToDelete.map(i => i.name).join(', ');
-    const msg = itemsToDelete.length === 1
-      ? `Are you sure you want to move "${names}" to the Recycle Bin?`
-      : `Are you sure you want to move ${itemsToDelete.length} items to the Recycle Bin?\n\n${names}`;
-
-    if (!window.confirm(msg)) {
-      setShowContextMenu(false);
-      return;
-    }
-
     setShowContextMenu(false);
 
-    // Call backend delete operation first
-    const ok = await fileOps.handleDelete(
-      itemsToDelete,
-      null,
-      currentPath,
-      null,
-      { skipConfirm: true }
-    );
-
-    if (ok) {
-      // Delete succeeded - remove from UI immediately
-      setItems(prev => prev.filter(item => !itemsToDelete.some(del => del.path === item.path)));
-      setSelectedItems([]);
-      setSelectedItem(null);
-      setLastSelectedIndex(null);
+    const skipModal = localStorage.getItem('intellifile_skip_delete_confirm') === 'true';
+    if (skipModal) {
+      await confirmDeleteItems(itemsToDelete);
     } else {
-      showErrorToast('Delete failed.', 'The delete operation did not complete.', 'Check whether the file is open or protected, then try again.');
+      setItemsPendingDelete(itemsToDelete);
+      setShowDeleteModal(true);
     }
   };
 
@@ -1090,6 +1212,30 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
 
   const handleDropOnItem = async (e, targetItem) => {
     const isCopy = e.ctrlKey;
+    const skipMove = localStorage.getItem('intellifile_skip_move_confirm') === 'true';
+
+    if (!isCopy && targetItem?.type === 'folder' && !skipMove) {
+      let paths = [];
+      try {
+        const data = e.dataTransfer.getData('application/json') || e.dataTransfer.getData('text/plain');
+        paths = JSON.parse(data || '[]');
+      } catch (_) {}
+
+      if (Array.isArray(paths) && paths.length > 0) {
+        setMoveModalData({
+          items: paths,
+          targetFolder: targetItem,
+          onConfirm: async () => {
+            const draggedItems = items.filter(item => paths.includes(item.path));
+            removeItemsFromState(draggedItems);
+            await fileOps.handleDropOnItem(e, targetItem, currentPath, () => { });
+          }
+        });
+        setShowMoveModal(true);
+        return;
+      }
+    }
+
     if (!isCopy && targetItem?.type === 'folder') {
       try {
         const data = e.dataTransfer.getData('application/json');
@@ -1127,6 +1273,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
     selectedItem, selectedItems, clipboard, renamingItem, currentPath, historyIndex, displayItems,
     handleCopy, handleCut, handlePaste, handleDelete, handleRename, handleCreateFolder,
     handleBack, handleForward, handleUp, handleRefresh, handleUndo, handleRedo,
+    onCharacterType: handleCharacterType,
     setSelectedItems, setSelectedItem, setRenamingItem, setRenameValue, setShowContextMenu
   });
 
@@ -1341,7 +1488,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
 
     setSelectedItem(searchItem);
     setSelectedItems([searchItem]);
-    setShowPreview(viewMode !== 'icons');
+    setShowPreview(true); // Always show preview for files in search results
   };
 
   const handleSearchResultDoubleClick = (filePath) => {
@@ -1502,6 +1649,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
                   clipboard={clipboard}
                   isCutItem={isCutItem}
                   inputRef={inputRef}
+                  tempHighlightedPath={tempHighlightedPath}
                   onItemClick={handleItemClick}
                   onItemDoubleClick={handleFolderClick}
                   onContextMenu={handleContextMenu}
@@ -1532,15 +1680,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
             {clipboard && <span>📋 {clipboard.operation === 'cut' ? 'Cut' : 'Copied'}: {clipboard.items.length} item(s)</span>}
           </div>
 
-          <div className="statusbar-actions">
-            <button
-              className={`statusbar-btn ${showPreview ? 'active' : ''}`}
-              onClick={() => setShowPreview(!showPreview)}
-              title="Toggle preview panel"
-            >
-              👁️ Preview
-            </button>
-          </div>
+
         </div>
       </div>
 
@@ -1590,7 +1730,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
           visible={showPreview}
           onClose={handlePreviewCloseComplete}
           onClosing={handlePreviewCloseStart}
-          searchQuery = {searchQuery}
+          searchQuery={searchQuery}
         />
       )}
 
@@ -1642,6 +1782,32 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
         visible={showProperties}
         selectedItem={selectedItem}
         onClose={() => setShowProperties(false)}
+      />
+
+      <DeleteConfirmModal
+        visible={showDeleteModal}
+        items={itemsPendingDelete}
+        onConfirm={() => {
+          setShowDeleteModal(false);
+          confirmDeleteItems(itemsPendingDelete);
+        }}
+        onCancel={() => {
+          setShowDeleteModal(false);
+          setItemsPendingDelete([]);
+        }}
+      />
+
+      <MoveConfirmModal
+        visible={showMoveModal}
+        items={moveModalData.items}
+        targetFolder={moveModalData.targetFolder}
+        onConfirm={() => {
+          setShowMoveModal(false);
+          moveModalData.onConfirm?.();
+        }}
+        onCancel={() => {
+          setShowMoveModal(false);
+        }}
       />
     </div>
   );

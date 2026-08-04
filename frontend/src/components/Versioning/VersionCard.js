@@ -70,6 +70,13 @@ const VersionCard = ({ version, filePath, onRefresh, onCompareClick, isSelecting
         return '';
     };
     
+    const getStabilityColor = (score) => {
+        const pct = (score || 0) * 100;
+        if (pct >= 80) return 'linear-gradient(90deg, #10b981, #059669)';
+        if (pct >= 45) return 'linear-gradient(90deg, #f59e0b, #d97706)';
+        return 'linear-gradient(90deg, #ef4444, #dc2626)';
+    };
+
     return (
         <div className={`version-card ${isSelecting ? 'selecting' : ''}`}>
             <div className="version-header">
@@ -95,7 +102,10 @@ const VersionCard = ({ version, filePath, onRefresh, onCompareClick, isSelecting
                     <div className="stability-bar">
                         <div
                             className="stability-fill"
-                            style={{ width: `${(version.stability_score || 0) * 100}%` }}
+                            style={{
+                                width: `${Math.max(4, Math.min(100, (version.stability_score || 0) * 100))}%`,
+                                background: getStabilityColor(version.stability_score),
+                            }}
                         ></div>
                     </div>
                     <span className="metric-value">{((version.stability_score || 0) * 100).toFixed(0)}%</span>

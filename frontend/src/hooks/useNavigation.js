@@ -103,10 +103,11 @@ export const useNavigation = (ipcRenderer) => {
 
   const handleNewTab = useCallback(() => {
     const newId = `tab-${Date.now()}`;
+    const title = currentPath ? (currentPath.split('\\').filter(Boolean).pop() || 'Root') : 'New Tab';
     setTabs(prev => {
       const history = currentPath ? [currentPath] : [];
       const historyIndex = currentPath ? 0 : -1;
-      return [...prev, { id: newId, path: currentPath, title: 'New Tab', history, historyIndex }];
+      return [...prev, { id: newId, path: currentPath, title, history, historyIndex, cachedItems: null }];
     });
     setActiveTabId(newId);
   }, [currentPath]);
@@ -118,13 +119,19 @@ export const useNavigation = (ipcRenderer) => {
       if (tabId === activeTabId) {
         const nextTab = filtered[filtered.length - 1];
         setActiveTabId(nextTab.id);
-        if (nextTab.path && onTabClose) {
-          onTabClose(nextTab.path);
+        if (onTabClose) {
+          onTabClose(nextTab.path || null, nextTab.cachedItems || null);
         }
       }
       return filtered;
     });
   }, [activeTabId]);
+
+  const updateTabItems = useCallback((tabId, items) => {
+    setTabs(prev => prev.map(tab =>
+      tab.id === tabId ? { ...tab, cachedItems: items } : tab
+    ));
+  }, []);
 
   const handleSelectTab = useCallback((tab) => {
     setActiveTabId(tab.id);
@@ -134,6 +141,7 @@ export const useNavigation = (ipcRenderer) => {
   const activeTab = tabs.find(tab => tab.id === activeTabId);
   const history = activeTab?.history || [];
   const historyIndex = typeof activeTab?.historyIndex === 'number' ? activeTab.historyIndex : -1;
+  const activeTabCachedItems = activeTab?.cachedItems || null;
 
   return {
     currentPath,
@@ -144,11 +152,13 @@ export const useNavigation = (ipcRenderer) => {
     historyIndex,
     tabs,
     activeTabId,
+    activeTabCachedItems,
     addressPath,
     setAddressPath,
     updateBreadcrumb,
     updateHistory,
     updateActiveTab,
+    updateTabItems,
     handleBack,
     handleForward,
     handleUp,

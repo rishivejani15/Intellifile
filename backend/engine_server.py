@@ -522,7 +522,7 @@ while True:
                 # Auto-sync external changes
                 if file_path and os.path.exists(file_path):
                     ext = os.path.splitext(file_path)[1].lower()
-                    is_binary = ext in [".docx", ".xlsx", ".pdf", ".zip"]
+                    is_binary = ext in [".docx", ".xlsx", ".pdf", ".zip", ".pptx", ".pptm", ".ppt"]
                     current_content = None
                     if is_binary:
                         current_hash = compute_file_hash(file_path, True)

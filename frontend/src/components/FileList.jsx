@@ -19,10 +19,12 @@ function FileList({
   clipboard,
   isCutItem,
   inputRef,
+  tempHighlightedPath,
   onItemClick,
   onItemDoubleClick,
   onContextMenu,
   onEmptySpaceContextMenu,
+  onEmptySpaceClick,
   onDragStart,
   onDragOver,
   onDropOnItem,
@@ -83,10 +85,12 @@ function FileList({
   }, [items, groupBy]);
 
   const isFileSelected = (item) => {
-    return selectedFiles?.base?.path === item.path ||
-      selectedFiles?.ours?.path === item.path ||
-      selectedFiles?.theirs?.path === item.path ||
-      selectedItems.some(i => i.path === item.path);
+    if (!item || !item.path) return false;
+    const itemPath = item.path.toLowerCase();
+    return (selectedFiles?.base?.path || '').toLowerCase() === itemPath ||
+      (selectedFiles?.ours?.path || '').toLowerCase() === itemPath ||
+      (selectedFiles?.theirs?.path || '').toLowerCase() === itemPath ||
+      selectedItems.some(i => (i.path || '').toLowerCase() === itemPath);
   };
 
   if (loading) {
@@ -111,6 +115,12 @@ function FileList({
     <div
       className={`file-list ${viewMode}`}
       role="presentation"
+      onClick={(e) => {
+        const onFileItem = !!e.target?.closest?.('.file-item');
+        if (!onFileItem) {
+          onEmptySpaceClick?.(e);
+        }
+      }}
       onContextMenu={(e) => {
         // Fire for any non-file-item area so right-click works in scrolled blank space too.
         const onFileItem = !!e.target?.closest?.('.file-item');
@@ -128,16 +138,26 @@ function FileList({
             </div>
           )}
 
-      {group.items.map((item, idx) => {
+          {group.items.map((item, idx) => {
             const ext = (item.ext || '').toLowerCase();
             const hasThumb = thumbnails[item.path] && IMAGE_EXTS.includes(ext);
+            const isTempHighlighted = tempHighlightedPath === item.path;
+            const globalIdx = items.findIndex(i => i.path === item.path);
+            const itemIndex = globalIdx !== -1 ? globalIdx : idx;
 
             return (
               <div
                 key={item.path}
-                className={`file-item ${item.type} ${isFileSelected(item) ? 'selected' : ''} ${renamingItem?.path === item.path ? 'renaming' : ''} ${isCutItem(item) ? 'cut-item' : ''}`}
+                data-path={item.path}
+                className={`file-item ${item.type} ${isFileSelected(item) ? 'selected' : ''} ${isTempHighlighted ? 'temp-highlighted' : ''} ${renamingItem?.path === item.path ? 'renaming' : ''} ${isCutItem(item) ? 'cut-item' : ''}`}
                 onDoubleClick={() => onItemDoubleClick(item)}
-                onClick={(e) => onItemClick(item, idx, e)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (e.shiftKey) {
+                    try { window.getSelection()?.removeAllRanges(); } catch (_) { }
+                  }
+                  onItemClick(item, itemIndex, e);
+                }}
                 onContextMenu={(e) => { e.stopPropagation(); onContextMenu(e, item); }}
                 draggable
                 onDragStart={(e) => onDragStart(e, item)}
@@ -181,7 +201,7 @@ function FileList({
                   )}
                 </div>
               </div>
-               );
+            );
           })}
         </React.Fragment>
       ))}

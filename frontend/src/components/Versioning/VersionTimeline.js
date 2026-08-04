@@ -36,13 +36,12 @@ const VersionTimeline = ({ filePath }) => {
     });
   }, []);
 
-  const fetchVersions = useCallback(async () => {
+  const fetchVersions = useCallback(async (isInitial = false) => {
     if (!filePath) {
       console.warn('[Timeline] No filePath provided');
       return;
     }
-    const isInitialLoad = versions.length === 0;
-    if (isInitialLoad) {
+    if (isInitial) {
       setLoading(true);
     } else {
       setRefreshing(true);
@@ -77,15 +76,15 @@ const VersionTimeline = ({ filePath }) => {
       setRefreshing(false);
       setLoading(false);
     }
-  }, [filePath, normalizeVersions, versions.length]);
+  }, [filePath, normalizeVersions]);
 
   useEffect(() => {
     console.log('[VersionTimeline] Mounting/Updating for path:', filePath);
-    fetchVersions();
+    fetchVersions(true);
 
     const handleManualRefresh = () => {
       console.log('[VersionTimeline] Manual refresh triggered');
-      fetchVersions();
+      fetchVersions(false);
     };
     window.addEventListener('refresh-version-timeline', handleManualRefresh);
 
@@ -96,7 +95,7 @@ const VersionTimeline = ({ filePath }) => {
 
         if (normalizedEventPath === normalizedPropPath) {
           console.log('[Timeline] Refreshing due to external save:', data.filePath);
-          fetchVersions();
+          fetchVersions(false);
         }
       } catch (err) {
         console.error('[Timeline] handler error:', err);
@@ -113,7 +112,7 @@ const VersionTimeline = ({ filePath }) => {
       if (ipc) {
         try {
           if (typeof ipc.off === 'function') ipc.off('version-updated', handler);
-          else if (typeof ipc.off === 'function') ipc.off('version-updated', handler);
+          else if (typeof ipc.removeListener === 'function') ipc.removeListener('version-updated', handler);
         } catch (err) {
           console.error('[Timeline] Error removing listener:', err);
         }
@@ -193,6 +192,114 @@ const VersionTimeline = ({ filePath }) => {
   if (!filePath) {
     return null;
   }
+
+  // Block versioning for binary, image, system, and executable file types
+  const blockedExts = new Set([
+    '.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.ico', '.svg', '.tiff', '.heic', // images
+    '.exe', '.dll', '.sys', '.msi', '.com', '.scr',                                      // executables/system
+    '.lnk', '.url', '.shortcut',                                                          // shortcuts
+    '.mp4', '.mp3', '.avi', '.mkv', '.mov', '.wav', '.flac', '.aac',                     // media
+    '.zip', '.rar', '.7z', '.tar', '.gz',                                                 // archives
+    '.ppt', '.pptm',                                                                       // presentations (not .pptx)
+  ]);
+  const getExt = (p) => {
+    const idx = p.lastIndexOf('.');
+    return idx >= 0 ? p.slice(idx).toLowerCase() : '';
+  };
+  const fileExt = getExt(filePath);
+  const fileName = filePath.split(/[\\/]/).pop() || filePath;
+
+  const extIconMap = {
+    // Images
+    '.jpg': '🖼️', '.jpeg': '🖼️', '.png': '🖼️', '.gif': '🎞️', '.bmp': '🖼️',
+    '.webp': '🖼️', '.ico': '🖼️', '.svg': '🎨', '.tiff': '🖼️', '.heic': '🖼️',
+    // Executables
+    '.exe': '⚙️', '.dll': '⚙️', '.sys': '🔧', '.msi': '📦', '.com': '⚙️', '.scr': '🖥️',
+    // Shortcuts
+    '.lnk': '🔗', '.url': '🔗', '.shortcut': '🔗',
+    // Media
+    '.mp4': '🎬', '.avi': '🎬', '.mkv': '🎬', '.mov': '🎬',
+    '.mp3': '🎵', '.wav': '🎵', '.flac': '🎵', '.aac': '🎵',
+    // Archives
+    '.zip': '🗜️', '.rar': '🗜️', '.7z': '🗜️', '.tar': '🗜️', '.gz': '🗜️',
+    // Presentations
+    '.ppt': '📊', '.pptm': '📊',
+  };
+  const extLabelMap = {
+    '.jpg': 'JPEG Image', '.jpeg': 'JPEG Image', '.png': 'PNG Image', '.gif': 'GIF Image',
+    '.bmp': 'Bitmap Image', '.webp': 'WebP Image', '.ico': 'Icon File', '.svg': 'SVG Vector',
+    '.tiff': 'TIFF Image', '.heic': 'HEIC Image',
+    '.exe': 'Executable', '.dll': 'System Library', '.sys': 'System File', '.msi': 'Installer',
+    '.com': 'Executable', '.scr': 'Screensaver',
+    '.lnk': 'Windows Shortcut', '.url': 'URL Shortcut', '.shortcut': 'Shortcut',
+    '.mp4': 'MP4 Video', '.avi': 'AVI Video', '.mkv': 'MKV Video', '.mov': 'QuickTime Video',
+    '.mp3': 'MP3 Audio', '.wav': 'WAV Audio', '.flac': 'FLAC Audio', '.aac': 'AAC Audio',
+    '.zip': 'ZIP Archive', '.rar': 'RAR Archive', '.7z': '7-Zip Archive',
+    '.tar': 'TAR Archive', '.gz': 'GZip Archive',
+    '.ppt': 'PowerPoint', '.pptm': 'PowerPoint Macro',
+  };
+
+  const comingSoonExts = new Set(['.pptx', '.ppt', '.pptm']);
+  if (comingSoonExts.has(fileExt)) {
+    return (
+      <div className="versioning-unavailable-wrapper">
+        <div className="versioning-unavailable-card versioning-coming-soon-card">
+          <div className="versioning-unavailable-icon-ring versioning-coming-soon-ring">
+            <span className="versioning-unavailable-icon">📊</span>
+            <div className="versioning-unavailable-badge versioning-coming-soon-badge">
+              <span>🚀</span>
+            </div>
+          </div>
+          <h3 className="versioning-unavailable-title">Versioning Coming Soon</h3>
+          <p className="versioning-unavailable-subtitle">
+            <span className="versioning-unavailable-ext-chip versioning-coming-soon-chip">PowerPoint Presentation</span>
+          </p>
+          <p className="versioning-unavailable-desc">
+            Version history support for <strong>{fileName}</strong> is currently under active development.
+            <br />
+            Full timeline tracking for PowerPoint files will be available in an upcoming release!
+          </p>
+          <div className="versioning-coming-soon-footer">
+            <span className="versioning-coming-soon-tag">✨ Feature in Progress</span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (blockedExts.has(fileExt)) {
+    const icon = extIconMap[fileExt] || '🚫';
+    const label = extLabelMap[fileExt] || fileExt.toUpperCase().replace('.', '') + ' File';
+    return (
+      <div className="versioning-unavailable-wrapper">
+        <div className="versioning-unavailable-card">
+          <div className="versioning-unavailable-icon-ring">
+            <span className="versioning-unavailable-icon">{icon}</span>
+            <div className="versioning-unavailable-badge">
+              <span>!</span>
+            </div>
+          </div>
+          <h3 className="versioning-unavailable-title">Versioning Unavailable</h3>
+          <p className="versioning-unavailable-subtitle">
+            <span className="versioning-unavailable-ext-chip">{label}</span>
+          </p>
+          <p className="versioning-unavailable-desc">
+            Version history is not supported for <strong>{fileName}</strong>.
+            <br />
+            Only text-based and document files can be tracked.
+          </p>
+          <div className="versioning-unavailable-supported-label">Supported types include</div>
+          <div className="versioning-unavailable-supported-list">
+            {['.txt', '.js', '.py', '.md', '.json', '.csv', '.html', '.css', '.docx', '.xlsx'].map(ext => (
+              <span key={ext} className="versioning-supported-chip">{ext}</span>
+            ))}
+            <span className="versioning-supported-chip">and more…</span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
         <div className="version-timeline">
     <div className={`timeline-list ${refreshing ? 'is-refreshing' : ''}`}>

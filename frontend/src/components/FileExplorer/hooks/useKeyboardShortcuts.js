@@ -25,6 +25,7 @@ export function useKeyboardShortcuts({
   handleRefresh,
   handleUndo,
   handleRedo,
+  onCharacterType,
   setShowContextMenu,
 }) {
   useEffect(() => {
@@ -85,13 +86,15 @@ export function useKeyboardShortcuts({
       } else if (e.key === 'Escape') {
         onClearSelection?.();
         setShowContextMenu?.(false);
+      } else if (!isCtrl && !e.altKey && !e.metaKey && e.key && e.key.length === 1) {
+        onCharacterType?.(e.key);
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedItem, selectedItems, clipboard, renamingItem, currentPath, historyIndex, displayItems, onCopy, onCut, onPaste, onDelete, onRename, onCreateFolder, onSelectAll, onBack, onForward, onUp, onClearSelection, handleRefresh, handleUndo, handleRedo, setShowContextMenu]);
+  }, [selectedItem, selectedItems, clipboard, renamingItem, currentPath, historyIndex, displayItems, onCopy, onCut, onPaste, onDelete, onRename, onCreateFolder, onSelectAll, onBack, onForward, onUp, onClearSelection, handleRefresh, handleUndo, handleRedo, onCharacterType, setShowContextMenu]);
 }
 
 export default useKeyboardShortcuts;

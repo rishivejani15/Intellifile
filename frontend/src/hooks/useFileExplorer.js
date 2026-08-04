@@ -116,7 +116,8 @@ export const useFileExplorer = (ipcRenderer) => {
     }
 
     if (itemsToDelete.length > 0) {
-      if (!skipConfirm) {
+      const savedSkip = localStorage.getItem('intellifile_skip_delete_confirm') === 'true';
+      if (!skipConfirm && !savedSkip) {
         // Confirmation dialog
         const names = itemsToDelete.map(i => i.name).join(', ');
         const msg = itemsToDelete.length === 1
@@ -286,6 +287,44 @@ export const useFileExplorer = (ipcRenderer) => {
       const paths = JSON.parse(data || '[]');
       const isCopy = e.ctrlKey;
 
+      // Confirm move operations using app's themed modal to avoid accidental removals
+      const skipMove = localStorage.getItem('intellifile_skip_move_confirm') === 'true';
+      if (!isCopy && !skipMove && Array.isArray(paths) && paths.length > 0) {
+        const items = paths; // pass paths (strings) for display
+        const shouldProceed = await new Promise((resolve) => {
+          let resolved = false;
+          const names = items.map(p => p.split('\\').pop()).join(', ');
+          const msg = items.length === 1
+            ? `Move "${names}" into "${targetItem.name || targetItem.path}"?`
+            : `Move ${items.length} items into "${targetItem.name || targetItem.path}"?\n\n${names}`;
+
+          // If the app confirm modal is available, wait longer for it to resolve
+          // to avoid showing the native dialog while the themed modal is visible.
+          const available = !!window.__app_confirm_available;
+          const fallbackMs = available ? 30000 : 200;
+          const fallback = setTimeout(() => {
+            if (!resolved) {
+              resolved = true;
+              resolve(window.confirm(msg));
+            }
+          }, fallbackMs);
+
+          // Safety: if callback resolves earlier, clear fallback timer
+          const wrappedCb = (res) => {
+            if (!resolved) {
+              resolved = true;
+              clearTimeout(fallback);
+              resolve(!!res);
+            }
+          };
+          // Replace the callback with wrappedCb so it clears the timeout
+          try {
+            window.dispatchEvent(new CustomEvent('app-show-confirm', { detail: { items, callback: wrappedCb } }));
+          } catch (e) { /* ignore */ }
+        });
+        if (!shouldProceed) return false;
+      }
+
       for (const sourcePath of paths) {
         const name = sourcePath.split('\\').pop();
         const destPath = targetItem.path + '\\' + name;
@@ -299,10 +338,12 @@ export const useFileExplorer = (ipcRenderer) => {
         }
       }
       onDropComplete?.();
+      return true;
     } catch (err) {
       console.error('Drag/drop error:', err);
+      return false;
     }
-  },  [ipcRenderer, pushUndo]);
+    },  [ipcRenderer, pushUndo]);
 
   return {
     clipboard,

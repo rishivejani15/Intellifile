@@ -286,18 +286,23 @@
 
 .stability-bar {
   flex: 1;
-  height: 6px;
-  background: var(--s-hover);
-  border-radius: var(--rd-full);
+  height: 8px;
+  background: rgba(0, 0, 0, 0.08);
+  border-radius: 999px;
   position: relative;
+  overflow: hidden;
+}
+
+[data-theme="dark"] .stability-bar {
+  background: rgba(255, 255, 255, 0.12);
 }
 
 .stability-fill {
   height: 100%;
-  background: var(--c-brand-gradient);
   border-radius: inherit;
-  transition: width var(--dur-500) var(--ease-spring-sm);
+  transition: width 0.4s ease, background 0.3s ease;
   position: relative;
+  background: linear-gradient(90deg, #10b981, #059669);
 }
 
 .stability-fill::after {
@@ -880,4 +885,215 @@
 
 [data-theme="dark"] .stability-fill::after {
   background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
+}
+
+/* ───────────────────────────────────────────────────────
+   Versioning Unavailable — Full-Center Premium Card
+   ─────────────────────────────────────────────────────── */
+.versioning-unavailable-wrapper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  width: 100%;
+  flex: 1;
+  padding: var(--sp-6, 24px);
+  box-sizing: border-box;
+  background: transparent;
+}
+
+.versioning-unavailable-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 36px 32px 28px;
+  max-width: 380px;
+  width: 100%;
+  background: var(--s-elev, rgba(255,255,255,0.04));
+  border: 1px solid var(--bo-light, rgba(255,255,255,0.1));
+  border-radius: 20px;
+  box-shadow: 0 8px 40px rgba(0,0,0,0.12);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  animation: versioningUnavailableFadeIn 0.4s cubic-bezier(0.34,1.56,0.64,1);
+}
+
+@keyframes versioningUnavailableFadeIn {
+  0%   { opacity: 0; transform: scale(0.9) translateY(12px); }
+  100% { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+/* Icon Ring */
+.versioning-unavailable-icon-ring {
+  position: relative;
+  width: 80px;
+  height: 80px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 20px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, rgba(239,68,68,0.12), rgba(245,158,11,0.1));
+  border: 2px solid rgba(239,68,68,0.25);
+  box-shadow: 0 0 0 8px rgba(239,68,68,0.06), 0 4px 20px rgba(239,68,68,0.15);
+  animation: iconRingPulse 2.5s ease-in-out infinite;
+}
+
+@keyframes iconRingPulse {
+  0%, 100% { box-shadow: 0 0 0 6px rgba(239,68,68,0.06), 0 4px 20px rgba(239,68,68,0.12); }
+  50%       { box-shadow: 0 0 0 12px rgba(239,68,68,0.04), 0 6px 28px rgba(239,68,68,0.2); }
+}
+
+.versioning-unavailable-icon {
+  font-size: 34px;
+  line-height: 1;
+  filter: drop-shadow(0 2px 6px rgba(0,0,0,0.2));
+}
+
+/* "!" Badge */
+.versioning-unavailable-badge {
+  position: absolute;
+  bottom: -2px;
+  right: -2px;
+  width: 22px;
+  height: 22px;
+  background: linear-gradient(135deg, #ef4444, #f97316);
+  border-radius: 50%;
+  border: 2px solid var(--s-bg, #fff);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 8px rgba(239,68,68,0.5);
+}
+
+.versioning-unavailable-badge span {
+  font-size: 12px;
+  font-weight: 900;
+  color: #fff;
+  line-height: 1;
+}
+
+/* Title */
+.versioning-unavailable-title {
+  margin: 0 0 8px;
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--t-primary, #111);
+  letter-spacing: -0.3px;
+}
+
+/* Subtitle — ext chip */
+.versioning-unavailable-subtitle {
+  margin: 0 0 14px;
+}
+
+.versioning-unavailable-ext-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 14px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, rgba(239,68,68,0.14), rgba(245,158,11,0.1));
+  border: 1px solid rgba(239,68,68,0.25);
+  color: #ef4444;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+}
+
+/* Description */
+.versioning-unavailable-desc {
+  margin: 0 0 20px;
+  font-size: 13px;
+  line-height: 1.65;
+  color: var(--t-secondary, #666);
+}
+
+.versioning-unavailable-desc strong {
+  color: var(--t-primary, #111);
+  font-weight: 600;
+  word-break: break-all;
+}
+
+/* Supported types section */
+.versioning-unavailable-supported-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: var(--t-muted, #999);
+  margin-bottom: 10px;
+}
+
+.versioning-unavailable-supported-list {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+}
+
+.versioning-supported-chip {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 6px;
+  background: var(--s-card, rgba(0,0,0,0.04));
+  border: 1px solid var(--bo-light, rgba(0,0,0,0.08));
+  color: var(--color-primary, #1E5E42);
+  font-size: 11px;
+  font-weight: 600;
+  font-family: var(--font-mono, monospace);
+  transition: background 0.15s ease;
+}
+
+.versioning-supported-chip:hover {
+  background: var(--c-brand-soft, rgba(30,94,66,0.1));
+}
+
+/* Coming Soon Card Styling */
+.versioning-coming-soon-card {
+  border-color: rgba(99, 102, 241, 0.25);
+  box-shadow: 0 8px 40px rgba(99, 102, 241, 0.12);
+}
+
+.versioning-coming-soon-ring {
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.15), rgba(168, 85, 247, 0.12));
+  border-color: rgba(99, 102, 241, 0.35);
+  box-shadow: 0 0 0 8px rgba(99, 102, 241, 0.08), 0 4px 20px rgba(99, 102, 241, 0.2);
+  animation: comingSoonRingPulse 2.5s ease-in-out infinite;
+}
+
+@keyframes comingSoonRingPulse {
+  0%, 100% { box-shadow: 0 0 0 6px rgba(99, 102, 241, 0.08), 0 4px 20px rgba(99, 102, 241, 0.15); }
+  50%       { box-shadow: 0 0 0 12px rgba(99, 102, 241, 0.05), 0 6px 28px rgba(99, 102, 241, 0.25); }
+}
+
+.versioning-coming-soon-badge {
+  background: linear-gradient(135deg, #6366f1, #a855f7);
+  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.5);
+}
+
+.versioning-coming-soon-chip {
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.14), rgba(168, 85, 247, 0.1));
+  border-color: rgba(99, 102, 241, 0.3);
+  color: #6366f1;
+}
+
+.versioning-coming-soon-footer {
+  margin-top: 8px;
+}
+
+.versioning-coming-soon-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 16px;
+  border-radius: 999px;
+  background: rgba(99, 102, 241, 0.1);
+  border: 1px dashed rgba(99, 102, 241, 0.3);
+  color: var(--t-primary, #333);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
 }
