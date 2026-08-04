@@ -1,5 +1,5 @@
 import React from 'react';
-import { MdArrowBack, MdArrowDownward, MdArrowForward, MdArrowUpward, MdRefresh, MdSearch, MdHistory, MdOutlineVisibility, MdOutlineVisibilityOff, MdViewModule, MdViewList, MdTableChart, MdSort, MdUnfoldMore, MdUnfoldLess, MdCalendarToday, MdOutlineDateRange, MdHourglassEmpty, MdDelete } from 'react-icons/md';
+import { MdArrowBack, MdArrowDownward, MdArrowForward, MdArrowUpward, MdRefresh, MdSearch, MdHistory, MdOutlineVisibility, MdOutlineVisibilityOff, MdViewModule, MdViewList, MdTableChart, MdUnfoldMore, MdUnfoldLess, MdCalendarToday, MdOutlineDateRange, MdDelete, MdViewSidebar } from 'react-icons/md';
 import './FileExplorer/FileExplorer.css';
 
 function ExplorerNavbar({
@@ -13,6 +13,8 @@ function ExplorerNavbar({
   groupBy,
   searchQuery,
   showHidden,
+  showSidebar = true,
+  onToggleSidebar,
   engineReady,
   indexing,
   indexedFolder,
@@ -41,13 +43,17 @@ function ExplorerNavbar({
   onSearchChange,
   onSearchKeyDown,
 }) {
-  // const [showNewDropdown, setShowNewDropdown] = useState(false);
-  // const newDropdownRef = useRef(null);
-
   return (
     <div className="explorer-navbar">
       <div className="nav-row">
         <div className="nav-buttons">
+          <button
+            className={`nav-btn sidebar-toggle-btn ${showSidebar ? 'active' : ''}`}
+            onClick={onToggleSidebar}
+            title={showSidebar ? "Hide Quick Access panel" : "Show Quick Access panel"}
+          >
+            <MdViewSidebar />
+          </button>
           <button
             className="nav-btn back-btn"
             onClick={onBack}
@@ -119,7 +125,7 @@ function ExplorerNavbar({
             onChange={(e) => onSearchChange?.(e, 'query')}
             onKeyDown={onSearchKeyDown}
           />
-          {searchQuery && !semanticLoading && (
+          {searchQuery && (
             <button
               type="button"
               className="search-clear-btn"
@@ -129,7 +135,6 @@ function ExplorerNavbar({
               <MdDelete />
             </button>
           )}
-          {semanticLoading && <span className="search-spinner"><MdHourglassEmpty /></span>}
         </div>
         {searchQuery && /\b(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec|\d{4}|yesterday|today|last\s+week|last\s+month|this\s+month|this\s+year)\b/i.test(searchQuery) && (
           <div className="date-filter-badge">
@@ -162,7 +167,6 @@ function ExplorerNavbar({
         </div>
 
         <div className="sort-controls">
-          <MdSort className="sort-icon" />
           <select value={sortBy} onChange={(e) => onSortByChange(e.target.value)} className="sort-select">
             <option value="name">Sort by Name</option>
             <option value="date">Sort by Date</option>
@@ -195,7 +199,7 @@ function ExplorerNavbar({
           >
             {showHidden ? <MdOutlineVisibility /> : <MdOutlineVisibilityOff />}
           </button>
-          <div className={`index-status ${indexing ? 'running' : (indexMessage && indexMessage.toLowerCase().includes('failed') ? 'error' : (indexPct === 100 ? 'done-green' : 'done'))}`} title={indexDetail || indexMessage}>
+          <div className={`index-status ${indexing ? 'running' : (indexMessage && indexMessage.toLowerCase().includes('failed') ? 'error' : 'done')}`} title={indexDetail || indexMessage}>
             <span className="index-dot" />
             <span className="index-text">
               {indexing ? `Indexing${indexPhase ? ` (${indexPhase})` : ''}` : (indexMessage || 'Checking index...')}

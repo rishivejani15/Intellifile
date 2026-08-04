@@ -1,5 +1,5 @@
 import React from 'react';
-import { MdClose, MdInsertDriveFile, MdOutlineSmartToy, MdCalendarToday } from 'react-icons/md';
+import { MdClose, MdInsertDriveFile, MdOutlineSmartToy, MdCalendarToday, MdHourglassEmpty } from 'react-icons/md';
 import './FileExplorer/FileExplorer.css';
 
 function SearchResults({ visible, results, loading, onClose, onResultClick, onResultDoubleClick, onResultContextMenu }) {
@@ -19,7 +19,12 @@ function SearchResults({ visible, results, loading, onClose, onResultClick, onRe
           <span>Close</span>
         </button>
       </div>
-      {results.length === 0 ? (
+      {loading ? (
+        <div className="search-loading-center">
+          <MdHourglassEmpty className="search-loading-hourglass" />
+          <span>Searching files...</span>
+        </div>
+      ) : results.length === 0 ? (
         <div className="empty-state">No matching files found</div>
       ) : (
         <div className="semantic-results-body">

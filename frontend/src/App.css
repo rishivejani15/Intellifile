@@ -14,6 +14,47 @@
   /* Default hover background variable – overridden in dark mode */
   --global-hover-bg: var(--global-hover-bg-light);
 
+  /* Explorer selection / active states */
+  --explorer-selected-bg-light: rgba(30, 94, 66, 0.16);
+  --explorer-selected-bg-dark: rgba(63, 163, 114, 0.16);
+  --explorer-selected-bg: var(--explorer-selected-bg-light);
+
+  --explorer-selected-border-light: #1E5E42;
+  --explorer-selected-border-dark: #3FA372;
+  --explorer-selected-border: var(--explorer-selected-border-light);
+
+  --explorer-selected-fg-light: #0F3620;
+  --explorer-selected-fg-dark: #E8ECE9;
+  --explorer-selected-fg: var(--explorer-selected-fg-light);
+
+  --explorer-active-bg-light: #e8f3ec;
+  --explorer-active-bg-dark: rgba(63, 163, 114, 0.16);
+  --explorer-active-bg: var(--explorer-active-bg-light);
+
+  --explorer-active-border-light: #1E5E42;
+  --explorer-active-border-dark: #3FA372;
+  --explorer-active-border: var(--explorer-active-border-light);
+
+  --explorer-active-fg-light: #0F3620;
+  --explorer-active-fg-dark: #E8ECE9;
+  --explorer-active-fg: var(--explorer-active-fg-light);
+
+  --explorer-active-shadow-light: 0 0 0 1px rgba(30, 94, 66, 0.16);
+  --explorer-active-shadow-dark: 0 0 0 1px rgba(63, 163, 114, 0.24);
+  --explorer-active-shadow: var(--explorer-active-shadow-light);
+
+  /* Brand soft tint – translucent green */
+  --c-brand-soft: rgba(30, 94, 66, 0.14);
+
+  /* Temp In-Page Match Highlight */
+  --temp-highlight-bg-light: linear-gradient(90deg, rgba(30, 94, 66, 0.22), rgba(30, 94, 66, 0.12));
+  --temp-highlight-bg-dark: linear-gradient(90deg, rgba(63, 163, 114, 0.28), rgba(63, 163, 114, 0.14));
+  --temp-highlight-bg: var(--temp-highlight-bg-light);
+
+  --temp-highlight-border-light: #1E5E42;
+  --temp-highlight-border-dark: #3FA372;
+  --temp-highlight-border: var(--temp-highlight-border-light);
+
   /* Context menu colors – light mode */
   /* Background of the context menu panel */
   --context-menu-bg-light: var(--s-elev-2);
@@ -61,9 +102,9 @@
   --s-elev-2: rgba(255, 255, 255, 0.95);
   --s-card: rgba(255, 255, 255, 0.7);
   --s-glass: rgba(255, 255, 255, 0.6);
-  --s-hover: rgba(99, 102, 241, 0.08);
-  --s-active: rgba(99, 102, 241, 0.15);
-  --s-selected: rgba(99, 102, 241, 0.1);
+  --s-hover: rgba(30, 94, 66, 0.08);
+  --s-active: rgba(30, 94, 66, 0.15);
+  --s-selected: rgba(30, 94, 66, 0.12);
   --s-code: #f1f5f9;
 
   /* Text Layers */
@@ -170,9 +211,17 @@
 [data-theme="dark"] {
   /* Override global hover background for dark mode */
   --global-hover-bg: var(--global-hover-bg-dark);
+  --explorer-selected-bg: var(--explorer-selected-bg-dark);
+  --explorer-selected-border: var(--explorer-selected-border-dark);
+  --explorer-selected-fg: var(--explorer-selected-fg-dark);
+  --explorer-active-bg: var(--explorer-active-bg-dark);
+  --explorer-active-border: var(--explorer-active-border-dark);
+  --explorer-active-fg: var(--explorer-active-fg-dark);
+  --explorer-active-shadow: var(--explorer-active-shadow-dark);
 
-
-  --c-brand-soft: #185b3837;
+  --c-brand-soft: rgba(63, 163, 114, 0.22);
+  --temp-highlight-bg: var(--temp-highlight-bg-dark);
+  --temp-highlight-border: var(--temp-highlight-border-dark);
 
   /* Emerald + Gold Seal Tokens (Dark) */
   --color-primary: #3FA372;
@@ -191,9 +240,9 @@
   --s-elev-2: rgba(39, 39, 42, 0.95);
   --s-card: rgba(24, 24, 27, 0.6);
   --s-glass: rgba(24, 24, 27, 0.7);
-  --s-hover: rgba(129, 140, 248, 0.1);
-  --s-active: rgba(129, 140, 248, 0.18);
-  --s-selected: rgba(129, 140, 248, 0.12);
+  --s-hover: rgba(63, 163, 114, 0.12);
+  --s-active: rgba(63, 163, 114, 0.22);
+  --s-selected: rgba(63, 163, 114, 0.20);
   --s-code: #18181b;
 
   --t-primary: #fafafa;

@@ -12,7 +12,8 @@
   background: var(--s-bg);
   color: var(--t-primary);
   padding: var(--sp-6);
-  overflow: hidden;
+  overflow-y: auto;
+  overflow-x: hidden;
   position: relative;
 }
 
@@ -331,6 +332,9 @@
   margin-bottom: var(--sp-4);
   animation: slideDown var(--dur-250) var(--ease-spring-sm);
   overflow: hidden;
+  max-height: 520px;
+  display: flex;
+  flex-direction: column;
 }
 
 @keyframes slideDown {
@@ -345,6 +349,7 @@
   padding: var(--sp-3) var(--sp-5);
   background: var(--global-hover-bg) !important;
   border-bottom: 1px solid var(--bo-light);
+  flex-shrink: 0;
 }
 
 .connect-panel-header h3 {
@@ -372,6 +377,8 @@
 
 .connect-panel-body {
   padding: var(--sp-5);
+  overflow-y: auto;
+  max-height: 440px;
 }
 
 .connect-form-group {

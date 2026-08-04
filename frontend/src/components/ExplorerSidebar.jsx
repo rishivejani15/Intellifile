@@ -4,6 +4,7 @@ import './FileExplorer/FileExplorer.css';
 import { showErrorToast, showToast } from '../utils/toast';
 
 const FAVORITES_KEY = 'intellifile-favorites';
+const RECENT_FOLDERS_KEY = 'intellifile-recent-folders';
 const ipcRenderer = window.electron?.ipcRenderer;
 
 const normalizePath = (p) => (p || '').toLowerCase().replace(/\//g, '\\').replace(/[\\]+$/, '');
@@ -35,12 +36,9 @@ const getFolderIcon = (name = '') => {
 function ExplorerSidebar({ drives, onNavigate, currentPath }) {
   const [favorites, setFavorites] = useState([]);
   const [systemRoots, setSystemRoots] = useState(null);
-  const [frecencyMap, setFrecencyMap] = useState({});
-  const [frequentFolders, setFrequentFolders] = useState([]);
   const [expandedSections, setExpandedSections] = useState({
     favorites: true,
     quickAccess: true,
-    frequent: true,
     drives: true,
   });
   const [treeExpanded, setTreeExpanded] = useState({});
@@ -54,39 +52,91 @@ function ExplorerSidebar({ drives, onNavigate, currentPath }) {
   const treeChildrenRef = React.useRef({});
   const treeLoadingRef = React.useRef({});
 
-  // Load favorites from localStorage
+  const [recentFolders, setRecentFolders] = useState([]);
+
+  // Load favorites and recent folders from localStorage
   useEffect(() => {
     try {
-      const stored = localStorage.getItem(FAVORITES_KEY);
-      if (stored) {
-        setFavorites(JSON.parse(stored));
+      const storedFav = localStorage.getItem(FAVORITES_KEY);
+      if (storedFav) {
+        setFavorites(JSON.parse(storedFav));
       }
-      // load frecency map
-      try {
-        const raw = localStorage.getItem('intellifile-frecency') || '{}';
-        const parsed = JSON.parse(raw || '{}');
-        // normalize old numeric-only format to object format { count, label }
-        const normalized = {};
-        for (const [k, v] of Object.entries(parsed || {})) {
-          if (typeof v === 'number') {
-            // derive label from path
-            const label = getNodeName(k);
-            normalized[k] = { count: v, label };
-          } else if (v && typeof v === 'object' && typeof v.count === 'number') {
-            normalized[k] = v;
-          } else {
-            // fallback
-            normalized[k] = { count: Number(v) || 0, label: getNodeName(k) };
-          }
-        }
-        setFrecencyMap(normalized);
-        updateFrequentList(normalized);
-      } catch (e) {
-        // ignore
+      const storedRecent = localStorage.getItem(RECENT_FOLDERS_KEY);
+      if (storedRecent) {
+        setRecentFolders(JSON.parse(storedRecent));
       }
     } catch (e) {
-      console.error('Error loading favorites:', e);
+      console.error('Error loading sidebar state:', e);
     }
+  }, []);
+
+  // Save recent folders to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem(RECENT_FOLDERS_KEY, JSON.stringify(recentFolders));
+    } catch (e) {
+      console.error('Error saving recent folders:', e);
+    }
+  }, [recentFolders]);
+
+  // Track folder visits from IntelliFile navigation (excluding native quick access folders, max 2 items)
+  useEffect(() => {
+    const systemKeywords = [
+      'desktop', 'documents', 'document', 'downloads', 'download',
+      'pictures', 'picture', 'photos', 'photo', 'music', 'videos',
+      'video', 'onedrive', 'recycle', 'this_pc', 'this pc'
+    ];
+
+    const isSystemOrQuickAccess = (fPath, fName) => {
+      if (!fPath) return true;
+      const lowerP = fPath.toLowerCase().replace(/[\\]+$/, '');
+      const lowerN = (fName || '').toLowerCase();
+      if (/^[a-zA-Z]:\\?$/.test(lowerP)) return true;
+      return systemKeywords.some(k => lowerN === k || lowerN.includes(k) || lowerP.endsWith(`\\${k}`));
+    };
+
+    const handleFolderVisited = (e) => {
+      const folderPath = e.detail?.path;
+      if (!folderPath) return;
+
+      const normTarget = normalizePath(folderPath);
+      const folderName = getNodeName(folderPath) || folderPath;
+
+      if (isSystemOrQuickAccess(folderPath, folderName)) return;
+
+      setRecentFolders((prev) => {
+        const filteredPrev = prev.filter((f) => !isSystemOrQuickAccess(f.path, f.name));
+        const existingIdx = filteredPrev.findIndex((f) => normalizePath(f.path) === normTarget);
+        let updated;
+        if (existingIdx >= 0) {
+          const item = filteredPrev[existingIdx];
+          const updatedItem = {
+            ...item,
+            name: folderName,
+            count: (item.count || 1) + 1,
+            lastVisited: Date.now(),
+          };
+          updated = [...filteredPrev];
+          updated[existingIdx] = updatedItem;
+        } else {
+          updated = [
+            ...filteredPrev,
+            {
+              path: folderPath,
+              name: folderName,
+              count: 1,
+              lastVisited: Date.now(),
+            },
+          ];
+        }
+
+        updated.sort((a, b) => (b.lastVisited - a.lastVisited) || (b.count - a.count));
+        return updated.slice(0, 2);
+      });
+    };
+
+    window.addEventListener('intellifile-folder-visited', handleFolderVisited);
+    return () => window.removeEventListener('intellifile-folder-visited', handleFolderVisited);
   }, []);
 
   useEffect(() => {
@@ -333,106 +383,9 @@ function ExplorerSidebar({ drives, onNavigate, currentPath }) {
       try { ipcRenderer && ipcRenderer.off && ipcRenderer.off('system-roots-changed', onChanged); } catch (e) {}
     };
   }, []);
-
-  // Recompute friendly frequent list when systemRoots become available
-  useEffect(() => {
-    if (Object.keys(frecencyMap || {}).length > 0) updateFrequentList(frecencyMap);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [systemRoots]);
-
-  // Listen for folder visits from ANY navigation source (breadcrumbs, double-click, back/forward)
-  useEffect(() => {
-    const handleFolderVisited = (e) => {
-      const folderPath = e?.detail?.path;
-      if (!folderPath) return;
-      try {
-        const realPath = String(folderPath);
-        const key = normalizePath(realPath);
-        const raw = localStorage.getItem('intellifile-frecency') || '{}';
-        const current = JSON.parse(raw);
-        const existing = current[key];
-        if (!existing) {
-          current[key] = { count: 1, label: getNodeName(realPath) };
-        } else if (typeof existing === 'number') {
-          current[key] = { count: existing + 1, label: getNodeName(realPath) };
-        } else {
-          current[key] = { ...existing, count: (existing.count || 0) + 1 };
-        }
-        localStorage.setItem('intellifile-frecency', JSON.stringify(current));
-        setFrecencyMap(current);
-        updateFrequentList(current);
-      } catch (_) {}
-    };
-    window.addEventListener('intellifile-folder-visited', handleFolderVisited);
-    return () => window.removeEventListener('intellifile-folder-visited', handleFolderVisited);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
   
   const navigateToQuickAccess = (folderName) => {
-    // increment frecency for this folder and persist
-    try {
-      const realPath = String(folderName || '');
-      const key = normalizePath(realPath);
-      const next = { ...(frecencyMap || {}) };
-      const existing = next[key];
-      if (!existing) {
-        next[key] = { count: 1, label: getNodeName(realPath) };
-      } else if (typeof existing === 'number') {
-        // upgrade legacy format
-        next[key] = { count: existing + 1, label: getNodeName(realPath) };
-      } else {
-        next[key] = { ...existing, count: (existing.count || 0) + 1 };
-      }
-      localStorage.setItem('intellifile-frecency', JSON.stringify(next));
-      setFrecencyMap(next);
-      updateFrequentList(next);
-    } catch (e) {
-      // ignore
-    }
     onNavigate(folderName);
-  };
-
-  const updateFrequentList = (map) => {
-    if (!map) {
-      setFrequentFolders([]);
-      return;
-    }
-
-    // Build a set of system/special folder paths to exclude
-    // (they already appear in Quick Access — no need to repeat them)
-    const systemPaths = new Set();
-    const SYSTEM_NAMES = new Set([
-      'desktop', 'documents', 'downloads', 'videos', 'music', 'pictures',
-      'photos', 'onedrive', 'this pc', 'recycle bin', '3d objects',
-      'saved games', 'searches', 'links', 'contacts', 'favorites'
-    ]);
-
-    // Collect paths from systemRoots if available
-    try {
-      const specialFolders = systemRoots?.specialFolders || [];
-      for (const f of specialFolders) {
-        if (f.path) systemPaths.add(normalizePath(f.path));
-      }
-    } catch (_) {}
-
-    const entries = Object.keys(map)
-      .map(k => {
-        const v = map[k];
-        if (typeof v === 'number') return { path: k, count: v, label: getNodeName(k) };
-        return { path: k, count: (v.count || 0), label: v.label || getNodeName(k) };
-      })
-      // Only include folders the user actually visited (count >= 1)
-      .filter(e => e.count >= 1)
-      // Exclude system special folders
-      .filter(e => !systemPaths.has(normalizePath(e.path)))
-      // Exclude by well-known system folder names
-      .filter(e => !SYSTEM_NAMES.has((e.label || '').trim().toLowerCase()));
-
-    entries.sort((a, b) => b.count - a.count);
-
-    // Show top 2 most visited user folders
-    const resolved = entries.slice(0, 2).map(e => ({ path: e.path, name: e.label }));
-    setFrequentFolders(resolved);
   };
 
   const handleSidebarDragOver = (e, folderPath) => {
@@ -635,37 +588,28 @@ function ExplorerSidebar({ drives, onNavigate, currentPath }) {
                 <span className="sidebar-label">{folder.name}</span>
               </div>
             ))}
+
+            {recentFolders.length > 0 && (
+              <div className="recent-folders-subgroup" style={{ marginTop: '6px', paddingTop: '4px', borderTop: '1px solid var(--bo-light)' }}>
+                <div style={{ fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.5px', color: 'var(--t-muted)', padding: '4px 8px 2px 8px', fontWeight: 600 }}>
+                  Recent Folders
+                </div>
+                {recentFolders.map((rf) => (
+                  <div
+                    key={rf.path}
+                    className={`sidebar-item ${isActive(rf.path) ? 'active' : ''}`}
+                    onClick={() => onNavigate(rf.path)}
+                    title={`${rf.path} (${rf.count || 1} visits)`}
+                  >
+                    <span className="sidebar-icon">{getFolderIcon(rf.name)}</span>
+                    <span className="sidebar-label">{rf.name}</span>
+                  </div>
+                ))}
+              </div>
+            )}
           </>
         )}
       </div>
-
-      {/* Frequently Used */}
-      {frequentFolders && frequentFolders.length > 0 && (
-        <div className="sidebar-section">
-          <div
-            className="sidebar-title collapsible"
-            onClick={() => toggleSection('frequent')}
-          >
-            <span className="collapse-icon">{expandedSections.frequent ? '▾' : '▸'}</span>
-            Frequently Used
-          </div>
-          {expandedSections.frequent && (
-            <>
-              {frequentFolders.map((f) => (
-                <div
-                  key={f.path}
-                  className={`sidebar-item ${isActive(f.path) ? 'active' : ''}`}
-                  onClick={() => navigateToQuickAccess(f.path)}
-                  title={f.path}
-                >
-                  <span className="sidebar-icon">{getFolderIcon(f.name)}</span>
-                  <span className="sidebar-label">{f.name}</span>
-                </div>
-              ))}
-            </>
-          )}
-        </div>
-      )}
 
       {/* Native folders */}
       {dynamicFolders.length > 0 && (

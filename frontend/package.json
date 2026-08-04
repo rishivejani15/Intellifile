@@ -45,6 +45,7 @@
       "preload.js",
       "system_roots.js",
       "sync_engine.js",
+      "listDirectoryCache.js",
       "build/**/*",
       "!build/**/*.map"
     ],

@@ -110,6 +110,18 @@ function PropertiesModal({ visible, selectedItem, onClose }) {
     }
   }, [details]);
 
+  useEffect(() => {
+    if (!visible) return;
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        onClose?.();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [visible, onClose]);
+
   if (!visible || !selectedItem?.path) {
     return null;
   }

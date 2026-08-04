@@ -125,6 +125,15 @@ const SyncManager = () => {
   // ── Connection form state ────────────────────────────────────────
   const savedSettings = JSON.parse(localStorage.getItem('intellifile_sync') || '{}');
   const [showConnectPanel, setShowConnectPanel] = useState(false);
+  const connectPanelRef = useRef(null);
+
+  useEffect(() => {
+    if (showConnectPanel) {
+      setTimeout(() => {
+        connectPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }, 50);
+    }
+  }, [showConnectPanel]);
   const [signalingUrl, setSignalingUrl] = useState(savedSettings.signalingUrl || 'wss://intellifile-signaling.onrender.com');
   const [sessionId, setSessionId] = useState(savedSettings.sessionId || '');
   const [isInitiator, setIsInitiator] = useState(savedSettings.isInitiator ?? true);
@@ -133,7 +142,9 @@ const [localAddress, setLocalAddress] = useState('');
   const [localAddressError, setLocalAddressError] = useState('');
   const isConnected = ['synced', 'syncing', 'waiting', 'reconnecting', 'connected_p2p', 'connected_relay'].includes(syncStatus.status);
 
-  const qrValue = localAddress ? `intellifile://lan?addr=${encodeURIComponent(localAddress)}` : '';
+  const qrValue = localAddress
+    ? (localAddress.startsWith('http') ? localAddress : `http://${localAddress}`)
+    : '';
 
   const loadLocalAddress = useCallback(async () => {
     try {
@@ -478,7 +489,7 @@ const [localAddress, setLocalAddress] = useState('');
 
       {/* ── Connect Panel ──────────────────────────────────────────────── */}
       {showConnectPanel && (
-        <div className="sync-connect-panel">
+        <div className="sync-connect-panel" ref={connectPanelRef}>
           <div className="connect-panel-header">
             <h3>Remote Sync Connection</h3>
             <button className="connect-close-btn" onClick={() => setShowConnectPanel(false)}>×</button>

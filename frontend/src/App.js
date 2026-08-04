@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import './App.css';
 import FileExplorer from './components/FileExplorer/FileExplorer';
-import DualPane from './components/DualPane/DualPane';
 import SyncManager from './components/Sync/SyncManager';
 import LogsPanel from './components/LogsPanel';
 import OfflineSetup from './components/OfflineSetup';
@@ -32,9 +31,6 @@ function App() {
   const [updateVersion, setUpdateVersion] = useState('');
   const [theme, setTheme] = useState(getInitialTheme);
   const [showThemeDropdown, setShowThemeDropdown] = useState(false);
-  const [splitView, setSplitView] = useState(() => {
-    try { return localStorage.getItem('intellifile-split-view') === 'true'; } catch { return false; }
-  });
 
   useEffect(() => {
     console.log('App mounted, ipcRenderer available:', !!ipcRenderer);
@@ -229,61 +225,14 @@ function App() {
         <main className="app-main">
           <div style={{ display: activeTab === 'explorer' ? 'block' : 'none', height: '100%' }}>
             <div className="explorer-wrapper">
-              <div className="explorer-toolbar">
-                <button
-                  className="toolbar-btn primary"
-                  onClick={handleOpenFile}
-                  disabled={!selectedFile}
-                >
-                  Open in External Editor
-                </button>
-                <button
-                  className="toolbar-btn"
-                  onClick={handleResetOfflineSetup}
-                >
-                  Reset AI Models
-                </button>
-                <button
-                  className="toolbar-btn update-check"
-                  onClick={() => {
-                    if (ipcRenderer) {
-                      ipcRenderer.send('check-for-updates');
-                    }
-                  }}
-                >
-                  Check for Updates
-                </button>
-                <button
-                  className={`split-pane-btn${splitView ? ' active' : ''}`}
-                  onClick={() => {
-                    const next = !splitView;
-                    setSplitView(next);
-                    try { localStorage.setItem('intellifile-split-view', String(next)); } catch { }
-                  }}
-                  title={splitView ? 'Switch to single pane' : 'Open dual pane (split view)'}
-                >
-                  <svg viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <rect x="1" y="2" width="6" height="12" rx="1" stroke="currentColor" strokeWidth="1.5" fill="none"/>
-                    <rect x="9" y="2" width="6" height="12" rx="1" stroke="currentColor" strokeWidth="1.5" fill="none"/>
-                  </svg>
-                  {splitView ? 'Single Pane' : 'Split View'}
-                </button>
-                <span className="toolbar-hint">
-                  {selectedFile ? 'Saving will trigger AI versioning.' : 'Select a file.'}
-                </span>
-              </div>
-              {splitView ? (
-                <DualPane drives={drives} onFileSelect={handleFileSelect} />
-              ) : (
-                <FileExplorer
-                  onFileSelect={handleFileSelect}
-                  selectedFiles={{}}
-                  drives={drives}
-                  onVersioning={handleVersioning}
-                  versioningFile={versioningFile}
-                  onCloseVersioning={() => setVersioningFile(null)}
-                />
-              )}
+              <FileExplorer
+                onFileSelect={handleFileSelect}
+                selectedFiles={{}}
+                drives={drives}
+                onVersioning={handleVersioning}
+                versioningFile={versioningFile}
+                onCloseVersioning={() => setVersioningFile(null)}
+              />
             </div>
           </div>
           

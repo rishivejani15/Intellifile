@@ -171,6 +171,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
 
   // Search abort ref — incremented on each search to cancel stale requests
   const searchIdRef = useRef(0);
+  const searchDebounceRef = useRef(null);
 
   // Stable refs for callbacks used inside the watch effect.
   // This prevents the effect from re-running (and recreating the chokidar
@@ -204,24 +205,25 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
     if (!itemsToAdd || itemsToAdd.length === 0) return;
     setItems(prev => {
       const existing = new Set(prev.map(item => item.path));
-      const filtered = itemsToAdd.filter(item => !existing.has(item.path) && matchesSearch(item.name));
+      const filtered = itemsToAdd.filter(item => !existing.has(item.path));
       return filtered.length ? [...prev, ...filtered] : prev;
     });
-  }, [matchesSearch]);
+  }, []);
   const removeItemsFromState = useCallback((itemsToRemove) => {
     if (!itemsToRemove || itemsToRemove.length === 0) return;
     const pathSet = new Set(itemsToRemove.map(item => item.path));
+    const normPath = (p) => (p || '').toLowerCase().replace(/[\\/]+/g, '/');
     setItems(prev => prev.filter(item => !pathSet.has(item.path)));
     setSelectedItems(prev => prev.filter(item => !pathSet.has(item.path)));
     setSelectedItem(prev => (prev && pathSet.has(prev.path)) ? null : prev);
+    setSemanticResults(prev => prev ? prev.filter(r => !pathSet.has(r.path) && !itemsToRemove.some(del => normPath(del.path) === normPath(r.path))) : null);
     setLastSelectedIndex(null);
   }, []);
   const updateItemPathInState = useCallback((oldPath, newPath, newName) => {
     const newExt = getExtFromName(newName);
-    const removeFromView = !matchesSearch(newName);
 
     setItems(prev => {
-      let next = prev.map(item => {
+      return prev.map(item => {
         if (item.path !== oldPath) return item;
         return {
           ...item,
@@ -230,14 +232,10 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
           ext: item.type === 'file' ? newExt : item.ext
         };
       });
-      if (removeFromView) {
-        next = next.filter(item => item.path !== newPath);
-      }
-      return next;
     });
 
     setSelectedItems(prev => {
-      let next = prev.map(item => {
+      return prev.map(item => {
         if (item.path !== oldPath) return item;
         return {
           ...item,
@@ -246,15 +244,10 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
           ext: item.type === 'file' ? newExt : item.ext
         };
       });
-      if (removeFromView) {
-        next = next.filter(item => item.path !== newPath);
-      }
-      return next;
     });
 
     setSelectedItem(prev => {
       if (!prev || prev.path !== oldPath) return prev;
-      if (removeFromView) return null;
       return {
         ...prev,
         path: newPath,
@@ -262,11 +255,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
         ext: prev.type === 'file' ? newExt : prev.ext
       };
     });
-
-    if (removeFromView) {
-      setLastSelectedIndex(null);
-    }
-  }, [getExtFromName, matchesSearch]);
+  }, [getExtFromName]);
 
   const applyDirectoryChange = useCallback((change) => {
     if (!change?.directoryPath || !currentPath) return;
@@ -519,9 +508,13 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
             }
 
             if (!selected) {
-              setSelectedItem(prev => (prev && loadedItems.some(i => i.path === prev.path)) ? prev : null);
-              setSelectedItems(prev => prev.filter(pItem => loadedItems.some(i => i.path === pItem.path)));
-              setLastSelectedIndex(null);
+              // Don't wipe selectedItem during a refresh when search results are
+              // showing — the selected item belongs to search, not the directory list.
+              if (!semanticResults) {
+                setSelectedItem(prev => (prev && loadedItems.some(i => i.path === prev.path)) ? prev : null);
+                setSelectedItems(prev => prev.filter(pItem => loadedItems.some(i => i.path === pItem.path)));
+                setLastSelectedIndex(null);
+              }
             }
 
             if (trackHistory && pathChanged) {
@@ -791,8 +784,10 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
 
     setSelectedItems(newSelection);
     setSelectedItem(item);
-    // Auto-open preview whenever a file is selected (any view mode)
-    if (item.type === 'file') {
+    // When searching, allow preview in all view modes.
+    // When not searching, auto-open preview on single click ONLY in list and details view modes (not icons mode).
+    const allowPreview = semanticResults !== null || viewMode === 'list' || viewMode === 'details';
+    if (item.type === 'file' && allowPreview) {
       setShowPreview(true);
     } else {
       setShowPreview(false);
@@ -801,13 +796,20 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
   };
 
   useEffect(() => {
-    // Auto-show preview for any selected file regardless of view mode
+    // When searching, skip this effect — handleSearchResultClick manages setShowPreview directly
+    if (semanticResults !== null) return;
+
+    // When not searching: Only auto-open preview in 'list' and 'details' view modes
     if (selectedItem && selectedItem.type === 'file') {
-      setShowPreview(true);
+      if (viewMode === 'list' || viewMode === 'details') {
+        setShowPreview(true);
+      } else {
+        setShowPreview(false);
+      }
     } else if (!selectedItem || selectedItem.type !== 'file') {
       setShowPreview(false);
     }
-  }, [selectedItem]);
+  }, [selectedItem, viewMode, semanticResults]);
 
   const handleCharacterType = useCallback((char) => {
     if (renamingItem || !displayItems || displayItems.length === 0) return;
@@ -923,6 +925,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
     if (ok) {
       const normPath = (p) => (p || '').toLowerCase().replace(/[\\/]+/g, '/');
       setItems(prev => prev.filter(item => !itemsToDelete.some(del => normPath(del.path) === normPath(item.path))));
+      setSemanticResults(prev => prev ? prev.filter(r => !itemsToDelete.some(del => normPath(del.path) === normPath(r.path))) : null);
       setSelectedItems([]);
       setSelectedItem(null);
       anchorIndexRef.current = null;
@@ -1465,8 +1468,10 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
   const handleSearchKeyDown = (e) => {
     if (e.key === 'Enter' && searchQuery.trim()) {
       e.preventDefault();
+      if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
       handleSearch(searchQuery);
     } else if (e.key === 'Escape') {
+      if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
       setSemanticResults(null);
       setSearchQuery('');
     }
@@ -1520,8 +1525,22 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
 
   const handleSearchChange = (e, type) => {
     if (type === 'query') {
-      setSearchQuery(e.target.value);
-      if (!e.target.value) setSemanticResults(null);
+      const val = e.target.value;
+      setSearchQuery(val);
+      if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+
+      if (!val || !val.trim()) {
+        setSemanticResults(null);
+        setSemanticLoading(false);
+        if (currentPath) {
+          loadDirectory(currentPath, { suppressLoading: true, soft: true });
+        }
+      } else {
+        setSemanticResults((prev) => (prev !== null ? prev : []));
+        searchDebounceRef.current = setTimeout(() => {
+          handleSearch(val);
+        }, 250);
+      }
     } else if (type === 'address') {
       setAddressPath(e.target.value);
     }
@@ -1537,9 +1556,70 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
     handleCloseTab(tabId);
   };
 
+  // Quick Access Sidebar - Width resizing and collapse/expand state
+  const [showSidebar, setShowSidebar] = useState(() => {
+    try { return localStorage.getItem('intellifile-show-sidebar') !== 'false'; } catch { return true; }
+  });
+  const [sidebarWidth, setSidebarWidth] = useState(() => {
+    try {
+      const saved = localStorage.getItem('intellifile-sidebar-width');
+      return saved ? parseInt(saved, 10) : 260;
+    } catch { return 260; }
+  });
+  const [isResizingSidebar, setIsResizingSidebar] = useState(false);
+
+  const handleSidebarMouseDown = (e) => {
+    e.preventDefault();
+    setIsResizingSidebar(true);
+  };
+
+  useEffect(() => {
+    if (!isResizingSidebar) return;
+
+    const handleMouseMove = (e) => {
+      const newWidth = Math.max(180, Math.min(e.clientX, 450));
+      setSidebarWidth(newWidth);
+      try { localStorage.setItem('intellifile-sidebar-width', String(newWidth)); } catch {}
+    };
+
+    const handleMouseUp = () => {
+      setIsResizingSidebar(false);
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isResizingSidebar]);
+
+  const handleToggleSidebar = () => {
+    setShowSidebar(prev => {
+      const next = !prev;
+      try { localStorage.setItem('intellifile-show-sidebar', String(next)); } catch {}
+      return next;
+    });
+  };
+
   return (
-    <div className={`file-explorer ${showVersioning || showPreview ? 'with-versioning' : ''} ${previewClosing ? 'preview-closing' : ''}`}>
-      <ExplorerSidebar drives={drives} onNavigate={loadDirectory} currentPath={currentPath} />
+    <div className={`file-explorer ${showVersioning || showPreview ? 'with-versioning' : ''} ${previewClosing ? 'preview-closing' : ''} ${isResizingSidebar ? 'resizing-sidebar' : ''}`}>
+      <div
+        className="explorer-sidebar-wrapper"
+        style={{
+          width: sidebarWidth,
+          display: showSidebar ? 'flex' : 'none'
+        }}
+      >
+        <ExplorerSidebar drives={drives} onNavigate={loadDirectory} currentPath={currentPath} />
+      </div>
+      {showSidebar && (
+        <div
+          className={`sidebar-resizer ${isResizingSidebar ? 'active' : ''}`}
+          onMouseDown={handleSidebarMouseDown}
+          title="Drag to resize Quick Access panel"
+        />
+      )}
 
       <div className="explorer-main-area">
         <TabsBar
@@ -1572,6 +1652,8 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
           archivePct={archivePct}
           archiveMessage={archiveMessage}
           showHidden={showHidden}
+          showSidebar={showSidebar}
+          onToggleSidebar={handleToggleSidebar}
           onShowHiddenChange={setShowHidden}
           semanticLoading={semanticLoading}
           onAddressSubmit={handleAddressSubmit}

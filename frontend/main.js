@@ -1,9 +1,9 @@
 const { app, BrowserWindow, Menu, ipcMain, shell, dialog, clipboard, nativeImage } = require('electron');
-const gotTheLock = app.requestSingleInstanceLock();
-if (!gotTheLock) {
-  app.quit();
-  process.exit(0);
-}
+
+// Enable multi-window support: second instance launches open a new window
+app.on('second-instance', (event, commandLine, workingDirectory) => {
+  createWindow();
+});
 
 const { autoUpdater } = require('electron-updater');
 const util = require('util');
@@ -3513,6 +3513,11 @@ function registerIpcHandlers() {
         }
       });
     });
+  });
+
+  ipcMain.handle('open-new-window', async () => {
+    createWindow();
+    return true;
   });
 
   // Manual sync server restart — visible in the UI (Logs toolbar)
