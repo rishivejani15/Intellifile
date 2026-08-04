@@ -8,8 +8,13 @@ import ToastHost from './components/ToastHost';
 import AutoSortToastHost from './components/AutoSortToastHost';
 import Settings from './pages/Settings';
 import FileLockManager from './components/FileLockManager';
+import OnboardingTour from './components/OnboardingTour';
 
 const ipcRenderer = window.electron?.ipcRenderer;
+const TOUR_COMPLETED_KEY = 'intellifile-onboarding-completed-v1';
+// Keep this enabled while the onboarding experience is being reviewed. Set it
+// to false before release to show the tour only to first-time users.
+const TOUR_ALWAYS_SHOW = true;
 
 
 
@@ -31,6 +36,7 @@ function App() {
   const [updateDownloaded, setUpdateDownloaded] = useState(false);
   const [updateVersion, setUpdateVersion] = useState('');
   const [theme, setTheme] = useState(getInitialTheme);
+  const [showOnboardingTour, setShowOnboardingTour] = useState(false);
 
   useEffect(() => {
     console.log('App mounted, ipcRenderer available:', !!ipcRenderer);
@@ -131,6 +137,28 @@ function App() {
     localStorage.setItem('intellifile-theme', theme);
   }, [theme]);
 
+  useEffect(() => {
+    if (!setupComplete) return;
+    try {
+      setShowOnboardingTour(TOUR_ALWAYS_SHOW || !localStorage.getItem(TOUR_COMPLETED_KEY));
+    } catch (_) {
+      // If storage is unavailable, show the tour for this session only.
+      setShowOnboardingTour(true);
+    }
+  }, [setupComplete]);
+
+  const startOnboardingTour = () => {
+    setActiveTab('explorer');
+    setShowOnboardingTour(true);
+  };
+
+  const closeOnboardingTour = () => {
+    if (!TOUR_ALWAYS_SHOW) {
+      try { localStorage.setItem(TOUR_COMPLETED_KEY, 'true'); } catch (_) {}
+    }
+    setShowOnboardingTour(false);
+  };
+
   return (
     <div className="App">
       <header className="App-header">
@@ -138,7 +166,7 @@ function App() {
           <img src={process.env.PUBLIC_URL + '/intellifile_logo.png'} alt="IntelliFile Logo" className="app-logo" />
           <h1 className="app-title">IntelliFile</h1>
         </div>
-        <div className="tab-nav">
+        <div className="tab-nav" data-tour="app-navigation">
           <button
             className={`tab-btn ${activeTab === 'explorer' ? 'active' : ''}`}
             onClick={() => setActiveTab('explorer')}
@@ -201,12 +229,19 @@ function App() {
             </div>
 
             <div style={{ display: activeTab === 'settings' ? 'block' : 'none', height: '100%' }}>
-              <Settings theme={theme} onThemeChange={setTheme} />
+              <Settings theme={theme} onThemeChange={setTheme} onStartTour={startOnboardingTour} />
             </div>
           </main>
         </div>)}
       <ToastHost />
       <AutoSortToastHost />
+
+      <OnboardingTour
+        open={showOnboardingTour && setupComplete}
+        onStart={() => setActiveTab('explorer')}
+        onNavigate={setActiveTab}
+        onClose={closeOnboardingTour}
+      />
 
       {!setupComplete && <OfflineSetup key={offlineSetupKey} onComplete={handleOfflineSetupComplete} />}
     </div>

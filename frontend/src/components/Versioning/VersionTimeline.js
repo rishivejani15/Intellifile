@@ -88,8 +88,9 @@ const VersionTimeline = ({ filePath }) => {
     };
     window.addEventListener('refresh-version-timeline', handleManualRefresh);
 
-    const handler = (event, data) => {
+    const handler = (arg1, arg2) => {
       try {
+        const data = arg2 || arg1;
         const normalizedPropPath = normalizePath(filePath);
         const normalizedEventPath = normalizePath(data?.filePath);
 
@@ -105,6 +106,7 @@ const VersionTimeline = ({ filePath }) => {
     if (ipc) {
       if (typeof ipc.on === 'function') ipc.on('version-updated', handler);
       else if (typeof ipc.addListener === 'function') ipc.addListener('version-updated', handler);
+      ipc.invoke('watch-file', filePath).catch(() => {});
     }
 
     return () => {
@@ -113,6 +115,7 @@ const VersionTimeline = ({ filePath }) => {
         try {
           if (typeof ipc.off === 'function') ipc.off('version-updated', handler);
           else if (typeof ipc.removeListener === 'function') ipc.removeListener('version-updated', handler);
+          ipc.invoke('unwatch-file', filePath).catch(() => {});
         } catch (err) {
           console.error('[Timeline] Error removing listener:', err);
         }

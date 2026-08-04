@@ -333,7 +333,7 @@ if (!selectedItem) return null;
 
         {selectedItem.type === 'file' && (
           <>
-            <div className="context-menu-item" onClick={() => { onVersioning?.(); onClose(); }}>
+            <div className="context-menu-item" data-tour="version-history-action" onClick={() => { onVersioning?.(); onClose(); }}>
               🕒 Version History
             </div>
             <div className="context-menu-divider"></div>

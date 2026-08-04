@@ -1,5 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { MdLock, MdLockOpen, MdVpnKey, MdOutlineVisibility, MdHistory, MdFolder, MdSearch, MdViewModule, MdViewList } from 'react-icons/md';
+import {
+  MdLock, MdLockOpen, MdVpnKey, MdOutlineVisibility, MdHistory, MdFolder,
+  MdSearch, MdViewModule, MdViewList, MdFilterList, MdContentCopy, MdCheck, MdAccessTime, MdSecurity
+} from 'react-icons/md';
 import FileLockModal from './FileLockModal';
 import VaultFilePicker from './VaultFilePicker';
 import './FileLockManager.css';
@@ -11,6 +14,11 @@ function FileLockManager() {
   const [searchQuery, setSearchQuery] = useState('');
   const [viewMode, setViewMode] = useState('grid'); // 'grid' | 'list'
   const [activeTab, setActiveTab] = useState('files'); // 'files' | 'history'
+
+  // History tab search and filter state
+  const [historySearch, setHistorySearch] = useState('');
+  const [historyFilter, setHistoryFilter] = useState('all');
+  const [copiedIndex, setCopiedIndex] = useState(null);
 
   // Lock modal state
   const [showLockModal, setShowLockModal] = useState(false);
@@ -42,7 +50,10 @@ function FileLockManager() {
 
   useEffect(() => {
     refresh();
-  }, [refresh]);
+    const handleVaultUpdated = () => refresh();
+    window.addEventListener('vault-updated', handleVaultUpdated);
+    return () => window.removeEventListener('vault-updated', handleVaultUpdated);
+  }, [activeTab, refresh]);
 
   const handleLockNewFile = () => {
     // Open IntelliFile's in-app file picker instead of native OS dialog
@@ -102,6 +113,80 @@ function FileLockManager() {
     refresh();
   };
 
+  const handleCopyPath = (path, idx) => {
+    if (!path) return;
+    try {
+      navigator.clipboard?.writeText(path);
+      setCopiedIndex(idx);
+      setTimeout(() => setCopiedIndex(null), 2000);
+    } catch (e) {
+      console.error('Failed to copy path:', e);
+    }
+  };
+
+  const getActionBadge = (action) => {
+    switch (action) {
+      case 'locked':
+        return {
+          label: 'Locked',
+          icon: <MdLock size={14} />,
+          color: '#ef4444',
+          bgColor: 'rgba(239, 68, 68, 0.12)',
+          borderColor: 'rgba(239, 68, 68, 0.25)',
+        };
+      case 'unlocked':
+        return {
+          label: 'Unlocked',
+          icon: <MdLockOpen size={14} />,
+          color: '#10b981',
+          bgColor: 'rgba(16, 185, 129, 0.12)',
+          borderColor: 'rgba(16, 185, 129, 0.25)',
+        };
+      case 'accessed':
+        return {
+          label: 'Accessed',
+          icon: <MdOutlineVisibility size={14} />,
+          color: '#0284c7',
+          bgColor: 'rgba(2, 132, 199, 0.12)',
+          borderColor: 'rgba(2, 132, 199, 0.25)',
+        };
+      case 'password_changed':
+        return {
+          label: 'Password Changed',
+          icon: <MdVpnKey size={14} />,
+          color: '#f59e0b',
+          bgColor: 'rgba(245, 158, 11, 0.12)',
+          borderColor: 'rgba(245, 158, 11, 0.25)',
+        };
+      default:
+        return {
+          label: typeof action === 'string' ? action.charAt(0).toUpperCase() + action.slice(1) : 'Event',
+          icon: <MdHistory size={14} />,
+          color: 'var(--t-secondary)',
+          bgColor: 'var(--s-elev)',
+          borderColor: 'var(--bo-light)',
+        };
+    }
+  };
+
+  const historyStats = {
+    total: history.length,
+    currentlyLocked: Object.keys(lockedFiles).length,
+    unlocked: history.filter(h => h.action === 'unlocked').length,
+    accessed: history.filter(h => h.action === 'accessed').length,
+  };
+
+  const filteredHistory = history.filter((item) => {
+    if (historyFilter !== 'all' && item.action !== historyFilter) return false;
+    if (!historySearch) return true;
+    const q = historySearch.toLowerCase();
+    const fileName = item.originalPath?.split(/[\\/]/).pop() || '';
+    return (
+      fileName.toLowerCase().includes(q) ||
+      item.originalPath?.toLowerCase().includes(q)
+    );
+  });
+
   const filteredFiles = Object.entries(lockedFiles).filter(([, entry]) => {
     if (!searchQuery) return true;
     const q = searchQuery.toLowerCase();
@@ -157,26 +242,6 @@ function FileLockManager() {
     });
   };
 
-  const getActionLabel = (action) => {
-    switch (action) {
-      case 'locked': return 'Locked';
-      case 'unlocked': return 'Unlocked';
-      case 'password_changed': return 'Password Changed';
-      case 'accessed': return 'Accessed';
-      default: return typeof action === 'string' ? action.charAt(0).toUpperCase() + action.slice(1) : action;
-    }
-  };
-
-  const getActionColor = (action) => {
-    switch (action) {
-      case 'locked': return 'var(--color-danger)';
-      case 'unlocked': return 'var(--color-success)';
-      case 'password_changed': return 'var(--color-secondary)';
-      case 'accessed': return '#00a8ff';
-      default: return 'var(--t-muted)';
-    }
-  };
-
   if (loading) {
     return (
       <div className="flm-container">
@@ -191,17 +256,27 @@ function FileLockManager() {
   return (
     <div className="flm-container">
       {/* Header */}
-      <div className="flm-header">
+      <div className="flm-header" data-tour="vault-tools">
         <div className="flm-header-left">
-          <MdLock className="flm-header-icon" />
+          <div className="flm-header-icon-wrapper">
+            <MdLock className="flm-header-icon" />
+          </div>
           <div>
+            <div className="flm-header-eyebrow"><MdSecurity size={14} /> PRIVATE &amp; LOCAL</div>
             <h2 className="flm-header-title">File Vault</h2>
-            <p className="flm-header-subtitle">
-              {Object.keys(lockedFiles).length} file{Object.keys(lockedFiles).length !== 1 ? 's' : ''} secured
-            </p>
+            <div className="flm-header-subtitle">
+              <span className="flm-secured-badge">
+                🛡️ {Object.keys(lockedFiles).length} file{Object.keys(lockedFiles).length !== 1 ? 's' : ''} secured
+              </span>
+              <span className="flm-header-description">Your protected files are encrypted and managed on this device.</span>
+            </div>
           </div>
         </div>
         <div className="flm-header-actions">
+          <div className="flm-header-stat">
+            <span className="flm-header-stat-value">{history.length}</span>
+            <span className="flm-header-stat-label">security events</span>
+          </div>
           <button className="flm-btn-lock-new" onClick={handleLockNewFile}>
             <MdLock size={16} /> Lock New File
           </button>
@@ -209,19 +284,25 @@ function FileLockManager() {
       </div>
 
       {/* Tabs */}
-      <div className="flm-tabs">
-        <button
-          className={`flm-tab ${activeTab === 'files' ? 'active' : ''}`}
-          onClick={() => setActiveTab('files')}
-        >
-          <MdFolder style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Locked Files
-        </button>
-        <button
-          className={`flm-tab ${activeTab === 'history' ? 'active' : ''}`}
-          onClick={() => setActiveTab('history')}
-        >
-          <MdHistory style={{ marginRight: '6px', verticalAlign: 'middle' }} /> History
-        </button>
+      <div className="flm-tabs-container">
+        <div className="flm-tabs">
+          <button
+            className={`flm-tab ${activeTab === 'files' ? 'active' : ''}`}
+            onClick={() => setActiveTab('files')}
+          >
+            <MdFolder className="flm-tab-icon" />
+            <span>Locked Files</span>
+            <span className="flm-tab-count">{Object.keys(lockedFiles).length}</span>
+          </button>
+          <button
+            className={`flm-tab ${activeTab === 'history' ? 'active' : ''}`}
+            onClick={() => setActiveTab('history')}
+          >
+            <MdHistory className="flm-tab-icon" />
+            <span>History</span>
+            <span className="flm-tab-count">{history.length}</span>
+          </button>
+        </div>
       </div>
 
       {/* Files Tab */}
@@ -397,38 +478,147 @@ function FileLockManager() {
       {/* History Tab */}
       {activeTab === 'history' && (
         <div className="flm-history">
-          {history.length === 0 ? (
-            <div className="flm-empty">
-              <MdHistory className="flm-empty-icon" />
-              <h3 className="flm-empty-title">No history yet</h3>
-              <p className="flm-empty-desc">Lock or unlock files to see activity here.</p>
-            </div>
-          ) : (
-            <div className="flm-timeline">
-              {history.map((item, idx) => (
-                <div key={idx} className="flm-timeline-item">
-                  <div
-                    className="flm-timeline-dot"
-                    style={{ backgroundColor: getActionColor(item.action) }}
-                  />
-                  <div className="flm-timeline-content">
-                    <div className="flm-timeline-action">
-                      {getActionLabel(item.action)}
-                    </div>
-                    <div className="flm-timeline-file" title={item.originalPath}>
-                      {item.originalPath?.split(/[\\/]/).pop() || 'Unknown file'}
-                    </div>
-                    <div className="flm-timeline-path" title={item.originalPath}>
-                      {item.originalPath}
-                    </div>
-                    <div className="flm-timeline-time">
-                      {formatDate(item.timestamp)}
-                    </div>
-                  </div>
+          <div className="flm-history-wrapper">
+            {/* Stats Overview Bar */}
+            <div className="flm-history-stats">
+              <div className="flm-stat-card">
+                <div className="flm-stat-icon flm-stat-total"><MdHistory size={18} /></div>
+                <div className="flm-stat-info">
+                  <span className="flm-stat-value">{historyStats.total}</span>
+                  <span className="flm-stat-label">Total Events</span>
                 </div>
-              ))}
+              </div>
+              <div className="flm-stat-card">
+                <div className="flm-stat-icon flm-stat-locked"><MdLock size={18} /></div>
+                <div className="flm-stat-info">
+                  <span className="flm-stat-value">{historyStats.currentlyLocked}</span>
+                  <span className="flm-stat-label">Currently Secured</span>
+                </div>
+              </div>
+              <div className="flm-stat-card">
+                <div className="flm-stat-icon flm-stat-unlocked"><MdLockOpen size={18} /></div>
+                <div className="flm-stat-info">
+                  <span className="flm-stat-value">{historyStats.unlocked}</span>
+                  <span className="flm-stat-label">Unlocked</span>
+                </div>
+              </div>
+              <div className="flm-stat-card">
+                <div className="flm-stat-icon flm-stat-accessed"><MdOutlineVisibility size={18} /></div>
+                <div className="flm-stat-info">
+                  <span className="flm-stat-value">{historyStats.accessed}</span>
+                  <span className="flm-stat-label">Accessed</span>
+                </div>
+              </div>
             </div>
-          )}
+
+            {/* Toolbar for History */}
+            {history.length > 0 && (
+              <div className="flm-history-toolbar">
+                <div className="flm-search-wrapper">
+                  <MdSearch className="flm-search-icon" />
+                  <input
+                    className="flm-search-input"
+                    type="text"
+                    placeholder="Search history by file name or path…"
+                    value={historySearch}
+                    onChange={(e) => setHistorySearch(e.target.value)}
+                  />
+                  {historySearch && (
+                    <button className="flm-search-clear" onClick={() => setHistorySearch('')}>✕</button>
+                  )}
+                </div>
+
+                <div className="flm-history-filter-group">
+                  <MdFilterList className="flm-filter-icon" />
+                  <select
+                    className="flm-history-select"
+                    value={historyFilter}
+                    onChange={(e) => setHistoryFilter(e.target.value)}
+                  >
+                    <option value="all">All Actions</option>
+                    <option value="locked">Locked</option>
+                    <option value="unlocked">Unlocked</option>
+                    <option value="accessed">Accessed</option>
+                    <option value="password_changed">Password Changed</option>
+                  </select>
+                </div>
+              </div>
+            )}
+
+            {/* Empty State */}
+            {filteredHistory.length === 0 && (
+              <div className="flm-empty">
+                <MdHistory className="flm-empty-icon" />
+                <h3 className="flm-empty-title">
+                  {history.length === 0 ? 'No history yet' : 'No matching activities'}
+                </h3>
+                <p className="flm-empty-desc">
+                  {history.length === 0
+                    ? 'Lock or unlock files to see activity records here.'
+                    : 'Try clearing your search query or filter.'}
+                </p>
+                {(historySearch || historyFilter !== 'all') && (
+                  <button
+                    className="flm-btn-lock-new flm-empty-btn"
+                    onClick={() => { setHistorySearch(''); setHistoryFilter('all'); }}
+                  >
+                    Reset Filters
+                  </button>
+                )}
+              </div>
+            )}
+
+            {/* History Cards List */}
+            {filteredHistory.length > 0 && (
+              <div className="flm-history-list">
+                {filteredHistory.map((item, idx) => {
+                  const badge = getActionBadge(item.action);
+                  const fileName = item.originalPath?.split(/[\\/]/).pop() || 'Unknown file';
+                  return (
+                    <div key={idx} className="flm-history-card">
+                      <div
+                        className="flm-history-badge"
+                        style={{
+                          color: badge.color,
+                          backgroundColor: badge.bgColor,
+                          borderColor: badge.borderColor,
+                        }}
+                      >
+                        {badge.icon}
+                        <span>{badge.label}</span>
+                      </div>
+
+                      <div className="flm-history-details">
+                        <div className="flm-history-filename" title={fileName}>
+                          {fileName}
+                        </div>
+                        <div className="flm-history-filepath" title={item.originalPath}>
+                          {item.originalPath}
+                        </div>
+                      </div>
+
+                      <div className="flm-history-meta">
+                        <div className="flm-history-time" title={item.timestamp ? new Date(item.timestamp).toLocaleString() : ''}>
+                          <MdAccessTime size={13} style={{ marginRight: '4px' }} />
+                          {formatDate(item.timestamp)}
+                        </div>
+
+                        {item.originalPath && (
+                          <button
+                            className="flm-history-copy-btn"
+                            onClick={() => handleCopyPath(item.originalPath, idx)}
+                            title="Copy file path"
+                          >
+                            {copiedIndex === idx ? <MdCheck size={14} color="#10b981" /> : <MdContentCopy size={14} />}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         </div>
       )}
 

@@ -20,8 +20,8 @@
 }
 
 .vfp-modal {
-  background: var(--p-bg);
-  border: 1px solid var(--bo-light);
+  background: var(--s-elev-2, #ffffff);
+  border: 1px solid var(--bo, #d8ddd9);
   border-radius: 14px;
   width: 860px;
   max-width: 100%;
@@ -429,8 +429,9 @@
 }
 .vfp-item:hover { background: rgba(16, 185, 129, 0.06); }
 .vfp-item.vfp-item-selected {
-  background: rgba(16, 185, 129, 0.1);
-  border-color: rgba(16, 185, 129, 0.3);
+  background: rgba(30, 94, 66, 0.12);
+  border-color: rgba(30, 94, 66, 0.45);
+  box-shadow: inset 3px 0 0 var(--color-primary);
 }
 .vfp-item:focus { outline: none; background: rgba(16, 185, 129, 0.06); }
 
@@ -441,6 +442,27 @@
   align-items: center;
   color: var(--color-primary);
   opacity: 0.85;
+}
+
+.vfp-file-selector {
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 18px;
+  color: transparent;
+  background: var(--s-elev-2, #ffffff);
+  border: 1.5px solid var(--bo, #b8c2bb);
+  border-radius: 5px;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.vfp-item:hover .vfp-file-selector { border-color: var(--color-primary); }
+.vfp-file-selector.selected {
+  color: #ffffff;
+  background: var(--color-primary);
+  border-color: var(--color-primary);
 }
 
 .vfp-item.vfp-file .vfp-item-icon { color: var(--t-secondary); opacity: 1; }
@@ -465,6 +487,23 @@
   color: var(--color-primary);
   margin-left: auto;
 }
+
+/* Light mode needs stronger separation between each selectable file and its
+   selection control than the translucent dark-theme defaults provide. */
+:root[data-theme='light'] .vfp-modal {
+  background: #ffffff;
+  border-color: #cfd8d1;
+}
+
+:root[data-theme='light'] .vfp-header,
+:root[data-theme='light'] .vfp-sidebar,
+:root[data-theme='light'] .vfp-selection-bar {
+  background: #f7faf8;
+}
+
+:root[data-theme='light'] .vfp-item:hover { background: #edf6f0; }
+:root[data-theme='light'] .vfp-item.vfp-item-selected { background: #e1f0e6; }
+:root[data-theme='light'] .vfp-file-selector { background: #ffffff; border-color: #9aa99e; }
 
 /* ── Selection bar (footer) ── */
 .vfp-selection-bar {

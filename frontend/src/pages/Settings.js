@@ -1,3 +1,4 @@
+// IntelliFile Settings Page Component
 import React, { useEffect, useMemo, useState } from 'react';
 import './Settings.css';
 import confirmApp from '../utils/confirm';
@@ -28,28 +29,30 @@ const SECTIONS = [
   { id: 'ai-model', label: 'AI Model', icon: '🤖' },
   { id: 'updates', label: 'Updates', icon: '🔄' },
   { id: 'privacy', label: 'Privacy', icon: '🔒' },
+  { id: 'take-tour', label: 'Take a Tour', icon: '✦', isAction: true },
   { id: 'about', label: 'About', icon: 'ℹ️' },
 ];
 
-export default function Settings({ theme, onThemeChange }) {
-  // State
-  const [activeTab, setActiveTab] = useState('appearance');
-  const [searchTerm, setSearchTerm] = useState('');
+export default function Settings({ theme, onThemeChange, onStartTour }) {
+  const [loading, setLoading] = useState(true);
+  const [initialSettings, setInitialSettings] = useState({});
+  const [, setSaving] = useState(false);
+
   const [autoSortEnabled, setAutoSortEnabled] = useState(false);
   const [watchedFolders, setWatchedFolders] = useState([]);
   const [sortRoot, setSortRoot] = useState('Sorted');
   const [recentSorts, setRecentSorts] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [initialSettings, setInitialSettings] = useState({});
-  const [, setSaving] = useState(false);
   const [indexEnabled, setIndexEnabled] = useState(false);
   const [aiModelPath, setAiModelPath] = useState('');
   const [telemetryEnabled, setTelemetryEnabled] = useState(false);
   const [autoUpdateWiFi, setAutoUpdateWiFi] = useState(false);
 
+  const [searchTerm, setSearchTerm] = useState('');
+  const [activeTab, setActiveTab] = useState('appearance');
+
   // Update System States
   const [currentVersion, setCurrentVersion] = useState('1.0.2');
-  const [updateStatus, setUpdateStatus] = useState('idle'); // 'idle'|'checking'|'available'|'latest'|'downloading'|'downloaded'|'error'
+  const [updateStatus, setUpdateStatus] = useState('idle');
   const [latestVersion, setLatestVersion] = useState('');
   const [downloadProgress, setDownloadProgress] = useState(0);
   const [updateError, setUpdateError] = useState('');
@@ -237,6 +240,7 @@ export default function Settings({ theme, onThemeChange }) {
       'ai-model': ['ai', 'model', 'llm', 'path', 'download'],
       updates: ['update', 'version', 'download', 'wifi'],
       privacy: ['privacy', 'telemetry', 'data', 'analytics'],
+      'take-tour': ['tour', 'guide', 'tutorial', 'onboarding', 'take a tour'],
       about: ['about', 'version', 'help', 'reset'],
     };
     const sec = SECTIONS.find(s => s.id === sectionId);
@@ -246,7 +250,6 @@ export default function Settings({ theme, onThemeChange }) {
 
   const filteredSections = SECTIONS.filter(s => matchesSection(s.id));
 
-  // Effects
   useEffect(() => {
     loadSettings();
     loadRecent();
@@ -362,7 +365,9 @@ export default function Settings({ theme, onThemeChange }) {
       if (res?.success) {
         setAnalyticsSummary(res);
       }
-    } catch (_) { }
+    } catch (e) {
+      console.warn('Failed to load analytics', e);
+    }
   };
 
   useEffect(() => {
@@ -398,12 +403,26 @@ export default function Settings({ theme, onThemeChange }) {
             {filteredSections.map((tab) => (
               <li
                 key={tab.id}
-                className={`settings-nav-item ${activeTab === tab.id ? 'active' : ''}`}
+                className={`settings-nav-item ${activeTab === tab.id ? 'active' : ''} ${tab.isAction ? 'nav-action-item' : ''}`}
                 role="tab"
                 aria-selected={activeTab === tab.id}
                 tabIndex={0}
-                onClick={() => setActiveTab(tab.id)}
-                onKeyPress={(e) => e.key === 'Enter' && setActiveTab(tab.id)}
+                onClick={() => {
+                  if (tab.id === 'take-tour') {
+                    onStartTour?.();
+                  } else {
+                    setActiveTab(tab.id);
+                  }
+                }}
+                onKeyPress={(e) => {
+                  if (e.key === 'Enter') {
+                    if (tab.id === 'take-tour') {
+                      onStartTour?.();
+                    } else {
+                      setActiveTab(tab.id);
+                    }
+                  }
+                }}
               >
                 <span className="nav-icon" aria-hidden="true">{tab.icon}</span>
                 <span className="nav-label">{tab.label}</span>
@@ -464,21 +483,21 @@ export default function Settings({ theme, onThemeChange }) {
           {/* ═══ FILE MANAGEMENT ═══ */}
           {activeTab === 'file-management' && matchesSection('file-management') && (
             <>
-              {/* Auto-Sort */}
+              {/* Auto Sort Toggle */}
               <section className="settings-panel">
                 <div className="settings-panel-header">
                   <div>
                     <div className="settings-panel-title">
-                      <span className="panel-icon">🗂️</span> Auto Sorting & Tagging
+                      <span className="panel-icon">🗂️</span> Automatic File Sorting
                     </div>
-                    <div className="settings-panel-subtitle">Automatically classify, tag, and move new files</div>
+                    <div className="settings-panel-subtitle">Automatically categorize new files added to watched folders</div>
                   </div>
                 </div>
                 <div className="settings-panel-content">
                   <div className="settings-toggle-row" onClick={() => persistSetting('auto_sort_enabled', !autoSortEnabled)}>
                     <div className="settings-toggle-info">
-                      <div className="settings-toggle-label">Auto-Sort</div>
-                      <div className="settings-toggle-desc">Watch folders and move new files into categorized subfolders</div>
+                      <div className="settings-toggle-label">Enable Auto-Sort</div>
+                      <div className="settings-toggle-desc">Automatically organize files into smart folders based on type and content</div>
                     </div>
                     <label className="switch" onClick={(e) => e.stopPropagation()}>
                       <input type="checkbox" checked={autoSortEnabled} onChange={() => persistSetting('auto_sort_enabled', !autoSortEnabled)} />
@@ -488,7 +507,6 @@ export default function Settings({ theme, onThemeChange }) {
                 </div>
               </section>
 
-              {/* Watched Folders + Sort Root Grid */}
               <section className="settings-grid">
                 {/* Watched Folders */}
                 <div className="settings-panel">
@@ -561,26 +579,30 @@ export default function Settings({ theme, onThemeChange }) {
                   ) : recentSorts.length === 0 ? (
                     <div className="settings-empty">No auto-sort activity yet.</div>
                   ) : (
-                    <div className="settings-recent-list">
+                    <div className="recent-sorts-list">
                       {recentSorts.map((row) => (
-                        <div key={row.id} className="settings-recent-row">
-                          <div className="settings-recent-main">
-                            <div className="settings-recent-title">
-                              <strong>{row.filename}</strong>
-                              <span>{row.category}</span>
+                        <div key={row.id} className="recent-sort-item">
+                          <div className="recent-sort-details">
+                            <div className="recent-sort-file" title={row.source_path}>
+                              {row.source_path ? row.source_path.split(/[/\\]/).pop() : 'File'}
                             </div>
-                            <div className="settings-recent-meta">{formatRelativeTime(row.timestamp)}</div>
-                            {(row.tags || []).length > 0 && (
-                              <div className="settings-recent-tags">
-                                {row.tags.map((tag) => (
-                                  <span key={`${row.id}-${tag}`} className="settings-tag">{tag}</span>
-                                ))}
-                              </div>
-                            )}
+                            <div className="recent-sort-meta">
+                              <span className="recent-sort-category">{row.category || 'General'}</span>
+                              <span className="recent-sort-time">{formatRelativeTime(row.timestamp)}</span>
+                            </div>
+                            <div className="recent-sort-paths" title={`${row.source_path} → ${row.destination_path}`}>
+                              {row.source_path} → {row.destination_path}
+                            </div>
                           </div>
-                          <button className="settings-button" disabled={!row.undoable} onClick={() => undoRecentSort(row)}>
-                            Undo
-                          </button>
+                          <div className="recent-sort-actions">
+                            <button
+                              className="settings-button secondary small"
+                              onClick={() => undoRecentSort(row)}
+                              title="Move file back to original location"
+                            >
+                              Undo
+                            </button>
+                          </div>
                         </div>
                       ))}
                     </div>
@@ -598,49 +620,19 @@ export default function Settings({ theme, onThemeChange }) {
                   <div className="settings-panel-title">
                     <span className="panel-icon">🔍</span> Search & Indexing
                   </div>
-                  <div className="settings-panel-subtitle">Control how IntelliFile scans and indexes your files</div>
+                  <div className="settings-panel-subtitle">Control background file indexing for fast semantic search</div>
                 </div>
               </div>
               <div className="settings-panel-content">
                 <div className="settings-toggle-row" onClick={() => persistSetting('index_enabled', !indexEnabled)}>
                   <div className="settings-toggle-info">
-                    <div className="settings-toggle-label">Background Indexing</div>
-                    <div className="settings-toggle-desc">Enable automatic file scanning and semantic indexing</div>
+                    <div className="settings-toggle-label">Automatic Background Indexing</div>
+                    <div className="settings-toggle-desc">Automatically index new & modified files in watched folders to enable semantic search</div>
                   </div>
                   <label className="switch" onClick={(e) => e.stopPropagation()}>
                     <input type="checkbox" checked={indexEnabled} onChange={() => persistSetting('index_enabled', !indexEnabled)} />
                     <span className="slider"></span>
                   </label>
-                </div>
-
-                <div style={{ marginTop: 'var(--sp-4)', display: 'flex', gap: 'var(--sp-2)' }}>
-                  <button
-                    className="settings-button destructive"
-                    onClick={async () => {
-                      const ok = await confirmApp('Reset index and re-scan device? Existing search index will be cleared and rebuilt immediately.', []);
-                      if (ok) {
-                        setSaving(true);
-                        try {
-                          if (typeof ipc?.resetIndex === 'function') {
-                            await ipc.resetIndex();
-                          } else {
-                            await ipc?.invoke?.('reset-index');
-                          }
-                          // Also call indexDevice explicitly if available
-                          if (typeof ipc?.indexDevice === 'function') {
-                            ipc.indexDevice().catch(() => { });
-                          }
-                          toast('Index reset. Re-indexing files in background...', { type: 'success' });
-                        } catch (e) {
-                          toast('Failed to reset index', { type: 'error' });
-                        }
-                        await loadSettings();
-                        setSaving(false);
-                      }
-                    }}
-                  >
-                    Reset & Re-index Device
-                  </button>
                 </div>
               </div>
             </section>
@@ -652,48 +644,38 @@ export default function Settings({ theme, onThemeChange }) {
               <div className="settings-panel-header">
                 <div>
                   <div className="settings-panel-title">
-                    <span className="panel-icon">🤖</span> AI Model
+                    <span className="panel-icon">🤖</span> AI Model Settings
                   </div>
-                  <div className="settings-panel-subtitle">Configure the local language model for chat and search</div>
+                  <div className="settings-panel-subtitle">Configure local LLM & embedding model parameters</div>
                 </div>
               </div>
               <div className="settings-panel-content">
                 <label className="settings-input-label">
-                  <span>Model path</span>
-                  <div className="settings-input-row">
+                  <span>Local AI Model Path</span>
+                  <div className="settings-input-with-button">
                     <input
                       value={aiModelPath}
                       onChange={(e) => setAiModelPath(e.target.value)}
                       onBlur={() => persistSetting('ai_model_path', aiModelPath)}
-                      placeholder="C:\Models\my-model"
+                      placeholder="Default built-in model"
                     />
                     <button className="settings-button secondary" onClick={handleBrowseModel}>Browse</button>
                   </div>
                 </label>
 
-                <div style={{ marginTop: '16px' }}>
+                {/* Model Download & Manage Button */}
+                <div style={{ marginTop: '1.25rem', paddingTop: '1.25rem', borderTop: '1px solid var(--bo-light)', display: 'flex', gap: '0.75rem', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <div>
+                    <div style={{ fontSize: 'var(--text-sm)', fontWeight: '600', color: 'var(--t-primary)' }}>Download / Change AI Model</div>
+                    <div style={{ fontSize: 'var(--text-xs)', color: 'var(--t-muted)', marginTop: '2px' }}>Download GGUF model files (Llama 3, Mistral, Qwen) for enhanced local search and chat</div>
+                  </div>
                   <button
-                    className="settings-button destructive"
-                    onClick={async () => {
-                      const ok = await confirmApp('Delete the local AI model? You will need to re-download it.', []);
-                      if (ok) {
-                        setSaving(true);
-                        try {
-                          if (typeof ipc?.deleteAiModel === 'function') {
-                            await ipc.deleteAiModel();
-                          } else {
-                            await ipc?.invoke?.('delete-ai-model');
-                          }
-                          toast('Model deleted', { type: 'success' });
-                        } catch (e) {
-                          toast('Failed to delete model', { type: 'error' });
-                        }
-                        await loadSettings();
-                        setSaving(false);
-                      }
+                    className="settings-button primary"
+                    onClick={() => {
+                      toast('Model manager coming in next update', { type: 'info' });
                     }}
                   >
-                    Delete Model
+                    Manage Models
                   </button>
                 </div>
               </div>
@@ -854,7 +836,7 @@ export default function Settings({ theme, onThemeChange }) {
                           if (typeof ipc?.clearAnalytics === 'function') {
                             await ipc.clearAnalytics();
                           } else {
-                            await window.electron?.ipcRenderer?.invoke?.('analytics:clear');
+                            await window.electron?.ipcRenderer?.invoke?.('analytics:summary');
                           }
                           toast('Local analytics log cleared', { type: 'info' });
                           loadAnalytics();
@@ -899,6 +881,15 @@ export default function Settings({ theme, onThemeChange }) {
           {/* ═══ ABOUT ═══ */}
           {activeTab === 'about' && matchesSection('about') && (
             <>
+              <button className="settings-tour-banner" type="button" onClick={onStartTour} style={{ marginBottom: '16px' }}>
+                <span className="settings-tour-icon">✦</span>
+                <span>
+                  <strong>Take a tour</strong>
+                  <small>See how IntelliFile search, sync, vault, and version history work.</small>
+                </span>
+                <span className="settings-tour-arrow">›</span>
+              </button>
+
               <section className="settings-panel">
                 <div className="settings-panel-header">
                   <div>

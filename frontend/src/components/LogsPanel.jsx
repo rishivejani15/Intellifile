@@ -2,6 +2,8 @@ import React, { useEffect, useState, useRef } from 'react';
 import { showToast } from '../utils/toast';
 import './LogsPanel.css';
 
+// IntelliFile Logs Panel with Single-Line Copying Support
+
 // Categories that map to CSS colour classes
 const CATEGORY_COLORS = {
   'pystdout':      'cat-py-stdout',
@@ -64,6 +66,8 @@ const LogsPanel = () => {
   const [catFilter, setCatFilter]     = useState('all');
   const [autoScroll, setAutoScroll]   = useState(true);
   const [restarting, setRestarting]   = useState(false);
+  const [selectedIndex, setSelectedIndex] = useState(null);
+  const [copiedIndex, setCopiedIndex]     = useState(null);
   const logsContainerRef              = useRef(null);
 
   useEffect(() => {
@@ -87,53 +91,6 @@ const LogsPanel = () => {
     }
   }, [logs, autoScroll]);
 
-  const handleClear = async () => {
-    if (window.intellifile) await window.intellifile.clearLogs();
-    setLogs([]);
-  };
-
-  const handleRestartSync = async () => {
-    if (!window.intellifile?.restartSyncServer) return;
-    setRestarting(true);
-    try {
-      const result = await window.intellifile.restartSyncServer();
-      if (result && result.success) {
-        showToast('Sync server restart initiated', { type: 'success', title: 'Sync Server', duration: 3000 });
-      } else {
-        showToast(`Restart failed: ${result?.error || 'Unknown error'}`, { type: 'error', title: 'Sync Server', duration: 4000 });
-      }
-    } catch (err) {
-      showToast(`Restart error: ${err.message}`, { type: 'error', title: 'Sync Server', duration: 4000 });
-    } finally {
-      setRestarting(false);
-    }
-  };
-
-  const handleExport = () => {
-    const text = filteredLogs
-      .map(log => `[${log.timestamp}] [${(log.level || 'info').toUpperCase()}] [${log.category}] ${log.message}`)
-      .join('\n');
-    const blob = new Blob([text], { type: 'text/plain' });
-    const url  = URL.createObjectURL(blob);
-    const a    = document.createElement('a');
-    a.href     = url;
-    a.download = `intellifile-logs-${new Date().toISOString().replace(/[:.]/g, '-')}.txt`;
-    a.click();
-    URL.revokeObjectURL(url);
-    showToast('Logs exported', { type: 'success', title: 'Export', duration: 2500 });
-  };
-
-  const handleCopyAll = () => {
-    const textToCopy = filteredLogs
-      .map(log => `[${log.timestamp}] [${(log.level || 'info').toUpperCase()}] [${log.category}] ${log.message}`)
-      .join('\n');
-    navigator.clipboard.writeText(textToCopy).then(() => {
-      showToast('Logs copied to clipboard', { type: 'success', title: 'Copied', duration: 2500 });
-    }).catch(err => {
-      console.error('Failed to copy logs:', err);
-    });
-  };
-
   // Count logs per level for badge display
   const levelCounts = logs.reduce((acc, log) => {
     const lv = log.level || 'info';
@@ -155,6 +112,89 @@ const LogsPanel = () => {
     }
     return true;
   });
+
+  const formatLogText = (log) => {
+    return `[${log.timestamp}] [${(log.level || 'info').toUpperCase()}] [${log.category}] ${log.message}`;
+  };
+
+  const copySingleLog = (log, index) => {
+    const text = formatLogText(log);
+    navigator.clipboard.writeText(text).then(() => {
+      setCopiedIndex(index);
+      setTimeout(() => setCopiedIndex(null), 2000);
+      showToast('Log entry copied to clipboard', { type: 'success', title: 'Copied', duration: 2000 });
+    }).catch(err => {
+      console.error('Failed to copy log entry:', err);
+    });
+  };
+
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      const isCopy = (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c';
+      if (!isCopy) return;
+
+      // If user has highlighted text manually with mouse cursor, let browser copy standard selection
+      const selection = window.getSelection()?.toString();
+      if (selection && selection.length > 0) return;
+
+      // Otherwise if a specific log row is selected, copy that log line
+      if (selectedIndex !== null && filteredLogs[selectedIndex]) {
+        e.preventDefault();
+        copySingleLog(filteredLogs[selectedIndex], selectedIndex);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [selectedIndex, filteredLogs]);
+
+  const handleClear = async () => {
+    if (window.intellifile) await window.intellifile.clearLogs();
+    setLogs([]);
+    setSelectedIndex(null);
+  };
+
+  const handleRestartSync = async () => {
+    if (!window.intellifile?.restartSyncServer) return;
+    setRestarting(true);
+    try {
+      const result = await window.intellifile.restartSyncServer();
+      if (result && result.success) {
+        showToast('Sync server restart initiated', { type: 'success', title: 'Sync Server', duration: 3000 });
+      } else {
+        showToast(`Restart failed: ${result?.error || 'Unknown error'}`, { type: 'error', title: 'Sync Server', duration: 4000 });
+      }
+    } catch (err) {
+      showToast(`Restart error: ${err.message}`, { type: 'error', title: 'Sync Server', duration: 4000 });
+    } finally {
+      setRestarting(false);
+    }
+  };
+
+  const handleExport = () => {
+    const text = filteredLogs
+      .map(log => formatLogText(log))
+      .join('\n');
+    const blob = new Blob([text], { type: 'text/plain' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href     = url;
+    a.download = `intellifile-logs-${new Date().toISOString().replace(/[:.]/g, '-')}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast('Logs exported', { type: 'success', title: 'Export', duration: 2500 });
+  };
+
+  const handleCopyAll = () => {
+    const textToCopy = filteredLogs
+      .map(log => formatLogText(log))
+      .join('\n');
+    navigator.clipboard.writeText(textToCopy).then(() => {
+      showToast('Logs copied to clipboard', { type: 'success', title: 'Copied', duration: 2500 });
+    }).catch(err => {
+      console.error('Failed to copy logs:', err);
+    });
+  };
 
   const getLevelClass = (log) => {
     const lv = log.level || (log.isError ? 'error' : 'info');
@@ -226,7 +266,7 @@ const LogsPanel = () => {
               {restarting ? '⟳ Restarting…' : '🔄 Restart Sync'}
             </button>
             <button className="logs-btn" onClick={handleExport} title="Export visible logs as .txt">⬇ Export</button>
-            <button className="logs-btn" onClick={handleCopyAll} title="Copy visible logs to clipboard">📋 Copy</button>
+            <button className="logs-btn" onClick={handleCopyAll} title="Copy visible logs to clipboard">📋 Copy All</button>
             <button className="logs-btn logs-btn--danger" onClick={handleClear} title="Clear all logs">🗑 Clear</button>
           </div>
         </div>
@@ -248,7 +288,13 @@ const LogsPanel = () => {
           </div>
         ) : (
           filteredLogs.map((log, i) => (
-            <div key={i} className={`log-entry ${getLevelClass(log)}`}>
+            <div
+              key={i}
+              className={`log-entry ${getLevelClass(log)}${selectedIndex === i ? ' selected' : ''}`}
+              onClick={() => setSelectedIndex(i)}
+              onDoubleClick={() => copySingleLog(log, i)}
+              title="Click to select · Double-click to copy · Ctrl+C to copy entry"
+            >
               <span className="log-timestamp">{log.timestamp}</span>
               <span className={`log-level-badge level-badge--${log.level || 'info'}`}>
                 {(log.level || 'info').toUpperCase()}
@@ -257,6 +303,17 @@ const LogsPanel = () => {
                 [{log.category}]
               </span>
               <span className="log-message">{log.message}</span>
+
+              <button
+                className="log-copy-btn"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  copySingleLog(log, i);
+                }}
+                title="Copy log line (Ctrl+C)"
+              >
+                {copiedIndex === i ? '✓' : '📋'}
+              </button>
             </div>
           ))
         )}

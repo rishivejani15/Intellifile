@@ -430,7 +430,8 @@ const [localAddress, setLocalAddress] = useState('');
       </div>
 
       {/* ── Header ─────────────────────────────────────────────────────── */}
-      <div className="sync-header">
+      <div data-tour="sync-overview">
+      <div className="sync-header" data-tour="sync-tools">
         <div className="sync-header-left">
           <h2><SyncIcon /> Cross-Device Sync</h2>
           <p>Securely synchronize files between PC and mobile via WebRTC P2P.</p>
@@ -465,7 +466,7 @@ const [localAddress, setLocalAddress] = useState('');
         )}
       </div>
  {/* ── LAN QR Quick Connect ─────────────────────────────────────── */}
-      <div className="sync-qr-card">
+      <div className="sync-qr-card" data-tour="sync-qr-code">
         <div className="sync-qr-left">
           <div className="sync-qr-title">LAN Quick Connect</div>
           <div className="sync-qr-subtitle">Scan from mobile to connect instantly.</div>
@@ -488,6 +489,7 @@ const [localAddress, setLocalAddress] = useState('');
       </div>
 
       {/* ── Connect Panel ──────────────────────────────────────────────── */}
+      </div>
       {showConnectPanel && (
         <div className="sync-connect-panel" ref={connectPanelRef}>
           <div className="connect-panel-header">

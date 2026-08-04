@@ -303,6 +303,16 @@ function VaultFilePicker({ onSelect, onCancel }) {
                             if (e.key === ' ' && item.type === 'file') { e.preventDefault(); setSelectedFile(item); }
                           }}
                         >
+                          {item.type === 'file' && (
+                            <span
+                              className={`vfp-file-selector ${isSelected ? 'selected' : ''}`}
+                              role="checkbox"
+                              aria-checked={isSelected}
+                              aria-label={`Select ${item.name}`}
+                            >
+                              {isSelected && <MdCheck size={14} />}
+                            </span>
+                          )}
                           <span className="vfp-item-icon">
                             {item.type === 'folder'
                               ? (isSelected ? <MdFolderOpen /> : <MdFolder />)
@@ -310,7 +320,6 @@ function VaultFilePicker({ onSelect, onCancel }) {
                           </span>
                           <span className="vfp-item-name" title={item.name}>{item.name}</span>
                           {item.type === 'folder' && <MdChevronRight size={14} className="vfp-item-arrow" />}
-                          {isSelected && item.type === 'file' && <MdCheck size={14} className="vfp-item-check" />}
                         </div>
                       );
                     })

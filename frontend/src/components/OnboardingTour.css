@@ -1,0 +1,22 @@
+.onboarding-tour { position: fixed; inset: 0; z-index: 10000; }
+.onboarding-backdrop { position: fixed; inset: 0; background: rgba(8, 18, 12, 0.68); backdrop-filter: blur(2px); }
+.onboarding-spotlight { position: fixed; z-index: 1; border: 2px solid #65c78d; border-radius: 12px; box-shadow: 0 0 0 9999px rgba(8, 18, 12, 0.68), 0 0 0 5px rgba(101, 199, 141, 0.18); pointer-events: none; transition: all 180ms ease; }
+.onboarding-welcome, .onboarding-card { position: fixed; z-index: 2; box-sizing: border-box; color: #edf8f0; background: linear-gradient(145deg, #173b29, #102a1d); border: 1px solid rgba(157, 225, 184, 0.34); box-shadow: 0 24px 70px rgba(0, 0, 0, 0.4); border-radius: 18px; }
+.onboarding-welcome { width: min(520px, calc(100vw - 40px)); top: 50%; left: 50%; transform: translate(-50%, -50%); padding: 36px; text-align: center; }
+.onboarding-card { width: min(370px, calc(100vw - 40px)); padding: 24px; }
+.onboarding-badge, .onboarding-step-count { color: #a7e8bd; font-size: 11px; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase; }
+.onboarding-welcome h2, .onboarding-card h2 { margin: 12px 0 10px; color: #fff; font-size: 24px; line-height: 1.2; }
+.onboarding-welcome p, .onboarding-card p { margin: 0; color: #d3e4d8; font-size: 14px; line-height: 1.55; }
+.onboarding-actions, .onboarding-next-actions { display: flex; align-items: center; gap: 10px; }
+.onboarding-actions { justify-content: space-between; margin-top: 26px; }
+.onboarding-welcome .onboarding-actions { justify-content: center; }
+.onboarding-button { min-height: 38px; padding: 0 14px; border: 1px solid transparent; border-radius: 9px; font: inherit; font-weight: 650; cursor: pointer; }
+.onboarding-button.primary { color: #062011; background: #8ce0ab; }
+.onboarding-button.primary:hover, .onboarding-button.primary:focus-visible { background: #b1f0c8; }
+.onboarding-button.ghost { color: #d3e4d8; background: transparent; border-color: rgba(211, 228, 216, 0.3); }
+.onboarding-button.ghost:hover, .onboarding-button.ghost:focus-visible { background: rgba(255, 255, 255, 0.09); }
+.onboarding-button:focus-visible { outline: 3px solid #fff; outline-offset: 2px; }
+.onboarding-progress { display: flex; gap: 5px; margin-top: 20px; }
+.onboarding-progress span { height: 4px; flex: 1; background: rgba(255, 255, 255, 0.2); border-radius: 999px; }
+.onboarding-progress span.complete { background: #8ce0ab; }
+@media (max-width: 640px) { .onboarding-card { left: 20px !important; right: 20px; top: auto !important; bottom: 20px; width: auto; } .onboarding-welcome { padding: 28px 24px; } }

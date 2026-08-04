@@ -340,9 +340,8 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
       if (!updatedItem?.path) return;
 
       if (change.action === 'change' && showVersioning && selectedItem?.type === 'file') {
-        const normalizedSelected = selectedItem.path.toLowerCase().replace(/[\\/]+$/, '');
-        const normalizedUpdated = updatedItem.path.toLowerCase().replace(/[\\/]+$/, '');
-        if (normalizedSelected === normalizedUpdated) {
+        const normalize = (p) => (p || '').toLowerCase().replace(/\//g, '\\').replace(/[\\/]+$/, '');
+        if (normalize(selectedItem.path) === normalize(updatedItem.path)) {
           window.dispatchEvent(new CustomEvent('refresh-version-timeline'));
         }
       }
@@ -789,9 +788,9 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
       loadDirectory(currentPath, { suppressLoading: true });
     }
     if (result?.action === 'locked') {
-      showToast(`File locked: ${result.filePath?.split(/[\\/]/).pop() || 'file'}`);
+      showToast(`File locked: ${result.filePath?.split(/[\\/]/).pop() || 'file'}`, { type: 'success', title: 'File Locked' });
     } else if (result?.action === 'unlocked') {
-      showToast(`File unlocked: ${result.restoredPath?.split(/[\\/]/).pop() || 'file'}`);
+      showToast(`File unlocked: ${result.restoredPath?.split(/[\\/]/).pop() || 'file'}`, { type: 'success', title: 'File Unlocked' });
     }
   };
 
@@ -1187,6 +1186,28 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
       setShowVersioning(true);
     }
   };
+
+  // The guided tour opens a real, versionable file so users can see the
+  // Version History timeline rather than only reading about it.
+  useEffect(() => {
+    const openTourVersionHistory = () => {
+      const extensionPriority = ['.docx', '.xlsx', '.xls', '.txt', '.md', '.csv', '.rtf', '.pdf'];
+      const file = displayItems
+        .filter((item) => item.type === 'file' && canVersionItem(item))
+        .sort((a, b) => {
+          const aRank = extensionPriority.indexOf((a.ext || '').toLowerCase());
+          const bRank = extensionPriority.indexOf((b.ext || '').toLowerCase());
+          return (aRank === -1 ? extensionPriority.length : aRank) - (bRank === -1 ? extensionPriority.length : bRank);
+        })[0];
+      if (!file) return;
+      setSelectedItem(file);
+      setSelectedItems([file]);
+      setShowPreview(false);
+      setShowVersioning(true);
+    };
+    window.addEventListener('intellifile-tour-open-version-history', openTourVersionHistory);
+    return () => window.removeEventListener('intellifile-tour-open-version-history', openTourVersionHistory);
+  }, [canVersionItem, displayItems]);
 
   // Open with handling – use custom OpenWithModal
   const [openWithItem, setOpenWithItem] = React.useState(null);
@@ -1686,6 +1707,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
     <div className={`file-explorer ${showVersioning || showPreview ? 'with-versioning' : ''} ${previewClosing ? 'preview-closing' : ''} ${isResizingSidebar ? 'resizing-sidebar' : ''}`}>
       <div
         className="explorer-sidebar-wrapper"
+        data-tour="quick-access"
         style={{
           width: sidebarWidth,
           display: showSidebar ? 'flex' : 'none'
@@ -1702,13 +1724,15 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
       )}
 
       <div className="explorer-main-area">
-        <TabsBar
-          tabs={tabs}
-          activeTabId={activeTabId}
-          onSelectTab={handleTabSelect}
-          onCloseTab={handleTabClose}
-          onNewTab={handleNewTab}
-        />
+        <div data-tour="folder-tabs">
+          <TabsBar
+            tabs={tabs}
+            activeTabId={activeTabId}
+            onSelectTab={handleTabSelect}
+            onCloseTab={handleTabClose}
+            onNewTab={handleNewTab}
+          />
+        </div>
 
         <ExplorerNavbar
           breadcrumb={breadcrumb}
@@ -1759,6 +1783,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
         <div className="explorer-content-area">
           <div
             className="explorer-content"
+            data-tour="file-browser"
             onContextMenu={(e) => {
               if (semanticResults !== null) return;
               // Let file items handle their own context menu; use empty-space menu everywhere else.
@@ -1878,7 +1903,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
       </div>
 
       {showVersioning && selectedItem && selectedItem.type === 'file' && (
-        <div className="versioning-panel">
+        <div className="versioning-panel" data-tour="version-timeline">
           <div className="versioning-header">
             <h3>🕒 Version History</h3>
             <div className="header-actions">

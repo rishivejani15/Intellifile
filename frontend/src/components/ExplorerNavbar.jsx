@@ -116,7 +116,7 @@ function ExplorerNavbar({
 
       {/* Toolbar */}
       <div className="explorer-toolbar">
-        <div className="search-box">
+        <div className="search-box" data-tour="smart-search">
           <MdSearch className="search-input-icon" />
           <input
             type="text"

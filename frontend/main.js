@@ -3503,6 +3503,7 @@ ipcMain.handle('open-file', async (event, filePath) => {
     if (result) {
       return { success: false, error: result };
     }
+    startWatchingFile(filePath);
     return { success: true };
   } catch (err) {
     return { success: false, error: err.message };
@@ -3510,7 +3511,11 @@ ipcMain.handle('open-file', async (event, filePath) => {
 });
 
 ipcMain.on('open-file', (event, filePath) => {
-  shell.openPath(filePath).catch(err => {
+  shell.openPath(filePath).then((result) => {
+    if (!result) {
+      startWatchingFile(filePath);
+    }
+  }).catch(err => {
     console.error('Error opening file:', err);
   });
 });
@@ -4650,6 +4655,16 @@ function registerIpcHandlers() {
 
   ipcMain.handle('unwatch-directory', async (_event, directoryPath) => {
     return stopWatchingDirectory(directoryPath);
+  });
+
+  ipcMain.handle('watch-file', async (_event, filePath) => {
+    startWatchingFile(filePath);
+    return { success: true };
+  });
+
+  ipcMain.handle('unwatch-file', async (_event, filePath) => {
+    stopWatchingFile(filePath);
+    return { success: true };
   });
 
   // ── Open Terminal Here ──

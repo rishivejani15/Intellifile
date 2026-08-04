@@ -1,9 +1,10 @@
 export const TOAST_EVENT = 'intellifile-toast';
 
 export function showToast(message, options = {}) {
+  const type = options.type || 'info';
   const detail = {
-    type: options.type || 'error',
-    title: options.title || (options.type === 'success' ? 'Success' : options.type === 'warning' ? 'Warning' : 'Error'),
+    type,
+    title: options.title || (type === 'success' ? 'Success' : type === 'warning' ? 'Warning' : type === 'error' ? 'Error' : 'Info'),
     message: message || '',
     reason: options.reason || '',
     solution: options.solution || '',

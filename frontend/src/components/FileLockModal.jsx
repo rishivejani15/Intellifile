@@ -90,6 +90,7 @@ function FileLockModal({ visible, mode, file, onClose, onSuccess }) {
 
       if (result.success) {
         setSuccess(true);
+        try { window.dispatchEvent(new CustomEvent('vault-updated')); } catch (_) {}
         setTimeout(() => {
           onSuccess?.({ action: 'locked', fileId: result.fileId, filePath: file.path });
           onClose();
@@ -121,6 +122,7 @@ function FileLockModal({ visible, mode, file, onClose, onSuccess }) {
 
       if (result.success) {
         setSuccess(true);
+        try { window.dispatchEvent(new CustomEvent('vault-updated')); } catch (_) {}
         setTimeout(() => {
           onSuccess?.({ action: 'unlocked', restoredPath: result.restoredPath, filePath: file.path });
           onClose();
@@ -152,6 +154,7 @@ function FileLockModal({ visible, mode, file, onClose, onSuccess }) {
 
       if (result.success) {
         setSuccess(true);
+        try { window.dispatchEvent(new CustomEvent('vault-updated')); } catch (_) {}
         setTimeout(() => {
           onSuccess?.({ action: 'accessed', fileId: file.fileId });
           onClose();
@@ -196,6 +199,7 @@ function FileLockModal({ visible, mode, file, onClose, onSuccess }) {
 
       if (result.success) {
         setSuccess(true);
+        try { window.dispatchEvent(new CustomEvent('vault-updated')); } catch (_) {}
         setTimeout(() => {
           onSuccess?.({ action: 'password_changed', fileId: file.fileId });
           onClose();

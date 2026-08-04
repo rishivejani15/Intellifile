@@ -846,3 +846,34 @@
     transition-duration: 0s !important;
   }
 }
+
+.settings-tour-banner {
+  width: 100%;
+  margin: 0 0 var(--sp-4) 0;
+  padding: var(--sp-3) var(--sp-4);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  text-align: left;
+  color: var(--t-primary);
+  background: var(--c-brand-soft);
+  border: 1px solid color-mix(in srgb, var(--color-primary) 38%, transparent);
+  border-radius: var(--rd-md);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.settings-tour-banner:hover { background: var(--s-hover); border-color: var(--color-primary); transform: translateY(-1px); }
+.settings-tour-icon { width: 34px; height: 34px; display: grid; place-items: center; flex: 0 0 auto; color: #fff; background: var(--color-primary); border-radius: 50%; font-size: 18px; }
+.settings-tour-banner strong, .settings-tour-banner small { display: block; }
+.settings-tour-banner strong { font-size: var(--text-sm); }
+.settings-tour-banner small { margin-top: 2px; color: var(--t-secondary); font-size: var(--text-xs); }
+.settings-tour-arrow { margin-left: auto; color: var(--color-primary); font-size: 28px; line-height: 1; }
+
+.nav-action-item {
+  color: var(--color-primary) !important;
+  font-weight: 600;
+}
+.nav-action-item:hover {
+  background: var(--c-brand-soft) !important;
+}
