@@ -47,12 +47,20 @@ export default function Search() {
   useEffect(() => {
     const unsubscribeProgress = onIndexProgress((payload) => {
       if (!payload || payload.type !== 'progress') return;
-      setIndexing(true);
-      setIndexPhase(payload.phase || '');
-      setIndexDetail(payload.detail || '');
-      setIndexPct(typeof payload.pct === 'number' ? payload.pct : null);
-      if (payload.detail) {
-        setIndexMessage('');
+      if (typeof payload.pct === 'number' && payload.pct >= 100) {
+        setIndexing(false);
+        setIndexPct(100);
+        setIndexPhase('');
+        setIndexDetail('');
+        setIndexMessage('Index updated');
+      } else {
+        setIndexing(true);
+        setIndexPhase(payload.phase || '');
+        setIndexDetail(payload.detail || '');
+        setIndexPct(typeof payload.pct === 'number' ? payload.pct : null);
+        if (payload.detail) {
+          setIndexMessage('');
+        }
       }
     });
 

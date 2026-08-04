@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { showErrorToast } from '../../../utils/toast';
 
 const ipcRenderer = window.electron?.ipcRenderer;
@@ -8,10 +8,22 @@ const ipcRenderer = window.electron?.ipcRenderer;
  */
 export function useFileOperations(currentPath, onRefresh) {
   const [clipboard, setClipboard] = useState(null); // {items, operation: 'copy'|'cut'}
+  const clipboardTimerRef = useRef(null);
+
+  // Clean up timer on unmount
+  useEffect(() => {
+    return () => {
+      if (clipboardTimerRef.current) clearTimeout(clipboardTimerRef.current);
+    };
+  }, []);
 
   const handleCopy = useCallback((itemsToCopy) => {
     if (itemsToCopy.length > 0) {
       setClipboard({ items: itemsToCopy, operation: 'copy' });
+      if (clipboardTimerRef.current) clearTimeout(clipboardTimerRef.current);
+      clipboardTimerRef.current = setTimeout(() => {
+        setClipboard(null);
+      }, 60000); // 60 seconds
     }
   }, []);
 
@@ -24,6 +36,10 @@ export function useFileOperations(currentPath, onRefresh) {
     }
     if (itemsToCut.length > 0) {
       setClipboard({ items: itemsToCut, operation: 'cut' });
+      if (clipboardTimerRef.current) clearTimeout(clipboardTimerRef.current);
+      clipboardTimerRef.current = setTimeout(() => {
+        setClipboard(null);
+      }, 60000); // 60 seconds
     }
     return true;
   }, []);
@@ -52,6 +68,7 @@ export function useFileOperations(currentPath, onRefresh) {
 
         if (clipboard.operation === 'cut') {
           setClipboard(null);
+          if (clipboardTimerRef.current) clearTimeout(clipboardTimerRef.current);
         }
         onRefresh?.();
       } catch (err) {

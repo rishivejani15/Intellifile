@@ -11,7 +11,7 @@
     "pack": "electron-builder --dir",
     "electron-start": "wait-on http://localhost:3000 && electron .",
     "electron-dev": "electron .",
-    "backend": "cd.. && cd backend && python app.py",
+    "backend": "cd.. && cd backend && py -3.11 app.py",
     "dev": "concurrently \"npm run backend\" \"npm start\"",
     "dist": "cd .. && powershell -NoProfile -ExecutionPolicy Bypass -File .\\build.ps1"
   },
@@ -43,10 +43,8 @@
       "package.json",
       "main.js",
       "preload.js",
-      "file_lock_service.js",
       "system_roots.js",
       "sync_engine.js",
-      "listDirectoryCache.js",
       "build/**/*",
       "!build/**/*.map"
     ],

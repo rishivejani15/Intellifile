@@ -34,11 +34,24 @@ const getFolderIcon = (name = '') => {
 };
 
 function ExplorerSidebar({ drives, onNavigate, currentPath }) {
-  const [favorites, setFavorites] = useState([]);
+  const [favorites, setFavorites] = useState(() => {
+    try {
+      const stored = localStorage.getItem(FAVORITES_KEY);
+      return stored ? JSON.parse(stored) : [];
+    } catch { return []; }
+  });
+  const [recentFolders, setRecentFolders] = useState(() => {
+    try {
+      const stored = localStorage.getItem(RECENT_FOLDERS_KEY);
+      return stored ? JSON.parse(stored) : [];
+    } catch { return []; }
+  });
+
   const [systemRoots, setSystemRoots] = useState(null);
   const [expandedSections, setExpandedSections] = useState({
     favorites: true,
     quickAccess: true,
+    recentFolders: true,
     drives: true,
   });
   const [treeExpanded, setTreeExpanded] = useState({});
@@ -52,25 +65,16 @@ function ExplorerSidebar({ drives, onNavigate, currentPath }) {
   const treeChildrenRef = React.useRef({});
   const treeLoadingRef = React.useRef({});
 
-  const [recentFolders, setRecentFolders] = useState([]);
-
-  // Load favorites and recent folders from localStorage
+  // Save favorites to localStorage whenever they change
   useEffect(() => {
     try {
-      const storedFav = localStorage.getItem(FAVORITES_KEY);
-      if (storedFav) {
-        setFavorites(JSON.parse(storedFav));
-      }
-      const storedRecent = localStorage.getItem(RECENT_FOLDERS_KEY);
-      if (storedRecent) {
-        setRecentFolders(JSON.parse(storedRecent));
-      }
+      localStorage.setItem(FAVORITES_KEY, JSON.stringify(favorites));
     } catch (e) {
-      console.error('Error loading sidebar state:', e);
+      console.error('Error saving favorites:', e);
     }
-  }, []);
+  }, [favorites]);
 
-  // Save recent folders to localStorage
+  // Save recent folders to localStorage whenever they change
   useEffect(() => {
     try {
       localStorage.setItem(RECENT_FOLDERS_KEY, JSON.stringify(recentFolders));
@@ -588,28 +592,37 @@ function ExplorerSidebar({ drives, onNavigate, currentPath }) {
                 <span className="sidebar-label">{folder.name}</span>
               </div>
             ))}
-
-            {recentFolders.length > 0 && (
-              <div className="recent-folders-subgroup" style={{ marginTop: '6px', paddingTop: '4px', borderTop: '1px solid var(--bo-light)' }}>
-                <div style={{ fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.5px', color: 'var(--t-muted)', padding: '4px 8px 2px 8px', fontWeight: 600 }}>
-                  Recent Folders
-                </div>
-                {recentFolders.map((rf) => (
-                  <div
-                    key={rf.path}
-                    className={`sidebar-item ${isActive(rf.path) ? 'active' : ''}`}
-                    onClick={() => onNavigate(rf.path)}
-                    title={`${rf.path} (${rf.count || 1} visits)`}
-                  >
-                    <span className="sidebar-icon">{getFolderIcon(rf.name)}</span>
-                    <span className="sidebar-label">{rf.name}</span>
-                  </div>
-                ))}
-              </div>
-            )}
           </>
         )}
       </div>
+
+      {/* Recent Folders */}
+      {recentFolders.length > 0 && (
+        <div className="sidebar-section">
+          <div
+            className="sidebar-title collapsible"
+            onClick={() => toggleSection('recentFolders')}
+          >
+            <span className="collapse-icon">{expandedSections.recentFolders ? '▾' : '▸'}</span>
+            Recent Folders
+          </div>
+          {expandedSections.recentFolders && (
+            <>
+              {recentFolders.map((rf) => (
+                <div
+                  key={rf.path}
+                  className={`sidebar-item ${isActive(rf.path) ? 'active' : ''}`}
+                  onClick={() => onNavigate(rf.path)}
+                  title={`${rf.path} (${rf.count || 1} visits)`}
+                >
+                  <span className="sidebar-icon">{getFolderIcon(rf.name)}</span>
+                  <span className="sidebar-label">{rf.name}</span>
+                </div>
+              ))}
+            </>
+          )}
+        </div>
+      )}
 
       {/* Native folders */}
       {dynamicFolders.length > 0 && (

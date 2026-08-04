@@ -1,5 +1,5 @@
 // Hook for file operations: copy, cut, paste, delete, rename, create folder, create file, undo
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { showErrorToast } from '../utils/toast';
 
 export const useFileExplorer = (ipcRenderer) => {
@@ -8,6 +8,14 @@ export const useFileExplorer = (ipcRenderer) => {
   const [renameValue, setRenameValue] = useState('');
   const undoStack = useRef([]);
   const redoStack = useRef([]);
+  const clipboardTimerRef = useRef(null);
+
+  // Clean up timer on unmount
+  useEffect(() => {
+    return () => {
+      if (clipboardTimerRef.current) clearTimeout(clipboardTimerRef.current);
+    };
+  }, []);
 
   const pushUndo = useCallback((action) => {
     undoStack.current.push(action);
@@ -20,6 +28,10 @@ export const useFileExplorer = (ipcRenderer) => {
     const itemsToCopy = selectedItems.length > 0 ? selectedItems : (selectedItem ? [selectedItem] : []);
     if (itemsToCopy.length > 0) {
       setClipboard({ items: itemsToCopy, operation: 'copy' });
+      if (clipboardTimerRef.current) clearTimeout(clipboardTimerRef.current);
+      clipboardTimerRef.current = setTimeout(() => {
+        setClipboard(null);
+      }, 60000); // 60 seconds
       return true;
     }
     return false;
@@ -36,6 +48,10 @@ export const useFileExplorer = (ipcRenderer) => {
 
     if (itemsToCut.length > 0) {
       setClipboard({ items: itemsToCut, operation: 'cut' });
+      if (clipboardTimerRef.current) clearTimeout(clipboardTimerRef.current);
+      clipboardTimerRef.current = setTimeout(() => {
+        setClipboard(null);
+      }, 60000); // 60 seconds
       return true;
     }
     return false;
@@ -70,6 +86,7 @@ export const useFileExplorer = (ipcRenderer) => {
 
         if (clipboard.operation === 'cut') {
           setClipboard(null);
+          if (clipboardTimerRef.current) clearTimeout(clipboardTimerRef.current);
         }
         onPasteComplete?.();
       } catch (err) {

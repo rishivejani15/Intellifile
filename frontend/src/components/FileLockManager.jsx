@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { MdLock, MdLockOpen, MdVpnKey, MdOutlineVisibility, MdHistory, MdFolder, MdSearch, MdViewModule, MdViewList } from 'react-icons/md';
 import FileLockModal from './FileLockModal';
+import VaultFilePicker from './VaultFilePicker';
 import './FileLockManager.css';
 
 function FileLockManager() {
@@ -14,6 +16,9 @@ function FileLockManager() {
   const [showLockModal, setShowLockModal] = useState(false);
   const [lockModalMode, setLockModalMode] = useState('lock');
   const [lockModalFile, setLockModalFile] = useState(null);
+
+  // In-app file picker state
+  const [showFilePicker, setShowFilePicker] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -39,20 +44,22 @@ function FileLockManager() {
     refresh();
   }, [refresh]);
 
-  const handleLockNewFile = async () => {
-    try {
-      const result = await window.intellifile.fileLock.selectFile();
-      if (result?.canceled || !result?.filePaths?.length) return;
+  const handleLockNewFile = () => {
+    // Open IntelliFile's in-app file picker instead of native OS dialog
+    setShowFilePicker(true);
+  };
 
-      const filePath = result.filePaths[0];
-      const fileName = filePath.split(/[\\/]/).pop();
+  const handleFilePickerSelect = (filePath) => {
+    setShowFilePicker(false);
+    if (!filePath) return;
+    const fileName = filePath.split(/[\\/]/).pop();
+    setLockModalFile({ path: filePath, name: fileName });
+    setLockModalMode('lock');
+    setShowLockModal(true);
+  };
 
-      setLockModalFile({ path: filePath, name: fileName });
-      setLockModalMode('lock');
-      setShowLockModal(true);
-    } catch (err) {
-      console.error('[FileLockManager] File selection failed:', err);
-    }
+  const handleFilePickerCancel = () => {
+    setShowFilePicker(false);
   };
 
   const handleUnlockFile = (fileId, entry) => {
@@ -152,19 +159,21 @@ function FileLockManager() {
 
   const getActionLabel = (action) => {
     switch (action) {
-      case 'locked': return '🔒 Locked';
-      case 'unlocked': return '🔓 Unlocked';
-      case 'password_changed': return '🔑 Password Changed';
-      default: return action;
+      case 'locked': return 'Locked';
+      case 'unlocked': return 'Unlocked';
+      case 'password_changed': return 'Password Changed';
+      case 'accessed': return 'Accessed';
+      default: return typeof action === 'string' ? action.charAt(0).toUpperCase() + action.slice(1) : action;
     }
   };
 
   const getActionColor = (action) => {
     switch (action) {
-      case 'locked': return '#ff6b6b';
-      case 'unlocked': return '#51cf66';
-      case 'password_changed': return '#ffd43b';
-      default: return '#868e96';
+      case 'locked': return 'var(--color-danger)';
+      case 'unlocked': return 'var(--color-success)';
+      case 'password_changed': return 'var(--color-secondary)';
+      case 'accessed': return '#00a8ff';
+      default: return 'var(--t-muted)';
     }
   };
 
@@ -184,7 +193,7 @@ function FileLockManager() {
       {/* Header */}
       <div className="flm-header">
         <div className="flm-header-left">
-          <span className="flm-header-icon">🔐</span>
+          <MdLock className="flm-header-icon" />
           <div>
             <h2 className="flm-header-title">File Vault</h2>
             <p className="flm-header-subtitle">
@@ -194,7 +203,7 @@ function FileLockManager() {
         </div>
         <div className="flm-header-actions">
           <button className="flm-btn-lock-new" onClick={handleLockNewFile}>
-            <span>🔒</span> Lock New File
+            <MdLock size={16} /> Lock New File
           </button>
         </div>
       </div>
@@ -205,13 +214,13 @@ function FileLockManager() {
           className={`flm-tab ${activeTab === 'files' ? 'active' : ''}`}
           onClick={() => setActiveTab('files')}
         >
-          📁 Locked Files
+          <MdFolder style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Locked Files
         </button>
         <button
           className={`flm-tab ${activeTab === 'history' ? 'active' : ''}`}
           onClick={() => setActiveTab('history')}
         >
-          📜 History
+          <MdHistory style={{ marginRight: '6px', verticalAlign: 'middle' }} /> History
         </button>
       </div>
 
@@ -222,7 +231,7 @@ function FileLockManager() {
           {Object.keys(lockedFiles).length > 0 && (
             <div className="flm-toolbar">
               <div className="flm-search-wrapper">
-                <span className="flm-search-icon">🔍</span>
+                <MdSearch className="flm-search-icon" />
                 <input
                   className="flm-search-input"
                   type="text"
@@ -240,14 +249,14 @@ function FileLockManager() {
                   onClick={() => setViewMode('grid')}
                   title="Grid view"
                 >
-                  ▦
+                  <MdViewModule />
                 </button>
                 <button
                   className={`flm-view-btn ${viewMode === 'list' ? 'active' : ''}`}
                   onClick={() => setViewMode('list')}
                   title="List view"
                 >
-                  ☰
+                  <MdViewList />
                 </button>
               </div>
             </div>
@@ -256,7 +265,7 @@ function FileLockManager() {
           {/* Empty State */}
           {filteredFiles.length === 0 && (
             <div className="flm-empty">
-              <div className="flm-empty-icon">🔐</div>
+              <MdLock className="flm-empty-icon" />
               <h3 className="flm-empty-title">
                 {searchQuery ? 'No matching files' : 'Your vault is empty'}
               </h3>
@@ -267,7 +276,7 @@ function FileLockManager() {
               </p>
               {!searchQuery && (
                 <button className="flm-btn-lock-new flm-empty-btn" onClick={handleLockNewFile}>
-                  <span>🔒</span> Lock Your First File
+                  <MdLock size={16} /> Lock Your First File
                 </button>
               )}
             </div>
@@ -280,7 +289,7 @@ function FileLockManager() {
                 <div key={fileId} className={`flm-card ${!entry.fileExists ? 'missing' : ''}`}>
                   <div className="flm-card-icon">
                     {getFileIcon(entry.originalExt)}
-                    <span className="flm-card-lock-badge">🔒</span>
+                    <span className="flm-card-lock-badge"><MdLock size={10} /></span>
                   </div>
                   <div className="flm-card-info">
                     <div className="flm-card-name" title={entry.originalName}>
@@ -300,7 +309,7 @@ function FileLockManager() {
                       disabled={!entry.fileExists}
                       title="Open file"
                     >
-                      👁️
+                      <MdOutlineVisibility />
                     </button>
                     <button
                       className="flm-card-btn flm-card-btn-unlock"
@@ -308,7 +317,7 @@ function FileLockManager() {
                       disabled={!entry.fileExists}
                       title="Unlock file"
                     >
-                      🔓
+                      <MdLockOpen />
                     </button>
                     <button
                       className="flm-card-btn flm-card-btn-password"
@@ -316,7 +325,7 @@ function FileLockManager() {
                       disabled={!entry.fileExists}
                       title="Change password"
                     >
-                      🔑
+                      <MdVpnKey />
                     </button>
                   </div>
                 </div>
@@ -359,7 +368,7 @@ function FileLockManager() {
                       disabled={!entry.fileExists}
                       title="Open"
                     >
-                      👁️
+                      <MdOutlineVisibility />
                     </button>
                     <button
                       className="flm-card-btn flm-card-btn-unlock"
@@ -367,7 +376,7 @@ function FileLockManager() {
                       disabled={!entry.fileExists}
                       title="Unlock"
                     >
-                      🔓
+                      <MdLockOpen />
                     </button>
                     <button
                       className="flm-card-btn flm-card-btn-password"
@@ -375,7 +384,7 @@ function FileLockManager() {
                       disabled={!entry.fileExists}
                       title="Change password"
                     >
-                      🔑
+                      <MdVpnKey />
                     </button>
                   </span>
                 </div>
@@ -390,7 +399,7 @@ function FileLockManager() {
         <div className="flm-history">
           {history.length === 0 ? (
             <div className="flm-empty">
-              <div className="flm-empty-icon">📜</div>
+              <MdHistory className="flm-empty-icon" />
               <h3 className="flm-empty-title">No history yet</h3>
               <p className="flm-empty-desc">Lock or unlock files to see activity here.</p>
             </div>
@@ -431,6 +440,14 @@ function FileLockManager() {
         onClose={() => setShowLockModal(false)}
         onSuccess={handleLockModalSuccess}
       />
+
+      {/* In-app File Picker */}
+      {showFilePicker && (
+        <VaultFilePicker
+          onSelect={handleFilePickerSelect}
+          onCancel={handleFilePickerCancel}
+        />
+      )}
     </div>
   );
 }

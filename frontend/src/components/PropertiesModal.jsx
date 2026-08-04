@@ -340,13 +340,14 @@ function PropertiesModal({ visible, selectedItem, onClose }) {
                 <div className="properties-note">No previous versions were found for this item.</div>
               )}
               <div className="version-list">
-                {versions.map((version) => (
-                  <div key={version.version_id || version.timestamp} className="version-list-item">
+                {versions.map((version, idx) => (
+                  <div key={version.version_id || version.timestamp || idx} className="version-list-item">
                     <div className="version-list-main">
-                      <div className="version-list-title">Version {version.version ?? version.version_id?.slice?.(0, 8) ?? '-'}</div>
-                      <div className="version-list-meta">
-                        {version.version_id || '-'}
-                        {version.summary ? ` • ${version.summary}` : ''}
+                      <div className="version-list-title">
+                        Version {versions.length - idx} <span className="version-id-badge">{version.version_id?.slice?.(0, 12) || ''}</span>
+                      </div>
+                      <div className="version-list-meta" title={version.summary || version.version_id}>
+                        {version.summary || version.intent || 'Saved state'}
                       </div>
                     </div>
                     <div className="version-list-actions">
@@ -361,6 +362,7 @@ function PropertiesModal({ visible, selectedItem, onClose }) {
                   </div>
                 ))}
               </div>
+              {renderActionButtons()}
             </>
           )}
 

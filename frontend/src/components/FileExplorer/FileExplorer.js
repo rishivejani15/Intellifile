@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { MdOutlineVisibility } from 'react-icons/md';
 import { searchFiles, onIndexProgress, onIndexComplete } from '../../services/searchService';
 import { useNavigation } from '../../hooks/useNavigation';
 import { useFileExplorer } from '../../hooks/useFileExplorer';
@@ -481,6 +482,9 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
               setCurrentPath(actualPath);
               setAddressPath(actualPath);
               updateBreadcrumb(actualPath);
+              // Clear search query and results when navigating to a new folder
+              setSearchQuery('');
+              setSemanticResults(null);
               // Notify sidebar to track this folder visit for "Frequently used"
               try {
                 window.dispatchEvent(new CustomEvent('intellifile-folder-visited', { detail: { path: actualPath } }));
@@ -1155,6 +1159,13 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
     }
   };
 
+  const handleOpenPreview = () => {
+    if (!selectedItem || selectedItem.type !== 'file') return;
+    setPreviewClosing(false);
+    setShowVersioning(false);
+    setShowPreview(true);
+  };
+
   // Preview close handling
   const handlePreviewCloseStart = () => {
     setPreviewClosing(true);
@@ -1334,6 +1345,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
   // Keyboard shortcuts hook
   useKeyboardShortcuts({
     selectedItem, selectedItems, clipboard, renamingItem, currentPath, historyIndex, displayItems,
+    lastSelectedIndex, setLastSelectedIndex,
     handleCopy, handleCut, handlePaste, handleDelete, handleRename, handleCreateFolder,
     handleBack, handleForward, handleUp, handleRefresh, handleUndo, handleRedo,
     onCharacterType: handleCharacterType,
@@ -1384,12 +1396,20 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
   useEffect(() => {
     const unsubscribeProgress = onIndexProgress((payload) => {
       if (!payload || payload.type !== 'progress') return;
-      setIndexing(true);
-      setIndexPhase(payload.phase || '');
-      setIndexDetail(payload.detail || '');
-      setIndexPct(typeof payload.pct === 'number' ? payload.pct : null);
-      if (payload.detail) {
-        setIndexMessage('');
+      if (typeof payload.pct === 'number' && payload.pct >= 100) {
+        setIndexing(false);
+        setIndexPct(100);
+        setIndexPhase('');
+        setIndexDetail('');
+        setIndexMessage('Index updated');
+      } else {
+        setIndexing(true);
+        setIndexPhase(payload.phase || '');
+        setIndexDetail(payload.detail || '');
+        setIndexPct(typeof payload.pct === 'number' ? payload.pct : null);
+        if (payload.detail) {
+          setIndexMessage('');
+        }
       }
     });
 
@@ -1779,7 +1799,6 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
                   </div>
                 )}
                 <FileList
-
                   items={displayItems}
                   viewMode={viewMode}
                   groupBy={groupBy}
@@ -1810,19 +1829,51 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
             )}
 
           </div>
+
         </div>
 
         <div className="explorer-statusbar">
           <div className="statusbar-info">
-            <span>{items.length} items </span>
-            <span>{selectedItems.length} selected</span>
-            {selectedItem && (
-              <span>{selectedItem.type === 'file' ? `${formatFileSize(selectedItem.size)}` : 'Folder'}</span>
+            <span className="statusbar-pill">
+              <span className="statusbar-pill-dot" />
+              {items.length} {items.length === 1 ? 'item' : 'items'}
+            </span>
+            {selectedItems.length > 0 && (
+              <span className="statusbar-pill statusbar-pill--active">
+                ✓ {selectedItems.length} selected
+              </span>
             )}
-            {clipboard && <span>📋 {clipboard.operation === 'cut' ? 'Cut' : 'Copied'}: {clipboard.items.length} item(s)</span>}
+            {selectedItem && selectedItem.type === 'file' && (
+              <span className="statusbar-pill statusbar-pill--size">
+                💾 {formatFileSize(selectedItem.size)}
+              </span>
+            )}
+            {selectedItem && selectedItem.type === 'folder' && (
+              <span className="statusbar-pill">
+                📁 Folder
+              </span>
+            )}
+            {clipboard && (
+              <span className="statusbar-pill statusbar-pill--clip">
+                📋 {clipboard.operation === 'cut' ? 'Cut' : 'Copied'}: {clipboard.items.length}
+              </span>
+            )}
           </div>
 
-
+          {selectedItem?.type === 'file' && (
+            <div className="statusbar-actions">
+              <button
+                type="button"
+                className={`statusbar-btn preview-btn ${showPreview && !showVersioning ? 'active' : ''}`}
+                onClick={handleOpenPreview}
+                title="Preview selected file"
+                aria-label="Preview selected file"
+              >
+                <MdOutlineVisibility className="statusbar-btn-icon" />
+                <span>Preview</span>
+              </button>
+            </div>
+          )}
         </div>
       </div>
 

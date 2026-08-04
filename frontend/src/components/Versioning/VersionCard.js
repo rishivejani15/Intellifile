@@ -1,17 +1,16 @@
 import React, { useState } from 'react';
 import RiskBadge from './RiskBadge';
+import RollbackConfirmModal from './RollbackConfirmModal';
 import { restoreVersion } from '../../services/versionService';
 import { showErrorToast, showToast } from '../../utils/toast';
 import './versioning.css';
 
 const VersionCard = ({ version, filePath, onRefresh, onCompareClick, isSelecting, isLatest, isBaseline }) => {
     const [restoring, setRestoring] = useState(false);
+    const [showConfirmModal, setShowConfirmModal] = useState(false);
 
-    const handleRollback = async () => {
-        if (!window.confirm(`Rollback file to version ${version.version_id}? Current changes will be backed up.`)) {
-            return;
-        }
-
+    const executeRollback = async () => {
+        setShowConfirmModal(false);
         setRestoring(true);
         try {
             const result = await restoreVersion(filePath, version.version_id);
@@ -118,7 +117,7 @@ const VersionCard = ({ version, filePath, onRefresh, onCompareClick, isSelecting
                         Current State
                     </button>
                 ) : (
-                    <button className="btn-restore" onClick={handleRollback} disabled={restoring}>
+                    <button className="btn-restore" onClick={() => setShowConfirmModal(true)} disabled={restoring}>
                         {restoring ? 'Restoring...' : 'Rollback'}
                     </button>
                 )}
@@ -126,6 +125,13 @@ const VersionCard = ({ version, filePath, onRefresh, onCompareClick, isSelecting
                     {isSelecting ? 'Cancel' : 'Compare'}
                 </button>
             </div>
+
+            <RollbackConfirmModal
+                visible={showConfirmModal}
+                versionId={version.version_id}
+                onConfirm={executeRollback}
+                onCancel={() => setShowConfirmModal(false)}
+            />
         </div>
     );
 };
