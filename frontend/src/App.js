@@ -7,6 +7,7 @@ import OfflineSetup from './components/OfflineSetup';
 import ToastHost from './components/ToastHost';
 import AutoSortToastHost from './components/AutoSortToastHost';
 import Settings from './pages/Settings';
+import FileLockManager from './components/FileLockManager';
 
 const ipcRenderer = window.electron?.ipcRenderer;
 
@@ -30,7 +31,6 @@ function App() {
   const [updateDownloaded, setUpdateDownloaded] = useState(false);
   const [updateVersion, setUpdateVersion] = useState('');
   const [theme, setTheme] = useState(getInitialTheme);
-  const [showThemeDropdown, setShowThemeDropdown] = useState(false);
 
   useEffect(() => {
     console.log('App mounted, ipcRenderer available:', !!ipcRenderer);
@@ -131,29 +131,6 @@ function App() {
     localStorage.setItem('intellifile-theme', theme);
   }, [theme]);
 
-  // Close theme dropdown on outside click
-  useEffect(() => {
-    if (!showThemeDropdown) return;
-    const handler = (e) => {
-      if (!e.target.closest('.theme-toggle-wrapper')) {
-        setShowThemeDropdown(false);
-      }
-    };
-    window.addEventListener('click', handler);
-    return () => window.removeEventListener('click', handler);
-  }, [showThemeDropdown]);
-
-  const handleThemeChange = (newTheme) => {
-    setTheme(newTheme);
-    setShowThemeDropdown(false);
-  };
-
-  const themeLabel = useMemo(() => {
-    if (theme === 'light') return 'Light';
-    if (theme === 'dark') return 'Dark';
-    return 'Auto';
-  }, [theme]);
-
   return (
     <div className="App">
       <header className="App-header">
@@ -175,86 +152,65 @@ function App() {
             Sync
           </button>
           <button
+            className={`tab-btn ${activeTab === 'vault' ? 'active' : ''}`}
+            onClick={() => setActiveTab('vault')}
+          >
+            Vault
+          </button>
+          <button
             className={`tab-btn ${activeTab === 'logs' ? 'active' : ''}`}
             onClick={() => setActiveTab('logs')}
           >
             Logs
           </button>
-           <button
+          <button
             className={`tab-btn ${activeTab === 'settings' ? 'active' : ''}`}
             onClick={() => setActiveTab('settings')}
           >
             Settings
           </button>
         </div>
-        <div className="theme-toggle-wrapper" style={{ position: 'relative' }}>
-          <button
-            className="theme-toggle"
-            onClick={(e) => { e.stopPropagation(); setShowThemeDropdown((prev) => !prev); }}
-            title={`Theme: ${themeLabel}`}
-          >
-            <span style={{ fontSize: '18px' }}>{theme === 'dark' ? '☽' : theme === 'light' ? '☀' : '◔'}</span>
-          </button>
-          {showThemeDropdown && (
-            <div className="theme-dropdown" onClick={(e) => e.stopPropagation()}>
-              <button
-                className={`theme-option ${theme === 'light' ? 'active' : ''}`}
-                onClick={() => handleThemeChange('light')}
-              >
-                <span>Light</span>{theme === 'light' && <span className="checkmark">✓</span>}
-              </button>
-              <button
-                className={`theme-option ${theme === 'dark' ? 'active' : ''}`}
-                onClick={() => handleThemeChange('dark')}
-              >
-                <span>Dark</span>{theme === 'dark' && <span className="checkmark">✓</span>}
-              </button>
-              <button
-                className={`theme-option ${theme === 'system' ? 'active' : ''}`}
-                onClick={() => handleThemeChange('system')}
-              >
-                <span>Auto</span>{theme === 'system' && <span className="checkmark">✓</span>}
-              </button>
-            </div>
-          )}
-        </div>
       </header>
 
       {setupComplete && (
         <div className="app-container">
-        <main className="app-main">
-          <div style={{ display: activeTab === 'explorer' ? 'block' : 'none', height: '100%' }}>
-            <div className="explorer-wrapper">
-              <FileExplorer
-                onFileSelect={handleFileSelect}
-                selectedFiles={{}}
-                drives={drives}
-                onVersioning={handleVersioning}
-                versioningFile={versioningFile}
-                onCloseVersioning={() => setVersioningFile(null)}
-              />
+          <main className="app-main">
+            <div style={{ display: activeTab === 'explorer' ? 'block' : 'none', height: '100%' }}>
+              <div className="explorer-wrapper">
+                <FileExplorer
+                  onFileSelect={handleFileSelect}
+                  selectedFiles={{}}
+                  drives={drives}
+                  onVersioning={handleVersioning}
+                  versioningFile={versioningFile}
+                  onCloseVersioning={() => setVersioningFile(null)}
+                />
+              </div>
             </div>
-          </div>
-          
-          <div style={{ display: activeTab === 'sync' ? 'block' : 'none', height: '100%' }}>
-            <SyncManager />
-          </div>
-          
-          <div style={{ display: activeTab === 'logs' ? 'block' : 'none', height: '100%' }}>
-            <LogsPanel />
-          </div>
 
-          <div style={{ display: activeTab === 'settings' ? 'block' : 'none', height: '100%' }}>
-            <Settings />
-          </div>
-        </main>
-      </div>) }
+            <div style={{ display: activeTab === 'sync' ? 'block' : 'none', height: '100%' }}>
+              <SyncManager />
+            </div>
+
+            <div style={{ display: activeTab === 'vault' ? 'block' : 'none', height: '100%' }}>
+              <FileLockManager />
+            </div>
+
+            <div style={{ display: activeTab === 'logs' ? 'block' : 'none', height: '100%' }}>
+              <LogsPanel />
+            </div>
+
+            <div style={{ display: activeTab === 'settings' ? 'block' : 'none', height: '100%' }}>
+              <Settings theme={theme} onThemeChange={setTheme} />
+            </div>
+          </main>
+        </div>)}
       <ToastHost />
       <AutoSortToastHost />
-                
+
       {!setupComplete && <OfflineSetup key={offlineSetupKey} onComplete={handleOfflineSetupComplete} />}
     </div>
-);
+  );
 }
 
 export default App;

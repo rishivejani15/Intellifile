@@ -73,7 +73,7 @@ contextBridge.exposeInMainWorld('intellifile', {
   getLocalSyncAddress: () => {
     return ipcRenderer.invoke('get-local-sync-address');
   },
-  
+
   onIndexComplete: (callback) => {
     const handler = (_event, data) => callback(data);
     ipcRenderer.on('index-complete', handler);
@@ -202,6 +202,40 @@ contextBridge.exposeInMainWorld('intellifile', {
     return () => ipcRenderer.off('autosort:notification', handler);
   },
 
+  resetIndex: () => {
+    return ipcRenderer.invoke('reset-index');
+  },
+  deleteAiModel: () => {
+    return ipcRenderer.invoke('delete-ai-model');
+  },
+  resetAllSettings: () => {
+    return ipcRenderer.invoke('reset-all-settings');
+  },
+  getAppVersion: () => {
+    return ipcRenderer.invoke('get-app-version');
+  },
+  checkForUpdates: () => {
+    return ipcRenderer.invoke('check-for-updates');
+  },
+  downloadUpdate: () => {
+    return ipcRenderer.invoke('download-update');
+  },
+  restartAndInstallUpdate: () => {
+    return ipcRenderer.invoke('update-restart');
+  },
+  getAnalyticsSummary: () => {
+    return ipcRenderer.invoke('analytics:summary');
+  },
+  clearAnalytics: () => {
+    return ipcRenderer.invoke('analytics:clear');
+  },
+  logAnalytics: (eventType, data) => {
+    return ipcRenderer.invoke('analytics:log', { event_type: eventType, event_data: data });
+  },
+  invoke: (channel, ...args) => {
+    return ipcRenderer.invoke(channel, ...args);
+  },
+
   // Compatibility aliases for existing UI components.
   ingestFile: (filePath) => {
     return ipcRenderer.invoke('ingest-file', filePath);
@@ -279,5 +313,19 @@ contextBridge.exposeInMainWorld('intellifile', {
 
   // Chrome redirect handling
   setChromeRedirect: (enable) => ipcRenderer.invoke('set-chrome-redirect', enable),
-  getChromeRedirect: () => ipcRenderer.invoke('get-chrome-redirect')
+  getChromeRedirect: () => ipcRenderer.invoke('get-chrome-redirect'),
+
+  // ── File Lock (Vault) APIs ──
+  fileLock: {
+    lockFile: (filePath, password, options) => ipcRenderer.invoke('file-lock:lock', filePath, password, options),
+    unlockFile: (fileId, password) => ipcRenderer.invoke('file-lock:unlock', fileId, password),
+    accessFile: (fileId, password) => ipcRenderer.invoke('file-lock:access', fileId, password),
+    verifyPassword: (fileId, password) => ipcRenderer.invoke('file-lock:verify', fileId, password),
+    changePassword: (fileId, oldPassword, newPassword) => ipcRenderer.invoke('file-lock:change-password', fileId, oldPassword, newPassword),
+    getLockedFiles: () => ipcRenderer.invoke('file-lock:get-locked-files'),
+    getStatus: (filePath) => ipcRenderer.invoke('file-lock:get-status', filePath),
+    getHistory: () => ipcRenderer.invoke('file-lock:get-history'),
+    setAutoLock: (fileId, timeoutMinutes) => ipcRenderer.invoke('file-lock:set-auto-lock', fileId, timeoutMinutes),
+    selectFile: () => ipcRenderer.invoke('file-lock:select-file'),
+  },
 });

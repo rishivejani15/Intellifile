@@ -8,6 +8,10 @@ DEFAULT_SETTINGS = {
     "watched_folders": '["Downloads", "Desktop"]',
     "sort_root": "Sorted",
     "autosort_last_processed_ts": "0",
+    "index_enabled": "true",
+    "telemetry_enabled": "false",
+    "auto_update_wifi": "false",
+    "theme": "system",
 }
 
 # Resolve data directory relative to this file's location
@@ -82,6 +86,15 @@ def init_db():
                 )
                 ''')
 
+    cur.execute('''
+                CREATE TABLE IF NOT EXISTS analytics_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    event_type TEXT NOT NULL,
+                    event_data TEXT,
+                    timestamp REAL NOT NULL
+                )
+                ''')
+
     # Safe migration: add created_time if upgrading from older schema
     try:
         cur.execute("ALTER TABLE files ADD COLUMN created_time INTEGER")
@@ -93,6 +106,7 @@ def init_db():
     cur.execute('CREATE INDEX IF NOT EXISTS idx_chunks_file_id ON chunks(file_id)')
     cur.execute('CREATE INDEX IF NOT EXISTS idx_files_created ON files(created_time)')
     cur.execute('CREATE INDEX IF NOT EXISTS idx_sort_log_timestamp ON sort_log(timestamp)')
+    cur.execute('CREATE INDEX IF NOT EXISTS idx_analytics_timestamp ON analytics_events(timestamp)')
 
     for key, value in DEFAULT_SETTINGS.items():
         cur.execute(
@@ -175,10 +189,73 @@ def set_setting(key, value):
 
     conn = get_connection()
     try:
-        conn.execute(
-            "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
             (key, serialized),
         )
         conn.commit()
     finally:
         conn.close()
+
+
+def log_analytics_event(event_type: str, event_data: dict = None) -> bool:
+    """Log an offline analytics event if telemetry_enabled is set to true."""
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT value FROM settings WHERE key='telemetry_enabled'")
+        row = cur.fetchone()
+        telemetry_enabled = row and str(row[0]).strip().lower() in ("true", "1", "yes")
+        if not telemetry_enabled:
+            conn.close()
+            return False
+
+        import time
+        data_str = json.dumps(event_data) if event_data else None
+        cur.execute(
+            "INSERT INTO analytics_events (event_type, event_data, timestamp) VALUES (?, ?, ?)",
+            (event_type, data_str, time.time())
+        )
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        import sys
+        sys.stderr.write(f"[db] log_analytics_event error: {e}\n")
+        return False
+
+
+def get_analytics_summary() -> dict:
+    """Return offline analytics summary counts and recent event logs."""
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT event_type, COUNT(*) FROM analytics_events GROUP BY event_type")
+        counts = dict(cur.fetchall())
+
+        cur.execute("SELECT event_type, event_data, timestamp FROM analytics_events ORDER BY id DESC LIMIT 20")
+        recent = []
+        for r in cur.fetchall():
+            recent.append({
+                "event_type": r[0],
+                "event_data": json.loads(r[1]) if r[1] else None,
+                "timestamp": r[2]
+            })
+        conn.close()
+        return {"success": True, "counts": counts, "recent": recent}
+    except Exception as e:
+        return {"success": False, "error": str(e), "counts": {}, "recent": []}
+
+
+def clear_analytics_events() -> dict:
+    """Purge all analytics events from database."""
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("DELETE FROM analytics_events")
+        conn.commit()
+        conn.close()
+        return {"success": True}
+    except Exception as e:
+        return {"success": False, "error": str(e)}

@@ -1,0 +1,419 @@
+/* ── FileLockModal Styles ── */
+
+.file-lock-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+  animation: fileLockOverlayIn 0.2s ease-out;
+}
+
+@keyframes fileLockOverlayIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.file-lock-modal {
+  background: var(--context-bg, #1e1e2e);
+  border: 1px solid var(--border-color, rgba(255, 255, 255, 0.08));
+  border-radius: 16px;
+  width: 440px;
+  max-width: 95vw;
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.5), 0 0 1px rgba(255, 255, 255, 0.1);
+  animation: fileLockModalIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  padding: 0;
+}
+
+@keyframes fileLockModalIn {
+  from {
+    opacity: 0;
+    transform: scale(0.92) translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.file-lock-modal.success {
+  border-color: rgba(46, 213, 115, 0.3);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.5), 0 0 40px rgba(46, 213, 115, 0.1);
+}
+
+/* Header */
+.file-lock-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 20px 24px 12px;
+  position: relative;
+}
+
+.file-lock-icon {
+  font-size: 28px;
+  line-height: 1;
+  transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.file-lock-icon.success-anim {
+  animation: fileLockSuccessPop 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes fileLockSuccessPop {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.3); }
+  100% { transform: scale(1); }
+}
+
+.file-lock-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-primary, #e0e0e0);
+  margin: 0;
+  flex: 1;
+}
+
+.file-lock-close {
+  background: none;
+  border: none;
+  color: var(--text-secondary, #888);
+  font-size: 16px;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 6px;
+  transition: background 0.15s, color 0.15s;
+}
+
+.file-lock-close:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-primary, #e0e0e0);
+}
+
+/* File info */
+.file-lock-file-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 24px 16px;
+  border-bottom: 1px solid var(--border-color, rgba(255, 255, 255, 0.06));
+}
+
+.file-lock-filename {
+  font-size: 13px;
+  color: var(--text-secondary, #aaa);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+.file-lock-filesize {
+  font-size: 12px;
+  color: var(--text-muted, #666);
+  flex-shrink: 0;
+}
+
+/* Form */
+.file-lock-form {
+  padding: 16px 24px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.file-lock-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.file-lock-field label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary, #aaa);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.file-lock-optional {
+  text-transform: none;
+  font-weight: 400;
+  color: var(--text-muted, #666);
+  letter-spacing: 0;
+}
+
+.file-lock-input-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.file-lock-field input,
+.file-lock-input-wrapper input {
+  width: 100%;
+  padding: 10px 14px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border-color, rgba(255, 255, 255, 0.1));
+  border-radius: 10px;
+  color: var(--text-primary, #e0e0e0);
+  font-size: 14px;
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+  font-family: inherit;
+}
+
+.file-lock-input-wrapper input {
+  padding-right: 44px;
+}
+
+.file-lock-field input:focus,
+.file-lock-input-wrapper input:focus {
+  border-color: rgba(99, 135, 255, 0.5);
+  box-shadow: 0 0 0 3px rgba(99, 135, 255, 0.1);
+}
+
+.file-lock-field input::placeholder {
+  color: var(--text-muted, #555);
+}
+
+.file-lock-toggle-vis {
+  position: absolute;
+  right: 8px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 16px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  transition: background 0.15s;
+  line-height: 1;
+}
+
+.file-lock-toggle-vis:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+/* Password strength */
+.file-lock-strength {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.file-lock-strength-bar {
+  display: flex;
+  gap: 3px;
+  flex: 1;
+  max-width: 140px;
+}
+
+.file-lock-strength-segment {
+  height: 4px;
+  flex: 1;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.08);
+  transition: background-color 0.3s;
+}
+
+.file-lock-strength-segment.active {
+  background: #6387ff;
+}
+
+.file-lock-strength-label {
+  font-size: 11px;
+  font-weight: 500;
+}
+
+/* Warning */
+.file-lock-warning {
+  font-size: 12px;
+  color: #ffa502;
+  background: rgba(255, 165, 2, 0.08);
+  border: 1px solid rgba(255, 165, 2, 0.15);
+  border-radius: 10px;
+  padding: 10px 14px;
+  line-height: 1.5;
+}
+
+/* Hint */
+.file-lock-hint {
+  font-size: 13px;
+  color: var(--text-secondary, #aaa);
+  background: rgba(99, 135, 255, 0.06);
+  border: 1px solid rgba(99, 135, 255, 0.12);
+  border-radius: 10px;
+  padding: 10px 14px;
+  line-height: 1.5;
+}
+
+/* Error */
+.file-lock-error {
+  font-size: 13px;
+  color: #ff4757;
+  background: rgba(255, 71, 87, 0.08);
+  border: 1px solid rgba(255, 71, 87, 0.15);
+  border-radius: 10px;
+  padding: 10px 14px;
+  animation: fileLockShake 0.4s ease;
+}
+
+@keyframes fileLockShake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-6px); }
+  40% { transform: translateX(6px); }
+  60% { transform: translateX(-4px); }
+  80% { transform: translateX(4px); }
+}
+
+/* Success message */
+.file-lock-success-message {
+  padding: 24px;
+  text-align: center;
+  color: #2ed573;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+/* Actions */
+.file-lock-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  margin-top: 6px;
+}
+
+.file-lock-btn {
+  padding: 10px 20px;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  border: none;
+  transition: background 0.2s, transform 0.1s, box-shadow 0.2s;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: inherit;
+}
+
+.file-lock-btn:active {
+  transform: scale(0.97);
+}
+
+.file-lock-btn-cancel {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-secondary, #aaa);
+  border: 1px solid var(--border-color, rgba(255, 255, 255, 0.08));
+}
+
+.file-lock-btn-cancel:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text-primary, #e0e0e0);
+}
+
+.file-lock-btn-primary {
+  background: linear-gradient(135deg, #6387ff 0%, #5f5fff 100%);
+  color: #fff;
+  box-shadow: 0 4px 12px rgba(99, 135, 255, 0.25);
+}
+
+.file-lock-btn-primary:hover {
+  box-shadow: 0 6px 20px rgba(99, 135, 255, 0.35);
+}
+
+.file-lock-btn-primary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.file-lock-btn-primary.loading {
+  pointer-events: none;
+  opacity: 0.8;
+}
+
+/* Spinner */
+.file-lock-spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: fileLockSpin 0.6s linear infinite;
+}
+
+@keyframes fileLockSpin {
+  to { transform: rotate(360deg); }
+}
+
+/* ── Light theme overrides ── */
+[data-theme="light"] .file-lock-modal {
+  background: #ffffff;
+  border-color: rgba(0, 0, 0, 0.1);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.15);
+}
+
+[data-theme="light"] .file-lock-title {
+  color: #1a1a2e;
+}
+
+[data-theme="light"] .file-lock-close {
+  color: #888;
+}
+
+[data-theme="light"] .file-lock-close:hover {
+  background: rgba(0, 0, 0, 0.06);
+  color: #333;
+}
+
+[data-theme="light"] .file-lock-file-info {
+  border-bottom-color: rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="light"] .file-lock-filename {
+  color: #555;
+}
+
+[data-theme="light"] .file-lock-field label {
+  color: #666;
+}
+
+[data-theme="light"] .file-lock-field input,
+[data-theme="light"] .file-lock-input-wrapper input {
+  background: rgba(0, 0, 0, 0.03);
+  border-color: rgba(0, 0, 0, 0.12);
+  color: #1a1a2e;
+}
+
+[data-theme="light"] .file-lock-field input:focus,
+[data-theme="light"] .file-lock-input-wrapper input:focus {
+  border-color: rgba(99, 135, 255, 0.5);
+  box-shadow: 0 0 0 3px rgba(99, 135, 255, 0.12);
+}
+
+[data-theme="light"] .file-lock-strength-segment {
+  background: rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="light"] .file-lock-btn-cancel {
+  background: rgba(0, 0, 0, 0.04);
+  color: #666;
+  border-color: rgba(0, 0, 0, 0.1);
+}
+
+[data-theme="light"] .file-lock-btn-cancel:hover {
+  background: rgba(0, 0, 0, 0.08);
+  color: #333;
+}
+
+[data-theme="light"] .file-lock-toggle-vis:hover {
+  background: rgba(0, 0, 0, 0.06);
+}

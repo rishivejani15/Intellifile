@@ -18,6 +18,7 @@ import MoveConfirmModal from '../MoveConfirmModal';
 import VersionTimeline from '../Versioning/VersionTimeline';
 import { smartCleanupVersions } from '../../services/versionService';
 import { showErrorToast, showToast } from '../../utils/toast';
+import FileLockModal from '../FileLockModal';
 import './FileExplorer.css';
 
 
@@ -107,6 +108,11 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
   const [contextMenuPos, setContextMenuPos] = useState({ x: 0, y: 0 });
   // Flag indicating whether we have loaded cached directory data
   const [cacheLoaded, setCacheLoaded] = useState(false);
+
+  // File Lock modal state
+  const [showLockModal, setShowLockModal] = useState(false);
+  const [lockModalMode, setLockModalMode] = useState('lock');
+  const [lockModalFile, setLockModalFile] = useState(null);
 
   // Search & Indexing State
   const [semanticResults, setSemanticResults] = useState(null);
@@ -725,9 +731,63 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
   const openFileWithDefaultApp = async (filePath) => {
     try {
       const result = await window.electron.ipcRenderer.invoke('open-file', filePath);
+      if (result.isLocked) {
+        // File is locked — show unlock/access modal
+        setLockModalFile({
+          fileId: result.fileId,
+          name: result.originalName || filePath.split(/[\\/]/).pop(),
+          path: filePath,
+          originalName: result.originalName,
+        });
+        setLockModalMode('access');
+        setShowLockModal(true);
+        return;
+      }
       if (!result.success) console.error('Error opening file:', result.error);
     } catch (err) {
       console.error('Error opening file:', err);
+    }
+  };
+
+  const handleLockFile = (item) => {
+    const target = item || selectedItem;
+    if (!target || target.type !== 'file') return;
+    setLockModalFile({ path: target.path, name: target.name, size: target.size });
+    setLockModalMode('lock');
+    setShowLockModal(true);
+  };
+
+  const handleUnlockFile = (item) => {
+    const target = item || selectedItem;
+    if (!target) return;
+
+    // Look up the file ID from the encrypted path
+    window.intellifile?.fileLock?.getStatus?.(target.path).then((status) => {
+      if (status?.isLocked && status.fileId) {
+        setLockModalFile({
+          fileId: status.fileId,
+          name: status.entry?.originalName || target.name,
+          path: target.path,
+          size: status.entry?.originalSize,
+          originalName: status.entry?.originalName,
+        });
+        setLockModalMode('unlock');
+        setShowLockModal(true);
+      } else {
+        showErrorToast('Could not find lock information for this file.');
+      }
+    });
+  };
+
+  const handleLockModalSuccess = (result) => {
+    // Refresh directory to reflect file changes
+    if (currentPath) {
+      loadDirectory(currentPath, { suppressLoading: true });
+    }
+    if (result?.action === 'locked') {
+      showToast(`File locked: ${result.filePath?.split(/[\\/]/).pop() || 'file'}`);
+    } else if (result?.action === 'unlocked') {
+      showToast(`File unlocked: ${result.restoredPath?.split(/[\\/]/).pop() || 'file'}`);
     }
   };
 
@@ -1846,6 +1906,8 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
         canVersionItem={canVersionItem(selectedItem)}
         onCompress={handleCompress}
         onExtract={handleExtract}
+        onLockFile={() => handleLockFile(selectedItem)}
+        onUnlockFile={() => handleUnlockFile(selectedItem)}
         onChatWithAI={() => {
           setShowContextMenu(false);
           onChatWithAI?.(selectedItem);
@@ -1890,6 +1952,14 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
         onCancel={() => {
           setShowMoveModal(false);
         }}
+      />
+
+      <FileLockModal
+        visible={showLockModal}
+        mode={lockModalMode}
+        file={lockModalFile}
+        onClose={() => setShowLockModal(false)}
+        onSuccess={handleLockModalSuccess}
       />
     </div>
   );

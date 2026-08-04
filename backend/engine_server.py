@@ -280,11 +280,13 @@ while True:
                     continue
 
                 from core.search import semantic_search
+                from core.db import log_analytics_event
                 query = request.get("query", "").strip()
                 date_from = request.get("date_from")  # Unix timestamp or None
                 date_to = request.get("date_to")      # Unix timestamp or None
                 root_folder = request.get("root_folder")
                 results = semantic_search(query, date_from=date_from, date_to=date_to, root_folder=root_folder)
+                log_analytics_event("search_executed", {"query_length": len(query)})
                 response = {
                     "_id": req_id,
                      "results": [
@@ -302,6 +304,8 @@ while True:
 
         elif action == "index":
             try:
+                from core.db import log_analytics_event
+                log_analytics_event("index_run")
                 folder = request.get("folder")
                 allow_protected = bool(request.get("allow_protected"))
                 # Prevent long-running index when embedding model unavailable
@@ -446,6 +450,52 @@ while True:
                     print(json.dumps({"_id": req_id, "error": "Settings service unavailable"}), flush=True)
             except Exception as e:
                 print(json.dumps({"_id": req_id, "error": f"Settings update failed: {e}"}), flush=True)
+
+        elif action == "settings_reset_all":
+            try:
+                from core.db import get_connection
+                conn = get_connection()
+                cur = conn.cursor()
+                cur.execute("DELETE FROM settings")
+                conn.commit()
+                conn.close()
+                print(json.dumps({"_id": req_id, "success": True}), flush=True)
+            except Exception as e:
+                print(json.dumps({"_id": req_id, "error": f"Settings reset failed: {e}"}), flush=True)
+
+        elif action == "reset_index":
+            try:
+                from indexing.single_file_ingest import reset_canonical_index_store
+                res = reset_canonical_index_store()
+                print(json.dumps({"_id": req_id, "success": True, "result": res}), flush=True)
+            except Exception as e:
+                print(json.dumps({"_id": req_id, "error": f"Index reset failed: {e}"}), flush=True)
+
+        elif action == "analytics_log":
+            try:
+                from core.db import log_analytics_event
+                event_type = request.get("event_type", "general")
+                event_data = request.get("event_data")
+                logged = log_analytics_event(event_type, event_data)
+                print(json.dumps({"_id": req_id, "logged": logged}), flush=True)
+            except Exception as e:
+                print(json.dumps({"_id": req_id, "error": str(e)}), flush=True)
+
+        elif action == "analytics_summary":
+            try:
+                from core.db import get_analytics_summary
+                summary = get_analytics_summary()
+                print(json.dumps({"_id": req_id, **summary}), flush=True)
+            except Exception as e:
+                print(json.dumps({"_id": req_id, "error": str(e)}), flush=True)
+
+        elif action == "analytics_clear":
+            try:
+                from core.db import clear_analytics_events
+                res = clear_analytics_events()
+                print(json.dumps({"_id": req_id, **res}), flush=True)
+            except Exception as e:
+                print(json.dumps({"_id": req_id, "error": str(e)}), flush=True)
 
         elif action == "watcher_start":
             try:

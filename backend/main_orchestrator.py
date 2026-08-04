@@ -117,8 +117,9 @@ def settings_get(key):
     value = get_setting(key)
     if value is None:
         return {"key": key, "value": None}
-    if key == "auto_sort_enabled":
-        return {"key": key, "value": get_setting_bool(key, False)}
+    if key in {"auto_sort_enabled", "index_enabled", "telemetry_enabled", "auto_update_wifi"}:
+        default_val = True if key == "index_enabled" else False
+        return {"key": key, "value": get_setting_bool(key, default_val)}
     if key in {"watched_folders"}:
         return {"key": key, "value": get_setting_json(key, [])}
     return {"key": key, "value": value}

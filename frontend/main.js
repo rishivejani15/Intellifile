@@ -6,6 +6,134 @@ app.on('second-instance', (event, commandLine, workingDirectory) => {
 });
 
 const { autoUpdater } = require('electron-updater');
+
+// Configure autoUpdater
+autoUpdater.autoDownload = false;
+autoUpdater.autoInstallOnAppQuit = true;
+
+autoUpdater.on('checking-for-update', () => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('update-checking');
+  }
+});
+
+autoUpdater.on('update-available', (info) => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('update-available', {
+      version: info.version || 'unknown',
+      releaseNotes: info.releaseNotes,
+      releaseDate: info.releaseDate
+    });
+  }
+});
+
+autoUpdater.on('update-not-available', (info) => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('update-not-available', {
+      version: app.getVersion()
+    });
+  }
+});
+
+autoUpdater.on('download-progress', (progressObj) => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('update-download-progress', {
+      percent: Math.round(progressObj.percent || 0),
+      bytesPerSecond: progressObj.bytesPerSecond,
+      transferred: progressObj.transferred,
+      total: progressObj.total
+    });
+  }
+});
+
+autoUpdater.on('update-downloaded', (info) => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('update-downloaded', {
+      version: info ? info.version : ''
+    });
+  }
+});
+
+autoUpdater.on('error', (err) => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('update-error', {
+      message: err && err.message ? err.message : String(err)
+    });
+  }
+});
+
+ipcMain.handle('get-app-version', () => {
+  return app.getVersion();
+});
+
+ipcMain.handle('check-for-updates', async () => {
+  try {
+    const currentVer = app.getVersion();
+    if (!app.isPackaged) {
+      try {
+        const result = await autoUpdater.checkForUpdates();
+        const updateVer = result?.updateInfo?.version;
+        if (updateVer && updateVer !== currentVer) {
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('update-available', { version: updateVer });
+          }
+          return { updateAvailable: true, version: updateVer, currentVersion: currentVer };
+        }
+      } catch (_devErr) {
+        // Dev mode without GitHub release tags
+      }
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('update-not-available', { version: currentVer });
+      }
+      return { updateAvailable: false, version: currentVer, devMode: true };
+    }
+
+    const result = await autoUpdater.checkForUpdates();
+    const updateVer = result?.updateInfo?.version;
+    const isNew = updateVer && updateVer !== currentVer;
+
+    if (isNew) {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('update-available', { version: updateVer });
+      }
+      return { updateAvailable: true, version: updateVer, currentVersion: currentVer };
+    } else {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('update-not-available', { version: currentVer });
+      }
+      return { updateAvailable: false, version: currentVer };
+    }
+  } catch (err) {
+    const msg = err && err.message ? err.message : String(err);
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      // If error contains "no update" or "404", treat as no update found
+      if (msg.toLowerCase().includes('no update') || msg.includes('404')) {
+        mainWindow.webContents.send('update-not-available', { version: app.getVersion() });
+        return { updateAvailable: false, version: app.getVersion() };
+      }
+      mainWindow.webContents.send('update-error', { message: msg });
+    }
+    return { error: msg, updateAvailable: false };
+  }
+});
+
+ipcMain.handle('download-update', async () => {
+  try {
+    await autoUpdater.downloadUpdate();
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message || String(err) };
+  }
+});
+
+ipcMain.handle('update-restart', () => {
+  try {
+    autoUpdater.quitAndInstall();
+  } catch (err) {
+    console.error('[Update] Quit and install failed:', err);
+  }
+});
+
 const util = require('util');
 const execAsync = util.promisify(require('child_process').exec);
 const path = require('path');
@@ -18,6 +146,7 @@ const unzipper = require('unzipper');
 const { registerSystemRoots, getSystemRoots } = require('./system_roots');
 const { SyncEngine } = require('./sync_engine');
 const { createListDirectoryController } = require('./listDirectoryCache');
+const { FileLockService } = require('./file_lock_service');
 
 const candidateCache = new Map(); // Cache for open-with candidates
 const lookupInProgress = new Map(); // tracks in‑flight lookups per extension
@@ -364,15 +493,15 @@ app.on('second-instance', (event, commandLine) => {
                 }
               } catch (e) { } // ignore locked files
             }
-                // Only auto-select the guessed file if it was modified recently
-                const GUESS_WINDOW_MS = 2 * 60 * 1000; // 2 minutes
-                if (guessedFile && (Date.now() - maxTime) <= GUESS_WINDOW_MS) {
-                  console.log('[Heuristic] Guessed recently downloaded file:', guessedFile, 'ageMs=', Date.now() - maxTime);
-                  payload = { path: rawPath, selectFile: guessedFile };
-                } else {
-                  console.log('[Heuristic] Not confident to auto-select file (guessedFile=', guessedFile, 'ageMs=', guessedFile ? (Date.now() - maxTime) : 'N/A', ') - showing recent chooser');
-                  payload = { path: rawPath, selectFile: null };
-                }
+            // Only auto-select the guessed file if it was modified recently
+            const GUESS_WINDOW_MS = 2 * 60 * 1000; // 2 minutes
+            if (guessedFile && (Date.now() - maxTime) <= GUESS_WINDOW_MS) {
+              console.log('[Heuristic] Guessed recently downloaded file:', guessedFile, 'ageMs=', Date.now() - maxTime);
+              payload = { path: rawPath, selectFile: guessedFile };
+            } else {
+              console.log('[Heuristic] Not confident to auto-select file (guessedFile=', guessedFile, 'ageMs=', guessedFile ? (Date.now() - maxTime) : 'N/A', ') - showing recent chooser');
+              payload = { path: rawPath, selectFile: null };
+            }
           } catch (e) {
             payload = { path: rawPath, selectFile: null };
           }
@@ -936,6 +1065,9 @@ app.on('will-quit', () => {
   for (const [directoryPath, watcher] of Array.from(directoryWatchers.entries())) {
     try { watcher.close(); } catch (e) { /* ignore */ }
     directoryWatchers.delete(directoryPath);
+  }
+  if (fileLockService) {
+    fileLockService.cleanupTempFiles();
   }
 });
 
@@ -1511,9 +1643,9 @@ function checkInternetConnectivity(timeoutMs = 3000) {
           const reason = err
             ? (err.code === 'ENOTFOUND' ? 'DNS lookup failed (ENOTFOUND)'
               : err.code === 'EAI_AGAIN' ? 'DNS temporarily unavailable (EAI_AGAIN)'
-              : err.code === 'ECONNREFUSED' ? 'Connection refused (ECONNREFUSED)'
-              : err.code === 'ETIMEDOUT' ? 'Connection timed out (ETIMEDOUT)'
-              : `Network error: ${err.code || err.message}`)
+                : err.code === 'ECONNREFUSED' ? 'Connection refused (ECONNREFUSED)'
+                  : err.code === 'ETIMEDOUT' ? 'Connection timed out (ETIMEDOUT)'
+                    : `Network error: ${err.code || err.message}`)
             : 'DNS lookup timed out';
           appendLog('Firewall', `Cannot reach huggingface.co — ${reason}. Check firewall/proxy/VPN settings.`, true, 'error');
         }
@@ -1564,16 +1696,16 @@ function checkSyncServerHealth() {
         }
       });
     });
-    
+
     req.on('error', () => {
       resolve(false);
     });
-    
+
     req.on('timeout', () => {
       req.destroy();
       resolve(false);
     });
-    
+
     req.end();
   });
 }
@@ -1584,7 +1716,7 @@ function handleSyncServerFailure(message) {
     const delay = Math.pow(2, syncServerRetries) * 500; // 1000ms, 2000ms, 4000ms
     console.log(`[SyncServer] Attempt ${syncServerRetries} failed. Retrying in ${delay}ms...`);
     appendLog('SyncServer', `Attempt ${syncServerRetries} failed. Retrying in ${delay}ms...`);
-    
+
     setTimeout(() => {
       startSyncServer();
     }, delay);
@@ -1648,7 +1780,7 @@ function attemptStartSyncServer() {
       const errorMsg = err && err.message ? err.message : String(err);
       console.error('[SyncServer] Process spawn error:', errorMsg);
       appendLog('SyncServer', `Process spawn error: ${errorMsg}`, true);
-      
+
       syncServerProcess = null;
       handleSyncServerFailure(`Sync server binary crashed/failed to spawn: ${errorMsg}`);
     });
@@ -1700,7 +1832,7 @@ function attemptStartSyncServer() {
     // Start polling health check /status
     let healthCheckAttempts = 0;
     const maxHealthCheckAttempts = 10; // 10 attempts * 500ms = 5 seconds
-    
+
     healthCheckTimer = setInterval(() => {
       if (spawnedCompleted) {
         clearInterval(healthCheckTimer);
@@ -1726,7 +1858,7 @@ function attemptStartSyncServer() {
             spawnedCompleted = true;
             console.warn('[SyncServer] Health check timed out after 5 seconds.');
             appendLog('SyncServer', 'Health check timed out.', true);
-            
+
             if (syncServerProcess && !syncServerProcess.killed) {
               syncServerProcess.kill();
             }
@@ -2128,6 +2260,69 @@ function parseDateFromQuery(rawQuery) {
   };
 }
 
+// ── File Lock Service ──
+// Lazy-initialized after app is ready (needs app.getPath)
+let fileLockService = null;
+function getFileLockService() {
+  if (!fileLockService) {
+    fileLockService = new FileLockService(app.getPath('userData'));
+  }
+  return fileLockService;
+}
+
+ipcMain.handle('file-lock:lock', async (_event, filePath, password, options) => {
+  return getFileLockService().lockFile(filePath, password, options);
+});
+
+ipcMain.handle('file-lock:unlock', async (_event, fileId, password) => {
+  return getFileLockService().unlockFile(fileId, password);
+});
+
+ipcMain.handle('file-lock:access', async (_event, fileId, password) => {
+  const result = await getFileLockService().accessFile(fileId, password);
+  if (result.success && result.tempPath) {
+    shell.openPath(result.tempPath);
+  }
+  return result;
+});
+
+ipcMain.handle('file-lock:verify', async (_event, fileId, password) => {
+  return getFileLockService().verifyPassword(fileId, password);
+});
+
+ipcMain.handle('file-lock:change-password', async (_event, fileId, oldPassword, newPassword) => {
+  return getFileLockService().changePassword(fileId, oldPassword, newPassword);
+});
+
+ipcMain.handle('file-lock:get-locked-files', async () => {
+  return getFileLockService().getLockedFiles();
+});
+
+ipcMain.handle('file-lock:get-status', async (_event, filePath) => {
+  return getFileLockService().getFileStatus(filePath);
+});
+
+ipcMain.handle('file-lock:get-history', async () => {
+  return getFileLockService().getHistory();
+});
+
+ipcMain.handle('file-lock:set-auto-lock', async (_event, fileId, timeoutMinutes) => {
+  return getFileLockService().setAutoLockTimeout(fileId, timeoutMinutes);
+});
+
+ipcMain.handle('file-lock:select-file', async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: 'Select a file to lock',
+    properties: ['openFile'],
+    filters: [{ name: 'All Files', extensions: ['*'] }],
+  });
+  return { canceled: result.canceled, filePaths: result.filePaths || [] };
+});
+
+ipcMain.handle('file-lock:is-locked-extension', async (_event, filePath) => {
+  return { isLocked: getFileLockService().isLockedExtension(filePath) };
+});
+
 ipcMain.handle('ingest-file', async (event, filePath) => {
   if (!CHAT_ENABLED) return { success: false, error: 'Chat is disabled by policy.' };
   return sendToPython({ action: 'chat_ingest', file_path: filePath });
@@ -2223,6 +2418,15 @@ ipcMain.handle('settings:set', async (_event, payload = {}) => {
     } else {
       await sendToPython({ action: 'watcher_stop' });
     }
+  } else if (key === 'auto_update_wifi') {
+    const enabled = typeof value === 'string' ? value.toLowerCase() === 'true' : !!value;
+    autoUpdater.autoDownload = enabled;
+    console.log('[Settings] Wi-Fi auto-download set to:', enabled);
+  } else if (key === 'index_enabled') {
+    const enabled = typeof value === 'string' ? value.toLowerCase() === 'true' : !!value;
+    indexingPreferences.autoIndexingEnabled = enabled;
+    saveIndexingPreferences();
+    console.log('[Settings] Background indexing set to:', enabled);
   }
 
   return result;
@@ -2488,7 +2692,7 @@ function getAppInfo(exePath) {
       if (nameResult && nameResult.trim()) {
         displayName = nameResult.trim();
       }
-    } catch {}
+    } catch { }
 
     return { name: displayName || appName, exe: fullPath, icon: null };
   } catch {
@@ -2510,27 +2714,27 @@ ipcMain.handle('open-with:get-candidates', async (_, ext) => {
 
 
   // Blacklist common generic editors/interpreters that we don't want to show as primary candidates
-      const APP_BLACKLIST = ['notepad.exe', 'notepad++.exe', 'python.exe', 'pythonw.exe', 'py.exe'];
-      const candidates = [];
-      const seenExe = new Set();
-      // Quick fallback for image and code extensions – adds a default entry and returns early
-      const quickFallback = [];
-      const imageExts = ['jpg','jpeg','png','gif','bmp','webp','tiff','svg'];
-      if (imageExts.includes(cleanExt)) {
-        quickFallback.push({ name: 'Open with default app', exe: null });
-      }
-      const codeExts = ['js','jsx','ts','tsx','py','java','cpp','c','cs','rb','php'];
-      if (codeExts.includes(cleanExt)) {
-        quickFallback.push({ name: 'Open with default app', exe: null });
-      }
-      // Return early for these extensions
-      if (quickFallback.length) {
-        candidateCache.set(cleanExt, { candidates: quickFallback, timestamp: Date.now() });
-        openWithMap[cleanExt] = quickFallback;
-        saveOpenWithMap();
-        console.log('[OpenWith] Quick fallback used, returning early for', cleanExt);
-        return { candidates: quickFallback };
-      }
+  const APP_BLACKLIST = ['notepad.exe', 'notepad++.exe', 'python.exe', 'pythonw.exe', 'py.exe'];
+  const candidates = [];
+  const seenExe = new Set();
+  // Quick fallback for image and code extensions – adds a default entry and returns early
+  const quickFallback = [];
+  const imageExts = ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'tiff', 'svg'];
+  if (imageExts.includes(cleanExt)) {
+    quickFallback.push({ name: 'Open with default app', exe: null });
+  }
+  const codeExts = ['js', 'jsx', 'ts', 'tsx', 'py', 'java', 'cpp', 'c', 'cs', 'rb', 'php'];
+  if (codeExts.includes(cleanExt)) {
+    quickFallback.push({ name: 'Open with default app', exe: null });
+  }
+  // Return early for these extensions
+  if (quickFallback.length) {
+    candidateCache.set(cleanExt, { candidates: quickFallback, timestamp: Date.now() });
+    openWithMap[cleanExt] = quickFallback;
+    saveOpenWithMap();
+    console.log('[OpenWith] Quick fallback used, returning early for', cleanExt);
+    return { candidates: quickFallback };
+  }
   // const APP_BLACKLIST = ['notepad.exe', 'notepad++.exe', 'python.exe', 'pythonw.exe', 'py.exe']; // duplicate removed
   // const candidates = []; // duplicate removed
   // const seenExe = new Set(); // duplicate removed
@@ -2640,10 +2844,10 @@ ipcMain.handle('open-with:get-candidates', async (_, ext) => {
 
   // Fallback: Common apps by extension - check hardcoded paths
   const commonApps = {
-  // Expanded common editors for programming languages
-  // VS Code (code.exe) covers many, plus typical IDEs/editors
-  // .jsx/.tsx (React/TSX), .c/.cpp/.java/.go/.rb/.php/.sh etc.
-  // Add more entries as needed for broader detection.
+    // Expanded common editors for programming languages
+    // VS Code (code.exe) covers many, plus typical IDEs/editors
+    // .jsx/.tsx (React/TSX), .c/.cpp/.java/.go/.rb/.php/.sh etc.
+    // Add more entries as needed for broader detection.
 
     txt: ['notepad.exe'],
     log: ['notepad.exe'],
@@ -2801,9 +3005,9 @@ ipcMain.handle('open-with:get-candidates', async (_, ext) => {
               // addApp ensures dedup and blacklist handling
               addApp(fullPath);
             }
-          } catch (_) {}
+          } catch (_) { }
         }
-      } catch (_) {}
+      } catch (_) { }
     }
     // Re‑apply blacklist filter after scanning program files
     filtered = candidates.filter(c => {
@@ -2815,41 +3019,41 @@ ipcMain.handle('open-with:get-candidates', async (_, ext) => {
   }
 
   // Additional recursive scan of Windows Store apps to catch UWP executables (Antigravity, Photos, etc.)
-      if (filtered.length === 0) {
-        const storeDir = path.join(process.env.LOCALAPPDATA || '', 'Microsoft', 'WindowsApps');
-        const scanDirForExes = (dir, depth = 0) => {
-          if (!dir || depth > 5) return; // increase depth to capture deeper UWP packages
-          try {
-            const entries = fs.readdirSync(dir);
-            for (const entry of entries) {
-              const fullPath = path.join(dir, entry);
-              try {
-                const stats = fs.statSync(fullPath);
-                if (stats.isFile() && fullPath.toLowerCase().endsWith('.exe')) {
-                  addApp(fullPath);
-                } else if (stats.isDirectory()) {
-                  scanDirForExes(fullPath, depth + 1);
-                }
-              } catch (_) {}
-            }
-          } catch (_) {}
-        };
-        scanDirForExes(storeDir);
-        // Re‑apply blacklist filter after scanning store apps
-        filtered = candidates.filter(c => {
-          try {
-            if (!c.exe) return true;
-            const base = require('path').basename(c.exe).toLowerCase();
-            return !APP_BLACKLIST.includes(base);
-          } catch (_) { return true; }
-        });
-      }
-
-      // If still empty after program‑files scan, add generic editors based on file type
   if (filtered.length === 0) {
-    const imageExts = ['jpg','jpeg','png','gif','bmp','webp','tiff','svg'];
+    const storeDir = path.join(process.env.LOCALAPPDATA || '', 'Microsoft', 'WindowsApps');
+    const scanDirForExes = (dir, depth = 0) => {
+      if (!dir || depth > 5) return; // increase depth to capture deeper UWP packages
+      try {
+        const entries = fs.readdirSync(dir);
+        for (const entry of entries) {
+          const fullPath = path.join(dir, entry);
+          try {
+            const stats = fs.statSync(fullPath);
+            if (stats.isFile() && fullPath.toLowerCase().endsWith('.exe')) {
+              addApp(fullPath);
+            } else if (stats.isDirectory()) {
+              scanDirForExes(fullPath, depth + 1);
+            }
+          } catch (_) { }
+        }
+      } catch (_) { }
+    };
+    scanDirForExes(storeDir);
+    // Re‑apply blacklist filter after scanning store apps
+    filtered = candidates.filter(c => {
+      try {
+        if (!c.exe) return true;
+        const base = require('path').basename(c.exe).toLowerCase();
+        return !APP_BLACKLIST.includes(base);
+      } catch (_) { return true; }
+    });
+  }
+
+  // If still empty after program‑files scan, add generic editors based on file type
+  if (filtered.length === 0) {
+    const imageExts = ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'tiff', 'svg'];
     const isImage = imageExts.includes(cleanExt);
-    const genericList = isImage ? ['photos.exe','mspaint.exe'] : ['code.exe','notepad++.exe','sublime_text.exe','atom.exe'];
+    const genericList = isImage ? ['photos.exe', 'mspaint.exe'] : ['code.exe', 'notepad++.exe', 'sublime_text.exe', 'atom.exe'];
     genericList.forEach(name => {
       const possible = [
         process.env.WINDIR + '\\System32\\' + name,
@@ -3015,8 +3219,8 @@ public class OpenWithDialog {
       });
 
       // Cleanup
-      try { fs.unlinkSync(tempCsPath); } catch {}
-      try { fs.unlinkSync(tempExePath); } catch {}
+      try { fs.unlinkSync(tempCsPath); } catch { }
+      try { fs.unlinkSync(tempExePath); } catch { }
 
       console.log('[open-with:show-native-dialog] Dialog launched via SHOpenWithDialog');
       return true;
@@ -3269,6 +3473,32 @@ function notifyIndexComplete(payload) {
 // Always-available handler for opening files with the OS default app
 ipcMain.handle('open-file', async (event, filePath) => {
   try {
+    // Check if the file is locked before opening
+    const lockService = getFileLockService();
+    if (lockService.isLockedExtension(filePath)) {
+      const entry = lockService.findByEncryptedPath(filePath);
+      if (entry) {
+        return {
+          success: false,
+          error: 'This file is locked. Please unlock it first.',
+          isLocked: true,
+          fileId: entry.id,
+          originalName: entry.originalName,
+        };
+      }
+    }
+    // Also check if the original path is tracked as locked
+    const status = lockService.getFileStatus(filePath);
+    if (status.isLocked) {
+      return {
+        success: false,
+        error: 'This file is locked. Please unlock it first.',
+        isLocked: true,
+        fileId: status.fileId,
+        originalName: status.entry?.originalName,
+      };
+    }
+
     const result = await shell.openPath(filePath);
     if (result) {
       return { success: false, error: result };
@@ -3678,9 +3908,9 @@ function registerIpcHandlers() {
     }
   });
 
-ipcMain.handle('list-directory', async (event, dirPath, options = {}) => {
-  return listDirectoryController.get(dirPath, options);
-});
+  ipcMain.handle('list-directory', async (event, dirPath, options = {}) => {
+    return listDirectoryController.get(dirPath, options);
+  });
 
   ipcMain.handle('get-files-to-merge', async () => {
     const docsPath = path.join(process.env.USERPROFILE, 'Documents');
@@ -4506,17 +4736,6 @@ ipcMain.handle('list-directory', async (event, dirPath, options = {}) => {
     }
   });
 
-  // Update handlers
-  ipcMain.handle('check-for-updates', async () => {
-    console.log('[check-for-updates] Manual update check requested');
-    forceCheckForUpdates();
-  });
-
-  ipcMain.on('update-restart', () => {
-    console.log('[update-restart] User confirmed restart for update');
-    autoUpdater.quitAndInstall();
-  });
-
 }
 
 // Separate function to get drives info (can be called internally)
@@ -4715,7 +4934,6 @@ function createWindow() {
 app.on('ready', () => {
   loadIndexingPreferences();
   registerIpcHandlers();
-  initializeUpdater();
   startPython();
   startSyncServer();
   ensureSyncEngine();

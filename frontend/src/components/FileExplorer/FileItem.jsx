@@ -46,7 +46,12 @@ function FileItem({
       onDragOver={onDragOver}
       onDrop={(e) => onDrop(e, item)}
     >
-      <div className="file-icon">{getFileIcon(item)}</div>
+      <div className="file-icon">
+        {getFileIcon(item)}
+        {item.name?.endsWith('.intellilock') && (
+          <span className="file-lock-badge" title="Locked file">🔒</span>
+        )}
+      </div>
       <div className="file-info">
         {isRenaming ? (
           <input

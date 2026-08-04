@@ -30,6 +30,8 @@ function ContextMenu({
   onVersioning,
   onCompress,
   onExtract,
+  onLockFile,
+  onUnlockFile,
   onClose,
   canVersionItem = true,
 }) {
@@ -276,6 +278,22 @@ if (!selectedItem) return null;
           </div>
         )}
         {(selectedItem?.type !== 'drive' || isZipFile) && (
+          <div className="context-menu-divider"></div>
+        )}
+        {selectedItem?.type === 'file' && !selectedItem?.name?.endsWith('.intellilock') && (
+          <div className="context-menu-item" onClick={() => { onLockFile?.(); onClose(); }}>
+            🔒 Lock File
+          </div>
+        )}
+        {selectedItem?.name?.endsWith('.intellilock') && (
+          <div className="context-menu-item" onClick={() => { onUnlockFile?.(); onClose(); }}>
+            🔓 Unlock File
+          </div>
+        )}
+        {selectedItem?.name?.endsWith('.intellilock') && (
+          <div className="context-menu-divider"></div>
+        )}
+        {selectedItem?.type === 'file' && !selectedItem?.name?.endsWith('.intellilock') && (
           <div className="context-menu-divider"></div>
         )}
         <div

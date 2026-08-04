@@ -91,6 +91,11 @@ async def move_and_log(db, original_path, category, tags, sort_root) -> str:
             (source_path, target_path, category, ",".join(tags or []), time.time()),
         )
         conn.commit()
+        try:
+            from core.db import log_analytics_event
+            log_analytics_event("autosort_executed", {"category": category})
+        except Exception:
+            pass
     finally:
         if should_close:
             conn.close()

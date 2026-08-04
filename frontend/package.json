@@ -43,6 +43,7 @@
       "package.json",
       "main.js",
       "preload.js",
+      "file_lock_service.js",
       "system_roots.js",
       "sync_engine.js",
       "listDirectoryCache.js",
