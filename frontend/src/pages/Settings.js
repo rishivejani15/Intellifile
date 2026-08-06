@@ -63,7 +63,7 @@ export default function Settings({ theme, onThemeChange, onStartTour }) {
   // Load settings
   const loadSettings = async () => {
     try {
-      const [enabled, folders, root, idx, model, telemetry, autoWi] = await Promise.all([
+      const [enabled, folders, root, idx, model, telemetry, autoWi, dbTheme] = await Promise.all([
         ipc?.getSetting?.('auto_sort_enabled'),
         ipc?.getSetting?.('watched_folders'),
         ipc?.getSetting?.('sort_root'),
@@ -71,6 +71,7 @@ export default function Settings({ theme, onThemeChange, onStartTour }) {
         ipc?.getSetting?.('ai_model_path'),
         ipc?.getSetting?.('telemetry_enabled'),
         ipc?.getSetting?.('auto_update_wifi'),
+        ipc?.getSetting?.('theme'),
       ]);
 
       const parseBool = (obj, defaultVal = false) => {
@@ -90,7 +91,7 @@ export default function Settings({ theme, onThemeChange, onStartTour }) {
         ai_model_path: model?.value || '',
         telemetry_enabled: parseBool(telemetry, false),
         auto_update_wifi: parseBool(autoWi, false),
-        theme: theme || 'system',
+        theme: dbTheme?.value || theme || 'system',
       };
 
       setInitialSettings(values);

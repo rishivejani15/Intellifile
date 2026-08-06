@@ -12,9 +12,8 @@ import OnboardingTour from './components/OnboardingTour';
 
 const ipcRenderer = window.electron?.ipcRenderer;
 const TOUR_COMPLETED_KEY = 'intellifile-onboarding-completed-v1';
-// Keep this enabled while the onboarding experience is being reviewed. Set it
-// to false before release to show the tour only to first-time users.
-const TOUR_ALWAYS_SHOW = true;
+
+
 
 
 
@@ -40,6 +39,25 @@ function App() {
 
   useEffect(() => {
     console.log('App mounted, ipcRenderer available:', !!ipcRenderer);
+    
+    // Load theme from IPC backend on mount to ensure it persists
+    const loadTheme = async () => {
+      try {
+        let themeSetting = null;
+        if (window.intellifile?.getSetting) {
+          themeSetting = await window.intellifile.getSetting('theme');
+        } else if (ipcRenderer) {
+          themeSetting = await ipcRenderer.invoke('get-setting', 'theme');
+        }
+        
+        if (themeSetting && themeSetting.value) {
+          setTheme(themeSetting.value);
+        }
+      } catch (err) {
+        console.warn('[App] Failed to load theme setting:', err);
+      }
+    };
+    loadTheme();
   }, []);
 
   useEffect(() => {
@@ -140,7 +158,13 @@ function App() {
   useEffect(() => {
     if (!setupComplete) return;
     try {
-      setShowOnboardingTour(TOUR_ALWAYS_SHOW || !localStorage.getItem(TOUR_COMPLETED_KEY));
+      const hasSeenTour = localStorage.getItem(TOUR_COMPLETED_KEY) === 'true';
+      if (!hasSeenTour) {
+        localStorage.setItem(TOUR_COMPLETED_KEY, 'true');
+        setShowOnboardingTour(true);
+      } else {
+        setShowOnboardingTour(false);
+      }
     } catch (_) {
       // If storage is unavailable, show the tour for this session only.
       setShowOnboardingTour(true);
@@ -153,9 +177,7 @@ function App() {
   };
 
   const closeOnboardingTour = () => {
-    if (!TOUR_ALWAYS_SHOW) {
-      try { localStorage.setItem(TOUR_COMPLETED_KEY, 'true'); } catch (_) {}
-    }
+    try { localStorage.setItem(TOUR_COMPLETED_KEY, 'true'); } catch (_) {}
     setShowOnboardingTour(false);
   };
 
