@@ -11,6 +11,7 @@
 
 import 'dart:async';
 import 'dart:io';
+import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
@@ -80,6 +81,8 @@ class SyncManager extends ChangeNotifier {
   String? _connectedAddress;
   String? _lastLanAddress;
   String? _lastConnectionType;
+  String _deviceId = '';
+  String? _connectedDeviceName;
   final List<SyncedFile> _files = [];
   final List<String> _syncLog = [];
   int _pendingSyncs = 0;
@@ -90,13 +93,14 @@ class SyncManager extends ChangeNotifier {
   // Pending local changes awaiting PC approval — maps filepath → change metadata
   // ('local_only'|'modified'|'deleted') so _handleSyncApproved knows what to send.
   final Map<String, _PendingApproval> _awaitingPcApproval = {};
-  final Set<String> _locallyRemovedFiles = {};
 
   SyncStatus get status => _status;
   String get statusMessage => _statusMessage;
   String? get connectedAddress => _connectedAddress;
   String? get lastLanAddress => _lastLanAddress;
   String? get lastConnectionType => _lastConnectionType;
+  String get deviceId => _deviceId;
+  String? get connectedDeviceName => _connectedDeviceName;
   List<SyncedFile> get files => List.unmodifiable(_files);
   List<String> get syncLog => List.unmodifiable(_syncLog);
   int get pendingSyncs => _pendingSyncs;
@@ -104,8 +108,7 @@ class SyncManager extends ChangeNotifier {
   List<PendingChange> get pendingChanges => List.unmodifiable(_pendingChanges);
   bool get hasPendingChanges => _pendingChanges.isNotEmpty;
   int get pendingChangeCount => _pendingChanges.length;
-
-  void markLocallyRemoved(String relPath) => _locallyRemovedFiles.add(relPath);
+  void addFile(String filepath, String hash) => _lastLocalTree[filepath] = hash;
 
   // File watcher
   Timer? _watchTimer;
@@ -148,6 +151,15 @@ class SyncManager extends ChangeNotifier {
 
     // Load saved connection settings
     final prefs = await SharedPreferences.getInstance();
+
+    // Generate or load persistent device ID
+    _deviceId = prefs.getString('device_id') ?? '';
+    if (_deviceId.isEmpty) {
+      _deviceId = _generateDeviceId();
+      await prefs.setString('device_id', _deviceId);
+    }
+    debugPrint('[sync] Device ID: $_deviceId');
+
     final signalingUrl = prefs.getString('remote_signaling_url');
     final sessionId = prefs.getString('remote_session_id');
     final isInitiator = prefs.getBool('remote_is_initiator');
@@ -166,7 +178,7 @@ class SyncManager extends ChangeNotifier {
         if (_connectionProfile != _ConnectionProfile.lan) return;
         if (!(_connection?.isConnected ?? false)) {
           _connectedAddress = address;
-          await _connection?.connect(LanConnectionTarget(address));
+          await _connection?.connect(LanConnectionTarget(address, deviceId: _deviceId));
           // Handshake is initiated after receiving server's handshake message
         }
       });
@@ -208,7 +220,49 @@ class SyncManager extends ChangeNotifier {
     _lastConnectionType = 'lan';
     await _rebindTransport(WsSyncTransport(onMessage: _handleRawMessage));
     _connectedAddress = address;
-    await _connection?.connect(LanConnectionTarget(address));
+    await _connection?.connect(LanConnectionTarget(address, deviceId: _deviceId));
+  }
+
+  /// Whether the mobile app is currently connected to a PC.
+  bool get isConnected =>
+      _status == SyncStatus.synced ||
+      _status == SyncStatus.syncing;
+
+  /// Disconnect from the currently connected device.
+  /// Tears down the transport, stops mDNS, clears pending state.
+  Future<void> disconnect() async {
+    _addLog('Disconnecting from device...');
+    debugPrint('[sync] Manual disconnect');
+
+    // Stop auto-discovery so we don't reconnect immediately
+    await _mdns.stop();
+
+    // Tear down the transport
+    await _connection?.disconnect();
+    _connectionStateSub?.cancel();
+    _connection?.dispose();
+    _connection = null;
+    _connectionStateSub = null;
+
+    // Clear state
+    _connectedAddress = null;
+    _connectedDeviceName = null;
+    _pendingChanges.clear();
+    _awaitingPcApproval.clear();
+
+    // Clear saved connection settings so we don't auto-reconnect on restart
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('lan_address');
+    await prefs.remove('remote_signaling_url');
+    await prefs.remove('remote_session_id');
+    await prefs.remove('remote_is_initiator');
+    await prefs.remove('last_connection_type');
+    _lastConnectionType = null;
+    _lastLanAddress = null;
+
+    _setStatus(SyncStatus.idle, 'Disconnected');
+    _addLog('Disconnected from device');
+    notifyListeners();
   }
 
   /// Connect to a remote peer via WebRTC P2P through a signaling server.
@@ -337,6 +391,9 @@ class SyncManager extends ChangeNotifier {
         case ConflictMessage():
           _handleConflict(msg);
         case InSyncMessage():
+          if (_status != SyncStatus.synced) {
+            _setStatus(SyncStatus.syncing, 'Processing PC files...');
+          }
           _setStatus(SyncStatus.synced, 'All files in sync');
           _addLog('Already in sync with PC');
         case SyncCompleteMessage():
@@ -375,6 +432,11 @@ class SyncManager extends ChangeNotifier {
     }
     _setStatus(SyncStatus.syncing, 'Exchanging file state...');
 
+    if (msg.deviceName != null) {
+      _connectedDeviceName = msg.deviceName;
+      notifyListeners();
+    }
+
     // Build our local state
     final localTree = await buildMerkleTree(_syncFolder);
     final localClocks = await VectorClockStore.loadAllClocks();
@@ -394,6 +456,8 @@ class SyncManager extends ChangeNotifier {
       'tree': localTree,
       'clocks': localClocks,
       'block_checksums': serializedChecksums,
+      'device_id': _deviceId,
+      'device_name': Platform.isAndroid ? 'Android Device' : Platform.isIOS ? 'iOS Device' : 'Mobile Device',
     });
 
     final rootHash = localTree['__root__']?.toString();
@@ -653,13 +717,6 @@ class SyncManager extends ChangeNotifier {
           }
         }
 
-        if (changeType == 'remote_only') {
-          if (_locallyRemovedFiles.remove(filepath)) {
-            _lastLocalTree.remove(filepath);
-            continue;
-          }
-        }
-
         // Skip if we're already waiting for PC approval on this file
         if (_awaitingPcApproval.containsKey(filepath)) continue;
 
@@ -729,6 +786,47 @@ class SyncManager extends ChangeNotifier {
     await _refreshFileList();
   }
 
+  /// Add files from external paths into the sync folder.
+  /// Copies each file into [_syncFolder] and refreshes the file list.
+  /// The local watcher will automatically detect new files and notify the PC.
+  Future<int> addFilesToSync(List<String> filePaths) async {
+    int added = 0;
+    for (final srcPath in filePaths) {
+      try {
+        final srcFile = File(srcPath);
+        if (!await srcFile.exists()) continue;
+
+        final fileName = p.basename(srcPath);
+        final destPath = p.join(_syncFolder, fileName);
+
+        // If a file with the same name already exists, add a suffix
+        String finalDest = destPath;
+        if (await File(destPath).exists()) {
+          final nameOnly = p.basenameWithoutExtension(fileName);
+          final ext = p.extension(fileName);
+          int suffix = 1;
+          while (await File(finalDest).exists()) {
+            finalDest = p.join(_syncFolder, '$nameOnly ($suffix)$ext');
+            suffix++;
+          }
+        }
+
+        await srcFile.copy(finalDest);
+        added++;
+        _addLog('Added file: ${p.basename(finalDest)}');
+        debugPrint('[sync] File added to sync folder: $finalDest');
+      } catch (e) {
+        _addLog('Error adding file ${p.basename(srcPath)}: $e');
+        debugPrint('[sync] Error adding file: $e');
+      }
+    }
+
+    if (added > 0) {
+      await _refreshFileList();
+    }
+    return added;
+  }
+
   void _setStatus(SyncStatus newStatus, String message) {
     _status = newStatus;
     _statusMessage = message;
@@ -752,6 +850,7 @@ class SyncManager extends ChangeNotifier {
     _connectionStateSub = _connection!.stateStream.listen((state) {
       switch (state) {
         case SyncConnectionState.disconnected:
+          _connectedDeviceName = null;
           _setStatus(SyncStatus.discovering, _disconnectedMessageForProfile());
           if (_connectionProfile == _ConnectionProfile.lan) {
             _connectedAddress = null;
@@ -815,4 +914,12 @@ class _PendingApproval {
   _PendingApproval(this.changeType) : sentAt = DateTime.now();
 
   bool get isExpired => DateTime.now().difference(sentAt).inSeconds > 30;
+}
+
+/// Generate a unique device ID (UUID-like string).
+String _generateDeviceId() {
+  final random = Random.secure();
+  final bytes = List<int>.generate(16, (_) => random.nextInt(256));
+  final hex = bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
+  return '${hex.substring(0, 8)}-${hex.substring(8, 12)}-${hex.substring(12, 16)}-${hex.substring(16, 20)}-${hex.substring(20)}';
 }

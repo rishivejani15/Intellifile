@@ -5,6 +5,7 @@
 
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
+import 'package:file_picker/file_picker.dart';
 import '../sync/sync_manager.dart';
 import '../widgets/sync_status_bar.dart';
 import '../widgets/file_list_tile.dart';
@@ -104,6 +105,95 @@ class _HomeScreenState extends State<HomeScreen>
               pendingSyncs: sm.pendingSyncs,
             ),
 
+            // ── Connected Device Info ─────────────────────────────────────
+            if (sm.isConnected && sm.connectedAddress != null)
+              Container(
+                margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF18181B),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: const Color(0xFF3FA372).withOpacity(0.2),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 36,
+                      height: 36,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF3FA372).withOpacity(0.12),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: const Icon(
+                        Icons.computer,
+                        color: Color(0xFF3FA372),
+                        size: 18,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Connected Device',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                              color: Colors.white,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            sm.connectedAddress!,
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontFamily: 'monospace',
+                              color: Colors.white.withOpacity(0.5),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF3FA372).withOpacity(0.15),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Container(
+                            width: 6,
+                            height: 6,
+                            decoration: const BoxDecoration(
+                              color: Color(0xFF3FA372),
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                          const SizedBox(width: 4),
+                          const Text(
+                            'LIVE',
+                            style: TextStyle(
+                              fontSize: 9,
+                              fontWeight: FontWeight.w700,
+                              color: Color(0xFF3FA372),
+                              letterSpacing: 0.5,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
             // ── Pending Sync Banner ──────────────────────────────────────
             if (sm.hasPendingChanges)
               PendingSyncBanner(
@@ -118,13 +208,13 @@ class _HomeScreenState extends State<HomeScreen>
             Container(
               margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
               decoration: BoxDecoration(
-                color: const Color(0xFF1A1A2E),
+                color: const Color(0xFF18181B),
                 borderRadius: BorderRadius.circular(12),
               ),
               child: TabBar(
                 controller: _tabController,
                 indicator: BoxDecoration(
-                  color: const Color(0xFF6C5CE7),
+                  color: const Color(0xFF3FA372),
                   borderRadius: BorderRadius.circular(12),
                 ),
                 indicatorSize: TabBarIndicatorSize.tab,
@@ -152,13 +242,39 @@ class _HomeScreenState extends State<HomeScreen>
           ],
         ),
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _showConnectionSheet(context),
-        backgroundColor: const Color(0xFF6C5CE7),
-        foregroundColor: Colors.white,
-        icon: const Icon(Icons.link),
-        label: const Text('Connect'),
+      floatingActionButton: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          FloatingActionButton.extended(
+            heroTag: 'addFiles',
+            onPressed: () => _handleAddFiles(context),
+            backgroundColor: const Color(0xFF3FA372),
+            foregroundColor: Colors.white,
+            icon: const Icon(Icons.add),
+            label: const Text('Add Files'),
+          ),
+          const SizedBox(width: 12),
+          if (sm.isConnected)
+            FloatingActionButton.extended(
+              heroTag: 'disconnect',
+              onPressed: () => _handleDisconnect(context),
+              backgroundColor: Colors.redAccent,
+              foregroundColor: Colors.white,
+              icon: const Icon(Icons.link_off),
+              label: const Text('Disconnect'),
+            )
+          else
+            FloatingActionButton.extended(
+              heroTag: 'connect',
+              onPressed: () => _showConnectionSheet(context),
+              backgroundColor: const Color(0xFF3FA372).withOpacity(0.85),
+              foregroundColor: Colors.white,
+              icon: const Icon(Icons.link),
+              label: const Text('Connect'),
+            ),
+        ],
       ),
+      floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
     );
   }
 
@@ -172,7 +288,7 @@ class _HomeScreenState extends State<HomeScreen>
             height: 44,
             decoration: BoxDecoration(
               gradient: const LinearGradient(
-                colors: [Color(0xFF6C5CE7), Color(0xFFA29BFE)],
+                colors: [Color(0xFF3FA372), Color(0xFF5DC08C)],
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
               ),
@@ -236,7 +352,7 @@ class _HomeScreenState extends State<HomeScreen>
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
             decoration: BoxDecoration(
-              color: const Color(0xFF1A1A2E),
+              color: const Color(0xFF18181B),
               borderRadius: BorderRadius.circular(8),
             ),
             child: Row(
@@ -339,7 +455,7 @@ class _HomeScreenState extends State<HomeScreen>
           bgColor = const Color(0xFF00B894).withOpacity(0.06);
           textColor = const Color(0xFF00B894).withOpacity(0.8);
         } else {
-          bgColor = const Color(0xFF1A1A2E);
+          bgColor = const Color(0xFF18181B);
           textColor = Colors.white.withOpacity(0.7);
         }
 
@@ -363,6 +479,110 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
+  Future<void> _handleDisconnect(BuildContext context) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF18181B),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text(
+          'Disconnect?',
+          style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700),
+        ),
+        content: Text(
+          'Disconnect from ${widget.syncManager.connectedAddress ?? 'the current device'}? You can reconnect later.',
+          style: TextStyle(color: Colors.white.withOpacity(0.7)),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: Text(
+              'Cancel',
+              style: TextStyle(color: Colors.white.withOpacity(0.5)),
+            ),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.redAccent,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+            ),
+            child: const Text('Disconnect'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      await widget.syncManager.disconnect();
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Row(
+            children: [
+              Icon(Icons.link_off, color: Colors.white, size: 18),
+              SizedBox(width: 8),
+              Text('Disconnected from device'),
+            ],
+          ),
+          backgroundColor: Color(0xFF636e72),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
+  }
+
+  Future<void> _handleAddFiles(BuildContext context) async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        allowMultiple: true,
+        type: FileType.any,
+      );
+
+      if (result == null || result.files.isEmpty) return;
+
+      final paths = result.files
+          .where((f) => f.path != null)
+          .map((f) => f.path!)
+          .toList();
+
+      if (paths.isEmpty) return;
+
+      final added = await widget.syncManager.addFilesToSync(paths);
+
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const Icon(Icons.check_circle, color: Colors.white, size: 18),
+              const SizedBox(width: 8),
+              Text(added > 0
+                  ? 'Added $added file${added != 1 ? 's' : ''} to sync'
+                  : 'No files were added'),
+            ],
+          ),
+          backgroundColor: added > 0
+              ? const Color(0xFF3FA372)
+              : const Color(0xFF636e72),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } catch (e) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to add files: $e'),
+          backgroundColor: Colors.redAccent,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
+  }
+
   Future<void> _showConnectionSheet(BuildContext context) async {
     var isLanMode = true;
     var isInitiator = true;
@@ -371,7 +591,7 @@ class _HomeScreenState extends State<HomeScreen>
       await showModalBottomSheet(
         context: context,
         isScrollControlled: true,
-        backgroundColor: const Color(0xFF1A1A2E),
+        backgroundColor: const Color(0xFF18181B),
         shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
         ),
@@ -409,7 +629,7 @@ class _HomeScreenState extends State<HomeScreen>
                               });
                             },
                             borderRadius: BorderRadius.circular(10),
-                            fillColor: const Color(0xFF6C5CE7),
+                            fillColor: const Color(0xFF3FA372),
                             selectedColor: Colors.white,
                             color: Colors.white70,
                             constraints: const BoxConstraints(
@@ -438,14 +658,14 @@ class _HomeScreenState extends State<HomeScreen>
                                   color: Colors.white.withOpacity(0.3),
                                 ),
                                 filled: true,
-                                fillColor: const Color(0xFF0D0D1A),
+                                fillColor: const Color(0xFF09090B),
                                 border: OutlineInputBorder(
                                   borderRadius: BorderRadius.circular(12),
                                   borderSide: BorderSide.none,
                                 ),
                                 prefixIcon: const Icon(
                                   Icons.computer,
-                                  color: Color(0xFF6C5CE7),
+                                  color: Color(0xFF3FA372),
                                 ),
                               ),
                               keyboardType: TextInputType.url,
@@ -486,10 +706,10 @@ class _HomeScreenState extends State<HomeScreen>
                                 },
                                 style: OutlinedButton.styleFrom(
                                   side: const BorderSide(
-                                    color: Color(0xFF6C5CE7),
+                                    color: Color(0xFF3FA372),
                                   ),
                                   foregroundColor: Colors.white,
-                                  backgroundColor: const Color(0xFF111127),
+                                  backgroundColor: const Color(0xFF0F0F12),
                                   shape: RoundedRectangleBorder(
                                     borderRadius: BorderRadius.circular(12),
                                   ),
@@ -514,14 +734,14 @@ class _HomeScreenState extends State<HomeScreen>
                                   color: Colors.white.withOpacity(0.3),
                                 ),
                                 filled: true,
-                                fillColor: const Color(0xFF0D0D1A),
+                                fillColor: const Color(0xFF09090B),
                                 border: OutlineInputBorder(
                                   borderRadius: BorderRadius.circular(12),
                                   borderSide: BorderSide.none,
                                 ),
                                 prefixIcon: const Icon(
                                   Icons.hub,
-                                  color: Color(0xFF6C5CE7),
+                                  color: Color(0xFF3FA372),
                                 ),
                               ),
                               keyboardType: TextInputType.url,
@@ -541,14 +761,14 @@ class _HomeScreenState extends State<HomeScreen>
                                   color: Colors.white.withOpacity(0.3),
                                 ),
                                 filled: true,
-                                fillColor: const Color(0xFF0D0D1A),
+                                fillColor: const Color(0xFF09090B),
                                 border: OutlineInputBorder(
                                   borderRadius: BorderRadius.circular(12),
                                   borderSide: BorderSide.none,
                                 ),
                                 prefixIcon: const Icon(
                                   Icons.vpn_key,
-                                  color: Color(0xFF6C5CE7),
+                                  color: Color(0xFF3FA372),
                                 ),
                               ),
                             ),
@@ -561,7 +781,7 @@ class _HomeScreenState extends State<HomeScreen>
                                 });
                               },
                               borderRadius: BorderRadius.circular(10),
-                              fillColor: const Color(0xFF6C5CE7),
+                              fillColor: const Color(0xFF3FA372),
                               selectedColor: Colors.white,
                               color: Colors.white70,
                               constraints: const BoxConstraints(
@@ -614,7 +834,7 @@ class _HomeScreenState extends State<HomeScreen>
                                 }
                               },
                               style: ElevatedButton.styleFrom(
-                                backgroundColor: const Color(0xFF6C5CE7),
+                                backgroundColor: const Color(0xFF3FA372),
                                 foregroundColor: Colors.white,
                                 shape: RoundedRectangleBorder(
                                   borderRadius: BorderRadius.circular(12),

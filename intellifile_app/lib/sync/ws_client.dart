@@ -24,6 +24,7 @@ class WsClient {
   int _reconnectAttempts = 0;
   bool _shouldReconnect = true;
   bool _isDisposed = false;
+  String? _deviceId;
 
   /// Messages queued while disconnected — sent on reconnect.
   final _pendingMessages = <Map<String, dynamic>>[];
@@ -42,10 +43,11 @@ class WsClient {
   WsClient({required this.onMessage});
 
   /// Connect to the PC sync server.
-  Future<void> connect(String address) async {
+  Future<void> connect(String address, {String? deviceId}) async {
     if (_state == WsConnectionState.connected && _address == address) return;
 
     _address = address;
+    _deviceId = deviceId;
     _shouldReconnect = true;
     _reconnectAttempts = 0;
     await _doConnect();
@@ -61,7 +63,7 @@ class WsClient {
       if (!target.contains(':')) {
         target = '$target:8765';
       }
-      final uri = Uri.parse('ws://$target/sync');
+      final uri = Uri.parse('ws://$target/sync${_deviceId != null ? '?device_id=$_deviceId' : ''}');
       debugPrint('[ws] Connecting to $uri ...');
 
       _channel = IOWebSocketChannel.connect(

@@ -30,18 +30,18 @@ class PendingSyncBanner extends StatelessWidget {
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
       decoration: BoxDecoration(
         gradient: const LinearGradient(
-          colors: [Color(0xFF2D1B69), Color(0xFF1A1A2E)],
+          colors: [Color(0xFF1A3D2B), Color(0xFF18181B)],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
-          color: const Color(0xFF6C5CE7).withOpacity(0.3),
+          color: const Color(0xFF3FA372).withOpacity(0.3),
           width: 1,
         ),
         boxShadow: [
           BoxShadow(
-            color: const Color(0xFF6C5CE7).withOpacity(0.15),
+            color: const Color(0xFF3FA372).withOpacity(0.15),
             blurRadius: 16,
             offset: const Offset(0, 4),
           ),
@@ -59,12 +59,12 @@ class PendingSyncBanner extends StatelessWidget {
                   width: 32,
                   height: 32,
                   decoration: BoxDecoration(
-                    color: const Color(0xFF6C5CE7).withOpacity(0.2),
+                    color: const Color(0xFF3FA372).withOpacity(0.2),
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: const Icon(
                     Icons.sync_problem,
-                    color: Color(0xFFA29BFE),
+                    color: Color(0xFF5DC08C),
                     size: 18,
                   ),
                 ),
@@ -141,7 +141,7 @@ class PendingSyncBanner extends StatelessWidget {
                         : 'Sync All (${pendingChanges.length})',
                     icon: Icons.sync,
                     color: Colors.white,
-                    backgroundColor: const Color(0xFF6C5CE7),
+                    backgroundColor: const Color(0xFF3FA372),
                     onTap: onApproveAll,
                   ),
                 ),
@@ -279,7 +279,7 @@ class PendingSyncBanner extends StatelessWidget {
     switch (ext) {
       case 'txt':
       case 'md':
-        return const Color(0xFFA29BFE);
+        return const Color(0xFF5DC08C);
       case 'pdf':
         return const Color(0xFFE74C3C);
       case 'doc':
@@ -294,7 +294,7 @@ class PendingSyncBanner extends StatelessWidget {
       case 'dart':
         return const Color(0xFF00B894);
       default:
-        return const Color(0xFF6C5CE7);
+        return const Color(0xFF3FA372);
     }
   }
 }

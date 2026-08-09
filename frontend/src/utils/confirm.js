@@ -3,9 +3,11 @@ export async function confirmApp(message, items = []) {
   return new Promise((resolve) => {
     let resolved = false;
 
+    let fallbackTimer = null;
     const wrappedCb = (res) => {
       if (!resolved) {
         resolved = true;
+        if (fallbackTimer) clearTimeout(fallbackTimer);
         resolve(!!res);
       }
     };
@@ -18,7 +20,7 @@ export async function confirmApp(message, items = []) {
 
     const available = !!window.__app_confirm_available;
     const fallbackMs = available ? 30000 : 200;
-    const fallback = setTimeout(() => {
+    fallbackTimer = setTimeout(() => {
       if (!resolved) {
         resolved = true;
         try {

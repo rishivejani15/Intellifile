@@ -33,7 +33,7 @@ class FileListTile extends StatelessWidget {
         margin: const EdgeInsets.only(bottom: 8),
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
-          color: const Color(0xFF1A1A2E),
+          color: const Color(0xFF18181B),
           borderRadius: BorderRadius.circular(14),
           border: file.status == 'conflict'
               ? Border.all(color: Colors.orange.withOpacity(0.3))
@@ -124,7 +124,7 @@ class FileListTile extends StatelessWidget {
       isScrollControlled: true,
       builder: (context) => Container(
         decoration: const BoxDecoration(
-          color: Color(0xFF1A1A2E),
+          color: Color(0xFF18181B),
           borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
         ),
         child: SafeArea(
@@ -198,7 +198,7 @@ class FileListTile extends StatelessWidget {
                 icon: Icons.open_in_new,
                 label: 'Open',
                 subtitle: 'Open with default app',
-                color: const Color(0xFF6C5CE7),
+                color: const Color(0xFF3FA372),
                 onTap: () {
                   Navigator.pop(context);
                   _openFile(context);
@@ -242,7 +242,7 @@ class FileListTile extends StatelessWidget {
               _ActionItem(
                 icon: Icons.link_off,
                 label: 'Remove from Sync',
-                subtitle: 'Remove locally only — won\'t delete on PC',
+                subtitle: 'Delete file from both mobile and PC',
                 color: Colors.redAccent,
                 onTap: () {
                   Navigator.pop(context);
@@ -268,7 +268,7 @@ class FileListTile extends StatelessWidget {
       SnackBar(
         content: Text('Opening ${file.path}...'),
         duration: const Duration(seconds: 1),
-        backgroundColor: const Color(0xFF6C5CE7),
+        backgroundColor: const Color(0xFF3FA372),
         behavior: SnackBarBehavior.floating,
       ),
     );
@@ -363,7 +363,7 @@ class FileListTile extends StatelessWidget {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF1A1A2E),
+        backgroundColor: const Color(0xFF18181B),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: const Text(
           'Remove from Sync?',
@@ -399,7 +399,6 @@ class FileListTile extends StatelessWidget {
     if (confirmed == true) {
       try {
         final relPath = p.relative(absPath, from: syncFolder);
-        syncManager?.markLocallyRemoved(relPath.replaceAll('\\', '/'));
         final file = File(absPath);
         if (await file.exists()) {
           await file.delete();
@@ -525,7 +524,7 @@ class FileListTile extends StatelessWidget {
       case 'ts':
         return const Color(0xFF00B894);
       default:
-        return const Color(0xFF6C5CE7);
+        return const Color(0xFF3FA372);
     }
   }
 
@@ -537,7 +536,7 @@ class FileListTile extends StatelessWidget {
           height: 16,
           child: CircularProgressIndicator(
             strokeWidth: 2,
-            color: Color(0xFF6C5CE7),
+            color: Color(0xFF3FA372),
           ),
         );
       case 'conflict':

@@ -8,8 +8,9 @@ abstract class SyncConnectionTarget {
 
 class LanConnectionTarget extends SyncConnectionTarget {
   final String address;
+  final String? deviceId;
 
-  const LanConnectionTarget(this.address);
+  const LanConnectionTarget(this.address, {this.deviceId});
 }
 
 class P2PConnectionTarget extends SyncConnectionTarget {

@@ -1,8 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import './FileLockModal.css';
 
-const ipcRenderer = window.electron?.ipcRenderer;
-
 function FileLockModal({ visible, mode, file, onClose, onSuccess }) {
   // mode: 'lock' | 'unlock' | 'changePassword'
   const [password, setPassword] = useState('');
@@ -11,6 +9,7 @@ function FileLockModal({ visible, mode, file, onClose, onSuccess }) {
   const [oldPassword, setOldPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmNewPassword, setConfirmNewPassword] = useState('');
+  const [renameNewName, setRenameNewName] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -27,17 +26,20 @@ function FileLockModal({ visible, mode, file, onClose, onSuccess }) {
       setOldPassword('');
       setNewPassword('');
       setConfirmNewPassword('');
+      setRenameNewName(file?.name || file?.originalName || '');
       setShowPassword(false);
       setError('');
       setLoading(false);
       setSuccess(false);
       setPasswordHint('');
 
-      // If unlocking, fetch the password hint
-      if (mode === 'unlock' && file?.fileId) {
+      const fileId = file?.fileId || file?.id;
+
+      // Fetch password hint if unlocking, renaming, or deleting
+      if ((mode === 'unlock' || mode === 'renameLocked' || mode === 'deleteLocked') && fileId) {
         window.intellifile?.fileLock?.getLockedFiles?.().then((result) => {
-          if (result?.success && result.files?.[file.fileId]) {
-            setPasswordHint(result.files[file.fileId].passwordHint || '');
+          if (result?.success && result.files?.[fileId]) {
+            setPasswordHint(result.files[fileId].passwordHint || '');
           }
         });
       }
@@ -214,12 +216,85 @@ function FileLockModal({ visible, mode, file, onClose, onSuccess }) {
     }
   };
 
+  const handleRenameLocked = async () => {
+    setError('');
+
+    if (!password) {
+      setError('Please enter your password.');
+      return;
+    }
+    if (!renameNewName.trim()) {
+      setError('Please enter a new file name.');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const targetFileId = file?.fileId || file?.id;
+      const result = await window.intellifile.fileLock.renameLockedFile(
+        targetFileId,
+        password,
+        renameNewName.trim()
+      );
+
+      if (result.success) {
+        setSuccess(true);
+        try { window.dispatchEvent(new CustomEvent('vault-updated')); } catch (_) {}
+        setTimeout(() => {
+          onSuccess?.({ action: 'renamed', newPath: result.newPath, fileId: targetFileId });
+          onClose();
+        }, 1200);
+      } else {
+        setError(result.error || 'Failed to rename locked file.');
+      }
+    } catch (err) {
+      setError(err.message || 'An unexpected error occurred.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDeleteLocked = async () => {
+    setError('');
+
+    if (!password) {
+      setError('Please enter your password.');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const targetFileId = file?.fileId || file?.id;
+      const result = await window.intellifile.fileLock.deleteLockedFile(
+        targetFileId,
+        password
+      );
+
+      if (result.success) {
+        setSuccess(true);
+        try { window.dispatchEvent(new CustomEvent('vault-updated')); } catch (_) {}
+        setTimeout(() => {
+          onSuccess?.({ action: 'deleted', fileId: targetFileId });
+          onClose();
+        }, 1200);
+      } else {
+        setError(result.error || 'Failed to delete locked file.');
+      }
+    } catch (err) {
+      setError(err.message || 'An unexpected error occurred.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleSubmit = (e) => {
     e.preventDefault();
     if (mode === 'lock') handleLock();
     else if (mode === 'unlock') handleUnlock();
     else if (mode === 'access') handleAccess();
     else if (mode === 'changePassword') handleChangePassword();
+    else if (mode === 'renameLocked') handleRenameLocked();
+    else if (mode === 'deleteLocked') handleDeleteLocked();
   };
 
   const strength = mode === 'lock' ? getPasswordStrength(password) : 
@@ -229,7 +304,10 @@ function FileLockModal({ visible, mode, file, onClose, onSuccess }) {
     if (mode === 'lock') return 'Lock File';
     if (mode === 'unlock') return 'Unlock File';
     if (mode === 'access') return 'Access File';
-    return 'Change Password';
+    if (mode === 'changePassword') return 'Change Password';
+    if (mode === 'renameLocked') return 'Rename Locked File';
+    if (mode === 'deleteLocked') return 'Delete Locked File';
+    return 'File Vault';
   };
 
   const getIcon = () => {
@@ -237,7 +315,10 @@ function FileLockModal({ visible, mode, file, onClose, onSuccess }) {
     if (mode === 'lock') return '🔒';
     if (mode === 'unlock') return '🔓';
     if (mode === 'access') return '👁️';
-    return '🔑';
+    if (mode === 'changePassword') return '🔑';
+    if (mode === 'renameLocked') return '✏️';
+    if (mode === 'deleteLocked') return '🗑️';
+    return '🔐';
   };
 
   const fileName = file?.name || file?.originalName || 'Unknown File';
@@ -482,6 +563,83 @@ function FileLockModal({ visible, mode, file, onClose, onSuccess }) {
               </>
             )}
 
+            {/* Rename Locked Mode */}
+            {mode === 'renameLocked' && (
+              <>
+                <div className="file-lock-field">
+                  <label>New File Name</label>
+                  <input
+                    type="text"
+                    value={renameNewName}
+                    onChange={(e) => setRenameNewName(e.target.value)}
+                    placeholder="Enter new file name"
+                    disabled={loading}
+                  />
+                </div>
+                <div className="file-lock-field">
+                  <label>Password / PIN</label>
+                  <div className="file-lock-input-wrapper">
+                    <input
+                      ref={passwordRef}
+                      type={showPassword ? 'text' : 'password'}
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder="Enter password to confirm rename"
+                      disabled={loading}
+                      autoComplete="current-password"
+                    />
+                    <button
+                      type="button"
+                      className="file-lock-toggle-vis"
+                      onClick={() => setShowPassword(!showPassword)}
+                    >
+                      {showPassword ? '🙈' : '👁️'}
+                    </button>
+                  </div>
+                </div>
+                {passwordHint && (
+                  <div className="file-lock-hint">
+                    💡 <strong>Hint:</strong> {passwordHint}
+                  </div>
+                )}
+              </>
+            )}
+
+            {/* Delete Locked Mode */}
+            {mode === 'deleteLocked' && (
+              <>
+                <div className="file-lock-field">
+                  <label>Password / PIN</label>
+                  <div className="file-lock-input-wrapper">
+                    <input
+                      ref={passwordRef}
+                      type={showPassword ? 'text' : 'password'}
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder="Enter password to confirm delete"
+                      disabled={loading}
+                      autoComplete="current-password"
+                    />
+                    <button
+                      type="button"
+                      className="file-lock-toggle-vis"
+                      onClick={() => setShowPassword(!showPassword)}
+                    >
+                      {showPassword ? '🙈' : '👁️'}
+                    </button>
+                  </div>
+                </div>
+                {passwordHint && (
+                  <div className="file-lock-hint">
+                    💡 <strong>Hint:</strong> {passwordHint}
+                  </div>
+                )}
+                <div className="file-lock-warning" style={{ color: '#ff4757', background: 'rgba(255, 71, 87, 0.1)', borderColor: 'rgba(255, 71, 87, 0.2)' }}>
+                  ⚠️ Entering password will <strong>permanently delete</strong> this locked file from your system.
+                </div>
+              </>
+            )}
+
             {/* Error */}
             {error && (
               <div className="file-lock-error">
@@ -509,6 +667,8 @@ function FileLockModal({ visible, mode, file, onClose, onSuccess }) {
                 {mode === 'unlock' && (loading ? 'Decrypting…' : '🔓 Unlock File')}
                 {mode === 'access' && (loading ? 'Opening…' : '👁️ Open File')}
                 {mode === 'changePassword' && (loading ? 'Updating…' : '🔑 Change Password')}
+                {mode === 'renameLocked' && (loading ? 'Renaming…' : '✏️ Rename File')}
+                {mode === 'deleteLocked' && (loading ? 'Deleting…' : '🗑️ Delete File')}
               </button>
             </div>
           </form>

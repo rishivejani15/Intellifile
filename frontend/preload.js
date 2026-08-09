@@ -322,6 +322,8 @@ contextBridge.exposeInMainWorld('intellifile', {
     accessFile: (fileId, password) => ipcRenderer.invoke('file-lock:access', fileId, password),
     verifyPassword: (fileId, password) => ipcRenderer.invoke('file-lock:verify', fileId, password),
     changePassword: (fileId, oldPassword, newPassword) => ipcRenderer.invoke('file-lock:change-password', fileId, oldPassword, newPassword),
+    renameLockedFile: (fileId, password, newName) => ipcRenderer.invoke('file-lock:rename', fileId, password, newName),
+    deleteLockedFile: (fileId, password) => ipcRenderer.invoke('file-lock:delete', fileId, password),
     getLockedFiles: () => ipcRenderer.invoke('file-lock:get-locked-files'),
     getStatus: (filePath) => ipcRenderer.invoke('file-lock:get-status', filePath),
     getHistory: () => ipcRenderer.invoke('file-lock:get-history'),

@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   MdLock, MdLockOpen, MdVpnKey, MdOutlineVisibility, MdHistory, MdFolder,
-  MdSearch, MdViewModule, MdViewList, MdFilterList, MdContentCopy, MdCheck, MdAccessTime, MdSecurity
+  MdSearch, MdViewModule, MdViewList, MdFilterList, MdContentCopy, MdCheck, MdAccessTime, MdSecurity,
+  MdEdit, MdDelete
 } from 'react-icons/md';
 import FileLockModal from './FileLockModal';
 import VaultFilePicker from './VaultFilePicker';
@@ -106,6 +107,30 @@ function FileLockManager() {
       originalName: entry.originalName,
     });
     setLockModalMode('changePassword');
+    setShowLockModal(true);
+  };
+
+  const handleRenameLockedFile = (fileId, entry) => {
+    setLockModalFile({
+      fileId,
+      name: entry.originalName,
+      path: entry.encryptedPath,
+      size: entry.originalSize,
+      originalName: entry.originalName,
+    });
+    setLockModalMode('renameLocked');
+    setShowLockModal(true);
+  };
+
+  const handleDeleteLockedFile = (fileId, entry) => {
+    setLockModalFile({
+      fileId,
+      name: entry.originalName,
+      path: entry.encryptedPath,
+      size: entry.originalSize,
+      originalName: entry.originalName,
+    });
+    setLockModalMode('deleteLocked');
     setShowLockModal(true);
   };
 
@@ -408,6 +433,22 @@ function FileLockManager() {
                     >
                       <MdVpnKey />
                     </button>
+                    <button
+                      className="flm-card-btn flm-card-btn-rename"
+                      onClick={() => handleRenameLockedFile(fileId, entry)}
+                      disabled={!entry.fileExists}
+                      title="Rename locked file"
+                    >
+                      <MdEdit />
+                    </button>
+                    <button
+                      className="flm-card-btn flm-card-btn-delete"
+                      onClick={() => handleDeleteLockedFile(fileId, entry)}
+                      disabled={!entry.fileExists}
+                      title="Delete locked file"
+                    >
+                      <MdDelete />
+                    </button>
                   </div>
                 </div>
               ))}
@@ -466,6 +507,22 @@ function FileLockManager() {
                       title="Change password"
                     >
                       <MdVpnKey />
+                    </button>
+                    <button
+                      className="flm-card-btn flm-card-btn-rename"
+                      onClick={() => handleRenameLockedFile(fileId, entry)}
+                      disabled={!entry.fileExists}
+                      title="Rename"
+                    >
+                      <MdEdit />
+                    </button>
+                    <button
+                      className="flm-card-btn flm-card-btn-delete"
+                      onClick={() => handleDeleteLockedFile(fileId, entry)}
+                      disabled={!entry.fileExists}
+                      title="Delete"
+                    >
+                      <MdDelete />
                     </button>
                   </span>
                 </div>

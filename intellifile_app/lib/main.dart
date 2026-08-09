@@ -77,16 +77,16 @@ class _IntelliFileAppState extends State<IntelliFileApp> {
     return ThemeData(
       useMaterial3: true,
       brightness: Brightness.dark,
-      colorSchemeSeed: const Color(0xFF6C5CE7),
+      colorSchemeSeed: const Color(0xFF3FA372),
       fontFamily: 'Roboto',
-      scaffoldBackgroundColor: const Color(0xFF0D0D1A),
+      scaffoldBackgroundColor: const Color(0xFF09090B),
       appBarTheme: const AppBarTheme(
-        backgroundColor: Color(0xFF0D0D1A),
+        backgroundColor: Color(0xFF09090B),
         surfaceTintColor: Colors.transparent,
         elevation: 0,
       ),
       cardTheme: CardThemeData(
-        color: const Color(0xFF1A1A2E),
+        color: const Color(0xFF18181B),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         elevation: 0,
       ),
@@ -111,7 +111,7 @@ class _SplashScreen extends StatelessWidget {
               height: 80,
               decoration: BoxDecoration(
                 gradient: const LinearGradient(
-                  colors: [Color(0xFF6C5CE7), Color(0xFFA29BFE)],
+                  colors: [Color(0xFF3FA372), Color(0xFF5DC08C)],
                 ),
                 borderRadius: BorderRadius.circular(20),
               ),
@@ -140,7 +140,7 @@ class _SplashScreen extends StatelessWidget {
               height: 24,
               child: CircularProgressIndicator(
                 strokeWidth: 2,
-                color: Color(0xFF6C5CE7),
+                color: Color(0xFF3FA372),
               ),
             ),
           ],

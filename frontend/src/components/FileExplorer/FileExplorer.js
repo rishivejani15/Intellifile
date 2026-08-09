@@ -782,6 +782,47 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
     });
   };
 
+  useEffect(() => {
+    const handlePromptRename = (e) => {
+      const { item, fileId } = e.detail || {};
+      if (!item) return;
+      window.intellifile?.fileLock?.getStatus?.(item.path).then((status) => {
+        setLockModalFile({
+          fileId: fileId || status?.fileId,
+          name: status?.entry?.originalName || item.name,
+          path: item.path,
+          size: status?.entry?.originalSize || item.size,
+          originalName: status?.entry?.originalName || item.name,
+        });
+        setLockModalMode('renameLocked');
+        setShowLockModal(true);
+      });
+    };
+
+    const handlePromptDelete = (e) => {
+      const { item, fileId } = e.detail || {};
+      if (!item) return;
+      window.intellifile?.fileLock?.getStatus?.(item.path).then((status) => {
+        setLockModalFile({
+          fileId: fileId || status?.fileId,
+          name: status?.entry?.originalName || item.name,
+          path: item.path,
+          size: status?.entry?.originalSize || item.size,
+          originalName: status?.entry?.originalName || item.name,
+        });
+        setLockModalMode('deleteLocked');
+        setShowLockModal(true);
+      });
+    };
+
+    window.addEventListener('prompt-locked-rename', handlePromptRename);
+    window.addEventListener('prompt-locked-delete', handlePromptDelete);
+    return () => {
+      window.removeEventListener('prompt-locked-rename', handlePromptRename);
+      window.removeEventListener('prompt-locked-delete', handlePromptDelete);
+    };
+  }, []);
+
   const handleLockModalSuccess = (result) => {
     // Refresh directory to reflect file changes
     if (currentPath) {
@@ -791,6 +832,10 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
       showToast(`File locked: ${result.filePath?.split(/[\\/]/).pop() || 'file'}`, { type: 'success', title: 'File Locked' });
     } else if (result?.action === 'unlocked') {
       showToast(`File unlocked: ${result.restoredPath?.split(/[\\/]/).pop() || 'file'}`, { type: 'success', title: 'File Unlocked' });
+    } else if (result?.action === 'renamed') {
+      showToast(`Locked file renamed: ${result.newPath?.split(/[\\/]/).pop() || 'file'}`, { type: 'success', title: 'File Renamed' });
+    } else if (result?.action === 'deleted') {
+      showToast('Locked file permanently deleted.', { type: 'success', title: 'File Deleted' });
     }
   };
 
@@ -962,6 +1007,8 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
   };
 
   const handleRename = async () => {
+    if (!renamingItem) return;
+
     if (renamingItem?.protected) {
       showErrorToast('Cannot rename system files.', 'The selected item is protected by the operating system.', 'Choose a non-system file or folder.');
       setRenamingItem(null);
@@ -969,11 +1016,13 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
     }
 
     if (renamingItem && renameValue && renameValue !== renamingItem.name && currentPath) {
-      const newPath = `${currentPath}\\${renameValue}`;
-      updateItemPathInState(renamingItem.path, newPath, renameValue);
+      const ok = await fileOps.handleRename(renamingItem, renameValue);
+      if (ok) {
+        const newPath = `${currentPath}\\${renameValue}`;
+        updateItemPathInState(renamingItem.path, newPath, renameValue);
+      }
     }
-
-    await fileOps.handleRename(currentPath, () => { });
+    setRenamingItem(null);
   };
 
   const confirmDeleteItems = async (itemsToDelete) => {

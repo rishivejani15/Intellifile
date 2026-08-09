@@ -162,7 +162,7 @@ class SyncStatusBar extends StatelessWidget {
       case SyncStatus.connecting:
         return [const Color(0xFFFFA62B), const Color(0xFFCC7A00)];
       case SyncStatus.syncing:
-        return [const Color(0xFF6C5CE7), const Color(0xFF4834D4)];
+        return [const Color(0xFF3FA372), const Color(0xFF2D7A55)];
       case SyncStatus.synced:
         return [const Color(0xFF00B894), const Color(0xFF00896B)];
       case SyncStatus.error:

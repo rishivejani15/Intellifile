@@ -1068,6 +1068,7 @@ app.on('will-quit', () => {
   }
   if (fileLockService) {
     fileLockService.cleanupTempFiles();
+    fileLockService.cleanupOSLocks();
   }
 });
 
@@ -2292,6 +2293,14 @@ ipcMain.handle('file-lock:verify', async (_event, fileId, password) => {
 
 ipcMain.handle('file-lock:change-password', async (_event, fileId, oldPassword, newPassword) => {
   return getFileLockService().changePassword(fileId, oldPassword, newPassword);
+});
+
+ipcMain.handle('file-lock:rename', async (_event, fileId, password, newName) => {
+  return getFileLockService().renameLockedFile(fileId, password, newName);
+});
+
+ipcMain.handle('file-lock:delete', async (_event, fileId, password) => {
+  return getFileLockService().deleteLockedFile(fileId, password);
 });
 
 ipcMain.handle('file-lock:get-locked-files', async () => {
@@ -4254,6 +4263,17 @@ function registerIpcHandlers() {
       if (isProtectedPath(oldPath)) {
         return { success: false, error: 'Cannot rename system files or folders' };
       }
+      // Check if file is locked
+      const lockStatus = getFileLockService().getFileStatus(oldPath);
+      if (lockStatus?.isLocked || getFileLockService().isLockedExtension(oldPath)) {
+        return {
+          success: false,
+          error: 'LOCKED_FILE_REQUIRES_PASSWORD',
+          isLocked: true,
+          fileId: lockStatus?.fileId || lockStatus?.entry?.id,
+          filePath: oldPath
+        };
+      }
       if (oldPath === newPath) {
         return { success: true };
       }
@@ -4272,6 +4292,17 @@ function registerIpcHandlers() {
       // Check if path is protected
       if (isProtectedPath(filePath)) {
         return { success: false, error: 'Cannot delete system files or folders' };
+      }
+      // Check if file is locked
+      const lockStatus = getFileLockService().getFileStatus(filePath);
+      if (lockStatus?.isLocked || getFileLockService().isLockedExtension(filePath)) {
+        return {
+          success: false,
+          error: 'LOCKED_FILE_REQUIRES_PASSWORD',
+          isLocked: true,
+          fileId: lockStatus?.fileId || lockStatus?.entry?.id,
+          filePath
+        };
       }
       // Move to Recycle Bin using Windows API.
       // IMPORTANT: We must AWAIT completion so chokidar sees a clean state
@@ -5010,9 +5041,78 @@ app.on('before-quit', () => {
   }
 });
 
+let appTray = null;
+let isAppQuitting = false;
+
+app.on('before-quit', () => {
+  isAppQuitting = true;
+});
+
+function createTrayIconIfNeeded() {
+  if (appTray) return;
+  try {
+    const iconPath = path.join(__dirname, 'public', 'favicon.ico');
+    const icon = fs.existsSync(iconPath) ? nativeImage.createFromPath(iconPath) : nativeImage.createEmpty();
+    appTray = new Tray(icon);
+    appTray.setToolTip('IntelliFile - File Lock Guard Active');
+
+    const contextMenu = Menu.buildFromTemplate([
+      { label: '🛡️ IntelliFile Lock Guard Active', enabled: false },
+      { type: 'separator' },
+      {
+        label: 'Open IntelliFile',
+        click: () => {
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.show();
+            mainWindow.focus();
+          } else {
+            createWindow();
+          }
+        }
+      },
+      {
+        label: 'Exit IntelliFile (Unlock Handles)',
+        click: () => {
+          isAppQuitting = true;
+          app.quit();
+        }
+      }
+    ]);
+
+    appTray.setContextMenu(contextMenu);
+    appTray.on('double-click', () => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.show();
+        mainWindow.focus();
+      } else {
+        createWindow();
+      }
+    });
+  } catch (err) {
+    console.warn('[Tray] System tray creation error:', err.message || err);
+  }
+}
+
+app.on('window-all-closed', () => {
+  if (fileLockService && !isAppQuitting) {
+    const lockedRes = fileLockService.getLockedFiles();
+    if (lockedRes?.files && Object.keys(lockedRes.files).length > 0) {
+      createTrayIconIfNeeded();
+      console.log('[LockGuard] Windows closed, but IntelliFile remains active in System Tray to preserve OS kernel handle locks.');
+      return;
+    }
+  }
+  if (process.platform !== 'darwin') {
+    app.quit();
+  }
+});
+
 app.on('activate', () => {
-  if (mainWindow === null) {
+  if (mainWindow === null || mainWindow?.isDestroyed?.()) {
     createWindow();
+  } else {
+    mainWindow.show();
+    mainWindow.focus();
   }
 });
 // Duplicate handler for open-default-apps-settings removed – original registration is at line 3500

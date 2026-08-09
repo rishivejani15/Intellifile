@@ -31,6 +31,7 @@ dependencies:
   share_plus: ^10.1.4            # Share files via OS share sheet
   shared_preferences: ^2.5.5
   mobile_scanner: ^5.2.3         # QR code scanning
+  file_picker: ^8.3.7            # Cross-platform file picker
 
 dev_dependencies:
   flutter_test:

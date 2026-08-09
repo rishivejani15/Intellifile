@@ -6,7 +6,7 @@ const ipcRenderer = window.electron?.ipcRenderer;
 /**
  * Hook for file operations (copy, cut, paste, delete, rename, create folder)
  */
-export function useFileOperations(currentPath, onRefresh) {
+export function useFileOperations(currentPath, onRefresh, onRenameLockedFile, onDeleteLockedFile) {
   const [clipboard, setClipboard] = useState(null); // {items, operation: 'copy'|'cut'}
   const clipboardTimerRef = useRef(null);
 
@@ -48,29 +48,19 @@ export function useFileOperations(currentPath, onRefresh) {
     if (clipboard && currentPath) {
       try {
         for (const item of clipboard.items) {
-          const operation = clipboard.operation === 'cut' ? 'move' : 'copy';
-          const destPath = currentPath + '\\' + item.name;
+          const fileName = item.path.split('\\').pop();
+          const targetPath = currentPath + '\\' + fileName;
 
-          if (operation === 'copy') {
-            const result = await ipcRenderer?.invoke('copy-file', item.path, destPath);
-            if (!result.success) {
-              console.error('Copy error:', result.error);
-              showErrorToast('Copy failed.', result.error || 'The copy operation was rejected.', 'Check file permissions or whether the destination already exists.');
-            }
-          } else {
-            const result = await ipcRenderer?.invoke('move-file', item.path, destPath);
-            if (!result.success) {
-              console.error('Move error:', result.error);
-              showErrorToast('Move failed.', result.error || 'The move operation was rejected.', 'Check file permissions or whether the destination already exists.');
-            }
+          if (clipboard.operation === 'copy') {
+            await ipcRenderer?.invoke('copy-file', item.path, targetPath);
+          } else if (clipboard.operation === 'cut') {
+            await ipcRenderer?.invoke('move-file', item.path, targetPath);
           }
         }
-
+        onRefresh?.();
         if (clipboard.operation === 'cut') {
           setClipboard(null);
-          if (clipboardTimerRef.current) clearTimeout(clipboardTimerRef.current);
         }
-        onRefresh?.();
       } catch (err) {
         console.error('Paste error:', err);
       }
@@ -91,6 +81,9 @@ export function useFileOperations(currentPath, onRefresh) {
         if (result.success) {
           onRefresh?.();
           return true;
+        } else if (result.error === 'LOCKED_FILE_REQUIRES_PASSWORD' || result.isLocked) {
+          onRenameLockedFile?.(renamingItem, result.fileId, renameValue);
+          return false;
         } else {
           console.error('Rename error:', result.error);
           showErrorToast('Rename failed.', result.error || 'The rename operation was rejected.', 'Close any app using the file and try again.');
@@ -100,7 +93,7 @@ export function useFileOperations(currentPath, onRefresh) {
       }
     }
     return false;
-  }, [currentPath, onRefresh]);
+  }, [currentPath, onRefresh, onRenameLockedFile]);
 
   const handleDelete = useCallback(async (itemsToDelete) => {
     // Check if any items are protected
@@ -115,6 +108,10 @@ export function useFileOperations(currentPath, onRefresh) {
         for (const item of itemsToDelete) {
           const result = await ipcRenderer?.invoke('delete-file', item.path);
           if (!result.success) {
+            if (result.error === 'LOCKED_FILE_REQUIRES_PASSWORD' || result.isLocked) {
+              onDeleteLockedFile?.(item, result.fileId);
+              return false;
+            }
             console.error('Delete error:', result.error);
             showErrorToast('Delete failed.', result.error || 'The delete operation was rejected.', 'Check whether the file is open or protected.');
           }
@@ -126,7 +123,7 @@ export function useFileOperations(currentPath, onRefresh) {
       }
     }
     return false;
-  }, [onRefresh]);
+  }, [onRefresh, onDeleteLockedFile]);
 
   const handleCreateFolder = useCallback(async () => {
     if (currentPath) {

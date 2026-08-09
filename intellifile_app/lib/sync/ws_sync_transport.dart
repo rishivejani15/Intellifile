@@ -33,7 +33,7 @@ class WsSyncTransport implements SyncConnection {
     if (target is! LanConnectionTarget) {
       throw ArgumentError('WsSyncTransport requires LanConnectionTarget');
     }
-    await _client.connect(target.address);
+    await _client.connect(target.address, deviceId: target.deviceId);
   }
 
   @override

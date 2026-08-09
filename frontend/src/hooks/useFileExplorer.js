@@ -95,21 +95,44 @@ export const useFileExplorer = (ipcRenderer) => {
     }
   }, [clipboard, ipcRenderer, pushUndo]);
 
-  const handleRename = useCallback(async (currentPath, onRenameComplete) => {
-    if (renamingItem && renameValue && renameValue !== renamingItem.name) {
-      if (renamingItem.protected) {
+  const handleRename = useCallback(async (arg1, arg2) => {
+    let itemToRename = renamingItem;
+    let newNameVal = renameValue;
+    let fallbackDir = typeof arg1 === 'string' ? arg1 : '';
+
+    if (typeof arg1 === 'object' && arg1 !== null) {
+      itemToRename = arg1;
+      if (typeof arg2 === 'string') newNameVal = arg2;
+    }
+
+    if (itemToRename && newNameVal && newNameVal !== itemToRename.name) {
+      if (itemToRename.protected) {
         showErrorToast('Cannot rename system files.', 'The selected item is protected by the operating system.', 'Choose a non-system file or folder.');
         setRenamingItem(null);
         return false;
       }
 
       try {
-        const newPath = currentPath + '\\' + renameValue;
-        const result = await ipcRenderer?.invoke('rename-file', renamingItem.path, newPath);
+        let parentDir = fallbackDir;
+        if (itemToRename.path && itemToRename.path.includes('\\')) {
+          parentDir = itemToRename.path.substring(0, itemToRename.path.lastIndexOf('\\'));
+        } else if (itemToRename.path && itemToRename.path.includes('/')) {
+          parentDir = itemToRename.path.substring(0, itemToRename.path.lastIndexOf('/'));
+        }
+
+        const newPath = parentDir ? `${parentDir}\\${newNameVal}` : newNameVal;
+        const result = await ipcRenderer?.invoke('rename-file', itemToRename.path, newPath);
         if (result.success) {
-           pushUndo({ type: 'rename', from: newPath, to: renamingItem.path, oldName: renamingItem.name });
-          onRenameComplete?.();
+          pushUndo({ type: 'rename', from: newPath, to: itemToRename.path, oldName: itemToRename.name });
+          if (typeof arg2 === 'function') arg2();
+          setRenamingItem(null);
           return true;
+        } else if (result.error === 'LOCKED_FILE_REQUIRES_PASSWORD' || result.isLocked) {
+          window.dispatchEvent(new CustomEvent('prompt-locked-rename', {
+            detail: { item: itemToRename, fileId: result.fileId, newName: newNameVal }
+          }));
+          setRenamingItem(null);
+          return false;
         } else {
           console.error('Rename error:', result.error);
           showErrorToast('Rename failed.', result.error || 'The rename operation was rejected.', 'Close any app using the file and try again.');
@@ -120,7 +143,7 @@ export const useFileExplorer = (ipcRenderer) => {
     }
     setRenamingItem(null);
     return false;
-  },  [renamingItem, renameValue, ipcRenderer, pushUndo]);
+  }, [renamingItem, renameValue, ipcRenderer, pushUndo]);
 
   const handleDelete = useCallback(async (selectedItems, selectedItem, currentPath, onDeleteComplete, options = {}) => {
     const itemsToDelete = selectedItems.length > 0 ? selectedItems : (selectedItem ? [selectedItem] : []);
@@ -148,6 +171,12 @@ export const useFileExplorer = (ipcRenderer) => {
         for (const item of itemsToDelete) {
           const result = await ipcRenderer?.invoke('delete-file', item.path);
           if (!result.success) {
+            if (result.error === 'LOCKED_FILE_REQUIRES_PASSWORD' || result.isLocked) {
+              window.dispatchEvent(new CustomEvent('prompt-locked-delete', {
+                detail: { item, fileId: result.fileId }
+              }));
+              return false;
+            }
             console.error('Delete error:', result.error);
             showErrorToast('Delete failed.', result.error || 'The delete operation was rejected.', 'Check whether the file is open or protected.');
           } else {

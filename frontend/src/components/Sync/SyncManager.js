@@ -140,6 +140,7 @@ const SyncManager = () => {
   const [activeTab, setActiveTab] = useState('files'); // 'files' | 'activity'
 const [localAddress, setLocalAddress] = useState('');
   const [localAddressError, setLocalAddressError] = useState('');
+  const [connectedDevices, setConnectedDevices] = useState([]);
   const isConnected = ['synced', 'syncing', 'waiting', 'reconnecting', 'connected_p2p', 'connected_relay'].includes(syncStatus.status);
 
   const qrValue = localAddress
@@ -280,6 +281,27 @@ const [localAddress, setLocalAddress] = useState('');
     savedSettings.signalingUrl,
     savedSettings.isInitiator,
   ]);  // note: savedSettings is read outside so we just auto-connect on initial load.
+
+  // ── Poll connected devices from server ────────────────────────────────
+
+  useEffect(() => {
+    const pollDevices = async () => {
+      try {
+        if (!localAddress) return;
+        const addr = localAddress.includes(':') ? localAddress : `${localAddress}:8765`;
+        const res = await fetch(`http://${addr}/status`);
+        if (res.ok) {
+          const data = await res.json();
+          setConnectedDevices(data.device_ids || []);
+        }
+      } catch {
+        // Silently fail — server might not be reachable
+      }
+    };
+    pollDevices();
+    const devicesInterval = setInterval(pollDevices, 5000);
+    return () => clearInterval(devicesInterval);
+  }, [localAddress]);
 
   // ── Auto-dismiss notifications ───────────────────────────────────────
 
@@ -459,7 +481,7 @@ const [localAddress, setLocalAddress] = useState('');
       {/* ── Connection Status Bar ──────────────────────────────────────── */}
       <div className="sync-status-bar" style={{ borderLeftColor: statusCfg.color }}>
         <span className={`sync-status-dot ${statusCfg.cssClass || ''}`} style={{ background: statusCfg.color }}></span>
-        <span className="sync-status-label">{statusCfg.label}</span>
+        <span className="sync-status-label">{statusCfg.label} {syncStatus.deviceName ? `to ${syncStatus.deviceName}` : ''}</span>
         <span className="sync-status-message">{syncStatus.message}</span>
         {pendingChanges.length > 0 && (
           <span className="sync-pending-badge">{pendingChanges.length} pending</span>
@@ -481,11 +503,32 @@ const [localAddress, setLocalAddress] = useState('');
         </div>
         <div className="sync-qr-code">
           {localAddress ? (
-            <QRCodeCanvas value={qrValue} size={140} bgColor="#ffffff" fgColor="#111111" />
+            <QRCodeCanvas value={qrValue} size={140} bgColor="#ffffff" fgColor="#111111" includeMargin={true} level="H" />
           ) : (
             <div className="sync-qr-placeholder">QR unavailable</div>
           )}
         </div>
+      </div>
+
+      {/* ── Connected Devices ────────────────────────────────────────── */}
+      <div className="sync-devices-card">
+        <div className="sync-devices-header">
+          <span className="sync-devices-title">📱 Connected Devices</span>
+          <span className="sync-devices-count">{connectedDevices.length}</span>
+        </div>
+        {connectedDevices.length > 0 ? (
+          <div className="sync-devices-list">
+            {connectedDevices.map((deviceId, idx) => (
+              <div key={deviceId} className="sync-device-item">
+                <span className="sync-device-dot"></span>
+                <span className="sync-device-name">Mobile Device {idx + 1}</span>
+                <span className="sync-device-id">{deviceId.substring(0, 8)}…</span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="sync-devices-empty">No devices connected</div>
+        )}
       </div>
 
       {/* ── Connect Panel ──────────────────────────────────────────────── */}

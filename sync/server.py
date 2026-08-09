@@ -44,8 +44,12 @@ logging.basicConfig(
 log = logging.getLogger("intellifil")
 
 app = FastAPI(title="IntelliFile Local Sync Server")
-connected_clients: list[WebSocket] = []
+# Connected clients: list of (WebSocket, device_id) tuples
+connected_clients: list[tuple[WebSocket, str]] = []
 _event_loop: asyncio.AbstractEventLoop | None = None
+
+# Per-device Merkle cache: device_id -> tree
+_device_merkle_cache: dict[str, dict] = {}
 
 
 def friendly_error(exc: Exception, reason: str, solution: str) -> dict:
@@ -77,6 +81,7 @@ async def status():
         return JSONResponse({
             "status": "running",
             "connected_devices": len(connected_clients),
+            "device_ids": [did for _, did in connected_clients],
             "sync_folder": os.path.abspath(SYNC_FOLDER),
             "pending_changes": len(_pending_changes),
         })
@@ -112,8 +117,11 @@ async def list_files():
 @app.websocket("/sync")
 async def sync_endpoint(ws: WebSocket):
     await ws.accept()
-    connected_clients.append(ws)
-    log.info("Mobile connected (%d total)", len(connected_clients))
+
+    # Extract device_id from query parameters
+    device_id = ws.query_params.get("device_id", "unknown")
+    connected_clients.append((ws, device_id))
+    log.info("Mobile connected (device=%s, %d total)", device_id, len(connected_clients))
 
     try:
         # ── Step 1: Send our handshake ────────────────────────────────────────
@@ -130,6 +138,7 @@ async def sync_endpoint(ws: WebSocket):
             "tree":             local_tree,
             "clocks":           local_clocks,
             "block_checksums":  local_block_checksums,
+            "device_id":        device_id,
         })
 
         # ── Step 2: Receive mobile's handshake ────────────────────────────────
@@ -137,18 +146,18 @@ async def sync_endpoint(ws: WebSocket):
         mobile_tree           = msg.get("tree", {})
         mobile_clocks         = msg.get("clocks", {})
         mobile_block_checksums = msg.get("block_checksums", {})
+        mobile_device_id       = msg.get("device_id", device_id)
+
+        # Store per-device Merkle cache so reconnecting to a different device
+        # doesn't trigger spurious diffs against the previous device's state
+        _device_merkle_cache[mobile_device_id] = mobile_tree
 
         # ── Step 3: Diff the trees ─────────────────────────────────────────────
-        # find_changed_files(a, b):
-        #   'deleted'  → in a but NOT in b  → we call with (local, mobile)
-        #                so 'deleted' = on PC but not on mobile → push to mobile
-        #   'added'    → in b (mobile) but not in a (local PC) → pull from mobile
-        #   'modified' → in both, checksums differ              → use vector clock
         changed = find_changed_files(local_tree, mobile_tree)
 
         if not changed:
             await ws.send_json({"type": "in_sync"})
-            log.info("All files in sync")
+            log.info("All files in sync with device %s", mobile_device_id)
         else:
             for filepath, change_type in changed.items():
                 await _resolve_and_send(
@@ -168,9 +177,8 @@ async def sync_endpoint(ws: WebSocket):
     except Exception as exc:
         log.error("WebSocket error: %s", exc, exc_info=True)
     finally:
-        if ws in connected_clients:
-            connected_clients.remove(ws)
-        log.info("Mobile disconnected (%d remaining)", len(connected_clients))
+        connected_clients[:] = [(w, d) for w, d in connected_clients if w is not ws]
+        log.info("Mobile disconnected (device=%s, %d remaining)", device_id, len(connected_clients))
 
 
 async def _resolve_and_send(
@@ -472,7 +480,7 @@ async def push_change_pending_to_clients(filepath: str, event_type: str):
         "modified_at": modified_at,
     }
 
-    for client in list(connected_clients):
+    for client, client_device_id in list(connected_clients):
         try:
             await client.send_json({
                 "type":        "change_pending",
@@ -481,7 +489,7 @@ async def push_change_pending_to_clients(filepath: str, event_type: str):
                 "file_size":   file_size,
                 "modified_at": modified_at,
             })
-            log.info("Sent change_pending to mobile: %s (%s)", filepath, event_type)
+            log.info("Sent change_pending to device %s: %s (%s)", client_device_id, filepath, event_type)
         except Exception as exc:
             log.error("Push change_pending failed for %s: %s", filepath, exc)
 

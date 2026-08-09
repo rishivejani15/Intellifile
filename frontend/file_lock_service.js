@@ -35,7 +35,144 @@ class FileLockService {
     this.metadata = { version: 1, lockedFiles: {}, history: [] };
     this.autoLockTimers = new Map(); // fileId -> timer handle
     this.tempAccessFiles = new Set(); // Track temp files for cleanup
+    this.osHandles = new Map(); // fileId -> { handle, path }
+    this._win32Initialized = false;
     this._loaded = false;
+  }
+
+  // ── Win32 OS Kernel Handle Locking (Prevents Explorer Delete/Rename) ──
+
+  _initWin32API() {
+    if (process.platform === 'win32' && !this._win32Initialized) {
+      try {
+        let koffi;
+        try {
+          koffi = require('koffi');
+        } catch {
+          koffi = require(path.join(__dirname, 'node_modules', 'koffi'));
+        }
+        const kernel32 = koffi.load('kernel32.dll');
+        this._win32CreateFileW = kernel32.func('__stdcall', 'CreateFileW', 'intptr', [
+          'str16', // lpFileName
+          'uint32', // dwDesiredAccess
+          'uint32', // dwShareMode
+          'void *', // lpSecurityAttributes
+          'uint32', // dwCreationDisposition
+          'uint32', // dwFlagsAndAttributes
+          'void *'  // hTemplateFile
+        ]);
+        this._win32CloseHandle = kernel32.func('__stdcall', 'CloseHandle', 'bool', ['intptr']);
+        this._win32Initialized = true;
+        console.log('[FileLock] Win32 Kernel handle locking initialized');
+      } catch (err) {
+        console.warn('[FileLock] Could not initialize Win32 FFI handle locking:', err.message || err);
+      }
+    }
+  }
+
+  _applyNTFSACLDeny(filePath) {
+    if (process.platform !== 'win32' || !filePath || !fs.existsSync(filePath)) return false;
+    try {
+      const { execSync } = require('child_process');
+      execSync(`icacls "${filePath}" /deny "*S-1-1-0:(F)"`, { stdio: 'pipe' });
+      console.log(`[FileLock] Applied NTFS ACL Deny Full Control on: ${filePath}`);
+      return true;
+    } catch (err) {
+      console.warn(`[FileLock] Failed to apply NTFS ACL Deny on ${filePath}:`, err.message || err);
+      return false;
+    }
+  }
+
+  _removeNTFSACLDeny(filePath) {
+    if (process.platform !== 'win32' || !filePath || !fs.existsSync(filePath)) return false;
+    try {
+      const { execSync } = require('child_process');
+      execSync(`attrib -r -s "${filePath}"`, { stdio: 'pipe' });
+      execSync(`icacls "${filePath}" /remove:d "*S-1-1-0"`, { stdio: 'pipe' });
+      console.log(`[FileLock] Removed NTFS ACL Deny on: ${filePath}`);
+      return true;
+    } catch (err) {
+      console.warn(`[FileLock] Failed to remove NTFS ACL Deny on ${filePath}:`, err.message || err);
+      return false;
+    }
+  }
+
+  _acquireOSLock(fileId, filePath) {
+    if (process.platform !== 'win32' || !filePath) return false;
+    this._initWin32API();
+
+    // First ensure offline NTFS ACL Deny is enforced
+    this._applyNTFSACLDeny(filePath);
+
+    if (!this._win32CreateFileW) return false;
+
+    // Release any existing handle for this fileId first
+    this._releaseOSLock(fileId);
+
+    try {
+      if (!fs.existsSync(filePath)) return false;
+
+      const GENERIC_READ = 0x80000000;
+      const FILE_SHARE_READ = 0x00000001; // NO FILE_SHARE_DELETE or FILE_SHARE_WRITE!
+      const OPEN_EXISTING = 3;
+      const FILE_ATTRIBUTE_NORMAL = 0x80;
+
+      const handle = this._win32CreateFileW(
+        filePath,
+        GENERIC_READ,
+        FILE_SHARE_READ,
+        null,
+        OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL,
+        null
+      );
+
+      if (handle && handle !== -1 && handle !== 0) {
+        this.osHandles.set(fileId, { handle, path: filePath });
+        console.log(`[FileLock] Acquired OS kernel lock on: ${filePath} (fileId: ${fileId})`);
+        return true;
+      } else {
+        console.warn(`[FileLock] CreateFileW returned invalid handle for: ${filePath}`);
+        return false;
+      }
+    } catch (err) {
+      console.warn(`[FileLock] Failed to acquire OS lock on ${filePath}:`, err.message || err);
+      return false;
+    }
+  }
+
+  _releaseOSLock(fileId) {
+    if (!this.osHandles.has(fileId)) return false;
+    const entry = this.osHandles.get(fileId);
+    this.osHandles.delete(fileId);
+
+    if (process.platform === 'win32' && this._win32CloseHandle && entry?.handle) {
+      try {
+        this._win32CloseHandle(entry.handle);
+        console.log(`[FileLock] Released OS kernel lock on: ${entry.path} (fileId: ${fileId})`);
+        return true;
+      } catch (err) {
+        console.warn(`[FileLock] Failed to release OS lock handle for ${fileId}:`, err.message || err);
+      }
+    }
+    return false;
+  }
+
+  _acquireAllOSLocks() {
+    if (process.platform !== 'win32') return;
+    console.log('[FileLock] Acquiring OS kernel handles and applying NTFS ACL protections for all locked files...');
+    for (const [fileId, entry] of Object.entries(this.metadata.lockedFiles)) {
+      if (entry && entry.lockStatus === 'locked' && entry.encryptedPath) {
+        this._acquireOSLock(fileId, entry.encryptedPath);
+      }
+    }
+  }
+
+  cleanupOSLocks() {
+    console.log(`[FileLock] Cleaning up ${this.osHandles.size} OS file handles...`);
+    for (const fileId of Array.from(this.osHandles.keys())) {
+      this._releaseOSLock(fileId);
+    }
   }
 
   // ── Initialization ──
@@ -44,6 +181,7 @@ class FileLockService {
     if (!this._loaded) {
       this._loadMetadata();
       this._loaded = true;
+      this._acquireAllOSLocks();
     }
   }
 
@@ -308,6 +446,9 @@ class FileLockService {
       this._addHistory(fileId, 'locked', filePath);
       this._saveMetadata();
 
+      // Acquire OS kernel handle lock on the .intellilock file
+      this._acquireOSLock(fileId, encryptedPath);
+
       console.log('[FileLock] File locked successfully:', fileId);
       return { success: true, fileId };
     } catch (err) {
@@ -344,9 +485,20 @@ class FileLockService {
         return { success: false, error: 'Encrypted file not found on disk. It may have been moved or deleted.' };
       }
 
+      // Release OS handle lock and remove NTFS ACL deny before reading encrypted file
+      this._releaseOSLock(fileId);
+      this._removeNTFSACLDeny(entry.encryptedPath);
+
       // Read encrypted file
       console.log('[FileLock] Reading encrypted file:', entry.encryptedPath);
-      const fileBuffer = fs.readFileSync(entry.encryptedPath);
+      let fileBuffer;
+      try {
+        fileBuffer = fs.readFileSync(entry.encryptedPath);
+      } catch (readErr) {
+        this._applyNTFSACLDeny(entry.encryptedPath);
+        this._acquireOSLock(fileId, entry.encryptedPath);
+        return { success: false, error: 'Failed to read encrypted file.' };
+      }
 
       // Parse the locked file format
       const { salt, iv, encryptedData } = this._parseLockedFile(fileBuffer);
@@ -357,6 +509,8 @@ class FileLockService {
       try {
         originalData = this._decryptBuffer(encryptedData, password, salt, iv);
       } catch (decryptErr) {
+        this._applyNTFSACLDeny(entry.encryptedPath);
+        this._acquireOSLock(fileId, entry.encryptedPath);
         return { success: false, error: 'Incorrect password.' };
       }
 
@@ -508,7 +662,14 @@ class FileLockService {
         return { success: false, error: 'Encrypted file not found on disk.' };
       }
 
-      const fileBuffer = fs.readFileSync(entry.encryptedPath);
+      this._removeNTFSACLDeny(entry.encryptedPath);
+      let fileBuffer;
+      try {
+        fileBuffer = fs.readFileSync(entry.encryptedPath);
+      } finally {
+        this._applyNTFSACLDeny(entry.encryptedPath);
+      }
+
       const { salt, iv, encryptedData } = this._parseLockedFile(fileBuffer);
 
       try {
@@ -562,8 +723,14 @@ class FileLockService {
       const newEncrypted = this._encryptBuffer(originalData, newPassword);
       const newLockedBuffer = this._buildLockedFile(newEncrypted.salt, newEncrypted.iv, newEncrypted.encryptedData);
 
+      // Temporarily release OS handle lock to write re-encrypted file
+      this._releaseOSLock(fileId);
+
       // Write new encrypted file
       fs.writeFileSync(entry.encryptedPath, newLockedBuffer);
+
+      // Re-acquire OS handle lock
+      this._acquireOSLock(fileId, entry.encryptedPath);
 
       this._addHistory(fileId, 'password_changed', entry.originalPath);
       this._saveMetadata();
@@ -573,6 +740,156 @@ class FileLockService {
     } catch (err) {
       console.error('[FileLock] Password change failed:', err.message || err);
       return { success: false, error: err.message || 'Failed to change password.' };
+    }
+  }
+
+  /**
+   * Rename a locked file after verifying its password.
+   * @param {string} fileId - The locked file's UUID
+   * @param {string} password - User's password/PIN
+   * @param {string} newName - Target new file name (or path)
+   */
+  async renameLockedFile(fileId, password, newName) {
+    this._ensureLoaded();
+
+    try {
+      if (!fileId || !password || !newName) {
+        return { success: false, error: 'File ID, password, and new name are required.' };
+      }
+
+      const entry = this.metadata.lockedFiles[fileId];
+      if (!entry) {
+        return { success: false, error: 'Locked file not found in vault.' };
+      }
+
+      if (entry.lockStatus !== 'locked') {
+        return { success: false, error: 'File is not currently locked.' };
+      }
+
+      // Verify password first
+      const verifyResult = this.verifyPassword(fileId, password);
+      if (!verifyResult.success || !verifyResult.verified) {
+        return { success: false, error: 'Incorrect password.' };
+      }
+
+      const currentEncryptedPath = entry.encryptedPath;
+      if (!fs.existsSync(currentEncryptedPath)) {
+        return { success: false, error: 'Encrypted file not found on disk.' };
+      }
+
+      const dir = path.dirname(currentEncryptedPath);
+      let cleanNewName = path.basename(newName.trim());
+      if (!cleanNewName) {
+        return { success: false, error: 'New file name cannot be empty.' };
+      }
+
+      // Preserve .intellilock extension if target path needs it
+      if (currentEncryptedPath.endsWith(ENCRYPTED_EXTENSION) && !cleanNewName.endsWith(ENCRYPTED_EXTENSION)) {
+        cleanNewName += ENCRYPTED_EXTENSION;
+      }
+
+      const targetEncryptedPath = path.join(dir, cleanNewName);
+
+      if (currentEncryptedPath.toLowerCase() !== targetEncryptedPath.toLowerCase() && fs.existsSync(targetEncryptedPath)) {
+        return { success: false, error: 'A file with that name already exists in this folder.' };
+      }
+
+      // Temporarily release OS handle lock and remove NTFS ACL deny
+      this._releaseOSLock(fileId);
+      this._removeNTFSACLDeny(currentEncryptedPath);
+
+      // Rename on disk
+      fs.renameSync(currentEncryptedPath, targetEncryptedPath);
+
+      // Update metadata entries
+      entry.encryptedPath = targetEncryptedPath;
+      const baseNoLock = cleanNewName.endsWith(ENCRYPTED_EXTENSION)
+        ? cleanNewName.slice(0, -ENCRYPTED_EXTENSION.length)
+        : cleanNewName;
+
+      const originalDir = path.dirname(entry.originalPath);
+      entry.originalName = baseNoLock;
+      entry.originalPath = path.join(originalDir, baseNoLock);
+
+      this._addHistory(fileId, 'renamed', targetEncryptedPath);
+      this._saveMetadata();
+
+      // Re-acquire OS handle lock on the new path!
+      this._acquireOSLock(fileId, targetEncryptedPath);
+
+      console.log('[FileLock] Locked file renamed successfully:', targetEncryptedPath);
+      return { success: true, newPath: targetEncryptedPath, entry };
+    } catch (err) {
+      console.error('[FileLock] Rename failed:', err.message || err);
+      // Attempt to restore OS handle lock if file still exists
+      const entry = this.metadata.lockedFiles[fileId];
+      if (entry && fs.existsSync(entry.encryptedPath)) {
+        this._acquireOSLock(fileId, entry.encryptedPath);
+      }
+      return { success: false, error: err.message || 'Failed to rename locked file.' };
+    }
+  }
+
+  /**
+   * Delete a locked file permanently after verifying its password.
+   * @param {string} fileId - The locked file's UUID
+   * @param {string} password - User's password/PIN
+   */
+  async deleteLockedFile(fileId, password) {
+    this._ensureLoaded();
+
+    try {
+      if (!fileId || !password) {
+        return { success: false, error: 'File ID and password are required.' };
+      }
+
+      const entry = this.metadata.lockedFiles[fileId];
+      if (!entry) {
+        return { success: false, error: 'Locked file not found in vault.' };
+      }
+
+      if (entry.lockStatus !== 'locked') {
+        return { success: false, error: 'File is not currently locked.' };
+      }
+
+      // Verify password first
+      const verifyResult = this.verifyPassword(fileId, password);
+      if (!verifyResult.success || !verifyResult.verified) {
+        return { success: false, error: 'Incorrect password.' };
+      }
+
+      const encryptedPath = entry.encryptedPath;
+
+      // Release OS handle lock and remove NTFS ACL deny
+      this._releaseOSLock(fileId);
+      this._removeNTFSACLDeny(encryptedPath);
+
+      // Securely delete file if it exists
+      if (fs.existsSync(encryptedPath)) {
+        await this._secureDelete(encryptedPath);
+      }
+
+      // Clear auto-lock timer if active
+      if (this.autoLockTimers.has(fileId)) {
+        clearTimeout(this.autoLockTimers.get(fileId));
+        this.autoLockTimers.delete(fileId);
+      }
+
+      // Update metadata
+      this._addHistory(fileId, 'deleted', entry.originalPath);
+      delete this.metadata.lockedFiles[fileId];
+      this._saveMetadata();
+
+      console.log('[FileLock] Locked file deleted successfully:', encryptedPath);
+      return { success: true };
+    } catch (err) {
+      console.error('[FileLock] Delete failed:', err.message || err);
+      // Re-acquire OS lock if file still exists
+      const entry = this.metadata.lockedFiles[fileId];
+      if (entry && fs.existsSync(entry.encryptedPath)) {
+        this._acquireOSLock(fileId, entry.encryptedPath);
+      }
+      return { success: false, error: err.message || 'Failed to delete locked file.' };
     }
   }
 

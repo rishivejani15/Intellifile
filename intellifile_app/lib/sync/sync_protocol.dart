@@ -12,6 +12,7 @@ SyncMessage parseSyncMessage(Map<String, dynamic> json) {
       return HandshakeMessage(
         tree: Map<String, dynamic>.from(json['tree'] as Map),
         clocks: Map<String, dynamic>.from(json['clocks'] as Map),
+        deviceName: json['device_name'] as String?,
       );
     case 'delta':
       return DeltaMessage(
@@ -70,7 +71,8 @@ sealed class SyncMessage {
 class HandshakeMessage extends SyncMessage {
   final Map<String, dynamic> tree;
   final Map<String, dynamic> clocks;
-  const HandshakeMessage({required this.tree, required this.clocks});
+  final String? deviceName;
+  const HandshakeMessage({required this.tree, required this.clocks, this.deviceName});
 }
 
 class DeltaMessage extends SyncMessage {

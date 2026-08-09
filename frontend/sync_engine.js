@@ -875,7 +875,7 @@ class SyncEngine extends EventEmitter {
         this._log(`⚠ Conflict: ${msg.filepath}`);
         break;
       case 'in_sync':
-        this._emit('status', { status: 'synced', message: 'All files in sync' });
+        this._emit('status', { status: 'synced', message: 'All files in sync', deviceName: this._connectedDeviceName });
         this._log('✅ Already in sync');
         this._startWatcher();
         break;
@@ -920,6 +920,7 @@ class SyncEngine extends EventEmitter {
       tree,
       clocks,
       block_checksums: blockChecksums,
+      device_name: require('os').hostname(),
     });
 
     this._lastLocalTree = tree;
@@ -932,6 +933,11 @@ class SyncEngine extends EventEmitter {
     const remoteTree = msg.tree || {};
     const remoteClocks = msg.clocks || {};
     const remoteBlockChecksums = msg.block_checksums || {};
+    
+    if (msg.device_name) {
+      this._emit('status', { status: 'syncing', message: `Connected to ${msg.device_name}`, deviceName: msg.device_name });
+      this._connectedDeviceName = msg.device_name;
+    }
 
     const remoteFiles = Object.keys(remoteTree).filter(k => k !== '__root__');
     this._log(`📥 Remote handshake: ${remoteFiles.length} files, root=${(remoteTree['__root__'] || '').substring(0, 8)}...`);
@@ -965,7 +971,7 @@ class SyncEngine extends EventEmitter {
 
     if (changeEntries.length === 0) {
       this._sendSyncMessage({ type: 'in_sync' });
-      this._emit('status', { status: 'synced', message: 'All files in sync' });
+      this._emit('status', { status: 'synced', message: 'All files in sync', deviceName: this._connectedDeviceName });
       this._log('✅ Already in sync');
       this._startWatcher();
       return;

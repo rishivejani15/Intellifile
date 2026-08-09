@@ -266,15 +266,102 @@
   color: var(--t-primary);
 }
 
+/* ───────────────────────────────────────────────────────
+   Connected Devices Card
+   ─────────────────────────────────────────────────────── */
+.sync-devices-card {
+  background: var(--s-elev);
+  border: 1px solid var(--bo-light);
+  border-radius: var(--rd-lg);
+  padding: var(--sp-4);
+  margin-bottom: var(--sp-4);
+}
+
+.sync-devices-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--sp-3);
+}
+
+.sync-devices-title {
+  font-weight: 600;
+  font-size: var(--text-sm);
+  color: var(--t-primary);
+}
+
+.sync-devices-count {
+  background: var(--c-brand-soft);
+  color: var(--color-primary);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  padding: var(--sp-1) var(--sp-2);
+  border-radius: var(--rd-full);
+  min-width: 20px;
+  text-align: center;
+}
+
+.sync-devices-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.sync-device-item {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--global-hover-bg);
+  border-radius: var(--rd-md);
+  transition: background var(--dur-150) var(--ease-default);
+}
+
+.sync-device-item:hover {
+  background: var(--s-hover);
+}
+
+.sync-device-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--c-success);
+  flex-shrink: 0;
+  animation: blink var(--dur-2000) var(--ease-in-out) infinite;
+}
+
+.sync-device-name {
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--t-primary);
+  flex: 1;
+}
+
+.sync-device-id {
+  font-size: var(--text-xs);
+  font-family: var(--font-mono);
+  color: var(--t-muted);
+}
+
+.sync-devices-empty {
+  text-align: center;
+  padding: var(--sp-3);
+  font-size: var(--text-sm);
+  color: var(--t-muted);
+}
+
 .sync-qr-code {
-  width: 150px;
-  height: 150px;
+  width: 160px;
+  height: 160px;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--s-elev);
+  /* Force white background regardless of theme for QR scan reliability */
+  background: #ffffff !important;
   border-radius: var(--rd-lg);
   border: 1px solid var(--bo);
+  padding: 4px;
+  flex-shrink: 0;
 }
 
 .sync-qr-placeholder {
