@@ -1,5 +1,7 @@
 import React, { useEffect } from 'react';
-import './OpenWithModal.css';
+import { getFileIcon } from '../utils/fileUtils';
+import './FileExplorer/FileExplorer.css';
+
 const ipc = window.electron?.ipcRenderer;
 
 async function browseForApp() {
@@ -13,34 +15,31 @@ async function browseForApp() {
 
 const inflightExtensions = new Set();
 const candidatesCache = {};
-// Track ongoing fetch promises per extension to avoid duplicate IPC calls across multiple component instances.
 const pendingRequests = {};
 
 export default function OpenWithModal({ file, visible, onClose }) {
   const [candidates, setCandidates] = React.useState([]);
   const [loading, setLoading] = React.useState(false);
-  // Track in‑flight requests and cache results per extension.
+
   useEffect(() => {
-    if (!visible) return;
+    if (!visible || !file) return;
     const ext = file?.name?.split('.').pop() || '';
 
-    // Use cached candidates if we already have them.
     if (candidatesCache[ext]) {
       setCandidates(candidatesCache[ext]);
       return;
     }
 
-    // Skip if a request for this extension is already in flight (either via inflight set or pending promise).
     if (inflightExtensions.has(ext) || pendingRequests[ext]) return;
     inflightExtensions.add(ext);
     pendingRequests[ext] = true;
     setLoading(true);
 
     ipc?.invoke('open-with:get-candidates', ext)
-      .then(res => {
+      .then((res) => {
         if (res && Array.isArray(res.candidates)) {
           setCandidates(res.candidates);
-          candidatesCache[ext] = res.candidates; // cache for future opens
+          candidatesCache[ext] = res.candidates;
         }
       })
       .catch(() => {})
@@ -49,21 +48,21 @@ export default function OpenWithModal({ file, visible, onClose }) {
         inflightExtensions.delete(ext);
         delete pendingRequests[ext];
       });
-  }, [visible, file?.name]);
+  }, [visible, file]);
 
-  if (!visible) return null;
+  useEffect(() => {
+    if (!visible) return;
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        onClose?.();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [visible, onClose]);
 
-  // Show a simple loading UI while candidates are being fetched
-  if (loading) {
-    return (
-      <div className="open-with-modal">
-        <div className="open-with-backdrop" onClick={onClose} />
-        <div className="open-with-dialog">
-          <p>Loading applications…</p>
-        </div>
-      </div>
-    );
-  }
+  if (!visible || !file) return null;
 
   const handleBrowse = async () => {
     const result = await browseForApp();
@@ -83,39 +82,97 @@ export default function OpenWithModal({ file, visible, onClose }) {
   };
 
   return (
-    <div className="open-with-modal">
-      <div className="open-with-backdrop" onClick={onClose} />
-      <div className="open-with-dialog">
-        <h3>Open {file.name} with…</h3>
-        <p style={{ opacity: 0.8, marginBottom: '1rem' }}>
-          Choose an application to open the file.
-        </p>
-        {candidates.length > 0 ? (
-          <ul className="open-with-list">
-            {candidates.map((c, i) => (
-              <li key={i} className="app-choice" style={{ cursor: 'pointer' }} onClick={async () => {
-                await ipc?.invoke('open-with:launch', { exe: c.exe, file: file.path });
-                onClose();
-              }}>
-                {c.name || c.exe}
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <div style={{ textAlign: 'center' }}>
-            <p>No associated applications found.</p>
-            <button
-              className="app-choice"
-              onClick={openSettings}
-              style={{ padding: '1rem', fontSize: '1rem', fontWeight: 'bold' }}
-            >
-              Open Default Apps Settings
-            </button>
+    <div className="properties-modal" onClick={onClose}>
+      <div
+        className="properties-dialog enhanced properties-dialog--windows"
+        style={{ width: '520px' }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Titlebar Header */}
+        <div className="properties-titlebar">
+          <span className="properties-title-icon">{getFileIcon(file)}</span>
+          <span className="properties-title-text">Open "{file.name}" with…</span>
+          <button className="properties-close-btn" onClick={onClose} type="button">×</button>
+        </div>
+
+        {/* Content Body */}
+        <div className="properties-content">
+          <div className="properties-icon-row">
+            <span className="properties-big-icon">{getFileIcon(file)}</span>
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <div className="properties-name-edit">{file.name}</div>
+              <div className="properties-subtitle">Choose an application to open this file</div>
+            </div>
           </div>
-        )}
-        <div className="open-with-actions">
-          <button className="browse-btn" onClick={handleBrowse}>Browse for app…</button>
-          <button className="close-btn" onClick={onClose}>✕</button>
+
+          <div className="properties-divider" />
+
+          {loading ? (
+            <div className="properties-loading" style={{ padding: '2rem 0', textAlign: 'center' }}>
+              Loading applications…
+            </div>
+          ) : candidates.length > 0 ? (
+            <div className="open-with-candidates-list" style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '280px', overflowY: 'auto' }}>
+              {candidates.map((c, i) => (
+                <div
+                  key={i}
+                  className="open-with-candidate-card"
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '12px',
+                    padding: '10px 14px',
+                    borderRadius: '8px',
+                    background: 'var(--s-hover)',
+                    border: '1px solid var(--bo-light)',
+                    cursor: 'pointer',
+                    transition: 'all 0.15s ease'
+                  }}
+                  onClick={async () => {
+                    await ipc?.invoke('open-with:launch', { exe: c.exe, file: file.path });
+                    onClose();
+                  }}
+                >
+                  <span style={{ fontSize: '24px' }}>💻</span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: '600', fontSize: 'var(--text-sm)', color: 'var(--t-primary)' }}>
+                      {c.name || c.exe}
+                    </div>
+                    {c.exe && (
+                      <div style={{ fontSize: 'var(--text-xs)', color: 'var(--t-muted)', fontFamily: 'var(--font-mono)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {c.exe}
+                      </div>
+                    )}
+                  </div>
+                  <span style={{ fontSize: 'var(--text-xs)', color: 'var(--color-primary)', fontWeight: '600' }}>
+                    Open ›
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div style={{ textAlign: 'center', padding: '1.5rem 0' }}>
+              <div style={{ fontSize: '32px', marginBottom: '8px' }}>🔍</div>
+              <p style={{ color: 'var(--t-muted)', marginBottom: '12px' }}>No associated applications found.</p>
+              <button
+                type="button"
+                className="properties-secondary-btn"
+                onClick={openSettings}
+              >
+                Open Default Apps Settings
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Footer Actions */}
+        <div className="properties-actions" style={{ justifyContent: 'space-between' }}>
+          <button type="button" className="properties-secondary-btn" onClick={handleBrowse}>
+            📂 Browse for app…
+          </button>
+          <button type="button" className="properties-secondary-btn" onClick={onClose}>
+            Cancel
+          </button>
         </div>
       </div>
     </div>

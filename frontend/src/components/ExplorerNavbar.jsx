@@ -43,6 +43,46 @@ function ExplorerNavbar({
   onSearchChange,
   onSearchKeyDown,
 }) {
+  const [updateState, setUpdateState] = React.useState({ status: 'none', version: '', progress: 0 });
+
+  React.useEffect(() => {
+    const ipcRenderer = window.electron?.ipcRenderer;
+    if (!ipcRenderer) return undefined;
+
+    const onAvail = (_, data) => {
+      setUpdateState({ status: 'available', version: data?.version || '', progress: 0 });
+    };
+    const onProgress = (_, data) => {
+      setUpdateState({ status: 'downloading', version: '', progress: data?.percent || 0 });
+    };
+    const onDone = (_, data) => {
+      setUpdateState({ status: 'downloaded', version: data?.version || '', progress: 100 });
+    };
+
+    ipcRenderer.on('update-available', onAvail);
+    ipcRenderer.on('update-download-progress', onProgress);
+    ipcRenderer.on('update-downloaded', onDone);
+
+    return () => {
+      ipcRenderer.removeListener('update-available', onAvail);
+      ipcRenderer.removeListener('update-download-progress', onProgress);
+      ipcRenderer.removeListener('update-downloaded', onDone);
+    };
+  }, []);
+
+  const handleDownloadInNavbar = async () => {
+    setUpdateState((prev) => ({ ...prev, status: 'downloading', progress: 0 }));
+    try {
+      await window.electron?.ipcRenderer?.invoke('download-update');
+    } catch (e) {
+      console.warn('Navbar download failed:', e);
+    }
+  };
+
+  const handleInstallInNavbar = () => {
+    window.electron?.ipcRenderer?.invoke('update-restart');
+  };
+
   return (
     <div className="explorer-navbar">
       <div className="nav-row">
@@ -199,6 +239,40 @@ function ExplorerNavbar({
           >
             {showHidden ? <MdOutlineVisibility /> : <MdOutlineVisibilityOff />}
           </button>
+
+          {/* Navbar Update Button */}
+          {updateState.status === 'available' && (
+            <button
+              type="button"
+              className="navbar-update-btn available"
+              onClick={handleDownloadInNavbar}
+              title={`New update ${updateState.version ? `v${updateState.version}` : ''} available! Click to download now.`}
+            >
+              🚀 Update {updateState.version ? `v${updateState.version}` : ''}
+            </button>
+          )}
+
+          {updateState.status === 'downloading' && (
+            <button
+              type="button"
+              className="navbar-update-btn downloading"
+              disabled
+              title={`Downloading update package... ${updateState.progress}%`}
+            >
+              ⏬ Downloading {updateState.progress}%
+            </button>
+          )}
+
+          {updateState.status === 'downloaded' && (
+            <button
+              type="button"
+              className="navbar-update-btn downloaded"
+              onClick={handleInstallInNavbar}
+              title="Update downloaded! Click to restart & install now."
+            >
+              ⚡ Install & Restart
+            </button>
+          )}
           <div className={`index-status ${indexing ? 'running' : (indexMessage && indexMessage.toLowerCase().includes('failed') ? 'error' : 'done')}`} title={indexDetail || indexMessage}>
             <span className="index-dot" />
             <span className="index-text">

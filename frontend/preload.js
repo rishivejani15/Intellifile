@@ -59,6 +59,12 @@ contextBridge.exposeInMainWorld('intellifile', {
   indexDevice: (options = {}) => {
     return ipcRenderer.invoke('index-device', options);
   },
+  recreateEmbeddings: () => {
+    return ipcRenderer.invoke('index:recreate-embeddings');
+  },
+  resetIndexAll: () => {
+    return ipcRenderer.invoke('index:reset-all');
+  },
   getIndexingPreferences: () => {
     return ipcRenderer.invoke('indexing-preferences-get');
   },

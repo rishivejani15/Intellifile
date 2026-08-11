@@ -229,7 +229,17 @@ const [localAddress, setLocalAddress] = useState('');
   useEffect(() => {
     loadLocalAddress();
     loadFiles();
-    const interval = setInterval(loadFiles, 2000);
+    const interval = setInterval(() => {
+      loadFiles();
+      loadLocalAddress();
+    }, 3000);
+
+    const handleNetworkChange = () => {
+      loadLocalAddress();
+    };
+
+    window.addEventListener('online', handleNetworkChange);
+    window.addEventListener('offline', handleNetworkChange);
 
     const cleanups = [];
 
@@ -272,6 +282,8 @@ const [localAddress, setLocalAddress] = useState('');
 
     return () => {
       clearInterval(interval);
+      window.removeEventListener('online', handleNetworkChange);
+      window.removeEventListener('offline', handleNetworkChange);
       cleanups.forEach(fn => fn && fn());
     };
   }, [

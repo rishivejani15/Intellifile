@@ -19,7 +19,7 @@ export const useFileExplorer = (ipcRenderer) => {
 
   const pushUndo = useCallback((action) => {
     undoStack.current.push(action);
-    if (undoStack.current.length > 30) undoStack.current.shift();
+    if (undoStack.current.length > 50) undoStack.current.shift();
     // Any new action invalidates redo history.
     redoStack.current = [];
   }, []);
@@ -65,22 +65,21 @@ export const useFileExplorer = (ipcRenderer) => {
           const destPath = currentPath + '\\' + item.name;
 
           if (operation === 'copy') {
-        // If this was a move (cut) and all moves succeeded, clear the staged clipboard
-        if (clipboard.operation === 'cut') {
-          setClipboard(null);
-        }
             const result = await ipcRenderer?.invoke('copy-file', item.path, destPath);
             if (!result.success) {
               console.error('Copy error:', result.error);
               showErrorToast('Copy failed.', result.error || 'The copy operation was rejected.', 'Check file permissions or whether the destination already exists.');
+            } else {
+              pushUndo({ type: 'copy', path: destPath, itemType: item.type });
             }
           } else {
             const result = await ipcRenderer?.invoke('move-file', item.path, destPath);
             if (!result.success) {
               console.error('Move error:', result.error);
               showErrorToast('Move failed.', result.error || 'The move operation was rejected.', 'Check file permissions or whether the destination already exists.');
-            }else {
-              pushUndo({ type: 'move', from: item.path, to: destPath });}
+            } else {
+              pushUndo({ type: 'move', from: item.path, to: destPath, itemType: item.type });
+            }
           }
         }
 
@@ -217,19 +216,28 @@ export const useFileExplorer = (ipcRenderer) => {
     const action = undoStack.current.pop();
 
     try {
+      let res = { success: false };
       if (action.type === 'rename') {
-        await ipcRenderer?.invoke('rename-file', action.from, action.to);
+        res = await ipcRenderer?.invoke('rename-file', action.from, action.to);
       } else if (action.type === 'move') {
-        await ipcRenderer?.invoke('move-file', action.to, action.from);
+        res = await ipcRenderer?.invoke('move-file', action.to, action.from);
+      } else if (action.type === 'copy') {
+        res = await ipcRenderer?.invoke('delete-file', action.path);
       } else if (action.type === 'create') {
-        await ipcRenderer?.invoke('delete-file', action.path);
+        res = await ipcRenderer?.invoke('delete-file', action.path);
       } else if (action.type === 'delete') {
-        await ipcRenderer?.invoke('restore-deleted-file', action.path);
+        res = await ipcRenderer?.invoke('restore-deleted-file', action.path);
       }
-      redoStack.current.push(action);
-      if (redoStack.current.length > 30) redoStack.current.shift();
-      onUndoComplete?.();
-      return true;
+
+      if (res?.success !== false) {
+        redoStack.current.push(action);
+        if (redoStack.current.length > 50) redoStack.current.shift();
+        onUndoComplete?.();
+        return true;
+      } else {
+        showErrorToast('Undo operation failed.', res?.error || 'Could not revert file operation.');
+        return false;
+      }
     } catch (err) {
       console.error('Undo error:', err);
       return false;
@@ -241,23 +249,28 @@ export const useFileExplorer = (ipcRenderer) => {
     const action = redoStack.current.pop();
 
     try {
+      let res = { success: false };
       if (action.type === 'rename') {
-        await ipcRenderer?.invoke('rename-file', action.to, action.from);
+        res = await ipcRenderer?.invoke('rename-file', action.to, action.from);
       } else if (action.type === 'move') {
-        await ipcRenderer?.invoke('move-file', action.from, action.to);
+        res = await ipcRenderer?.invoke('move-file', action.from, action.to);
+      } else if (action.type === 'copy') {
+        res = await ipcRenderer?.invoke('restore-deleted-file', action.path);
       } else if (action.type === 'create') {
-        if (action.itemType === 'folder') {
-          await ipcRenderer?.invoke('create-folder', action.path);
-        } else {
-          await ipcRenderer?.invoke('create-file', action.path);
-        }
+        res = await ipcRenderer?.invoke('restore-deleted-file', action.path);
       } else if (action.type === 'delete') {
-        await ipcRenderer?.invoke('delete-file', action.path);
+        res = await ipcRenderer?.invoke('delete-file', action.path);
       }
-      undoStack.current.push(action);
-      if (undoStack.current.length > 30) undoStack.current.shift();
-      onRedoComplete?.();
-      return true;
+
+      if (res?.success !== false) {
+        undoStack.current.push(action);
+        if (undoStack.current.length > 50) undoStack.current.shift();
+        onRedoComplete?.();
+        return true;
+      } else {
+        showErrorToast('Redo operation failed.', res?.error || 'Could not re-apply file operation.');
+        return false;
+      }
     } catch (err) {
       console.error('Redo error:', err);
       return false;

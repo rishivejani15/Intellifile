@@ -60,6 +60,78 @@ export default function Settings({ theme, onThemeChange, onStartTour }) {
   // Analytics State
   const [analyticsSummary, setAnalyticsSummary] = useState({ counts: {}, recent: [] });
 
+  // Indexing Operations State
+  const [rescanLoading, setRescanLoading] = useState(false);
+  const [reembedLoading, setReembedLoading] = useState(false);
+  const [resetLoading, setResetLoading] = useState(false);
+  const [indexingProgress, setIndexingProgress] = useState(null);
+
+  useEffect(() => {
+    if (!window.intellifile?.onIndexProgress) return undefined;
+    const unsub = window.intellifile.onIndexProgress((data) => {
+      if (!data) return;
+      setIndexingProgress(data);
+      if (data.phase === 'done' || data.phase === 'error') {
+        setTimeout(() => setIndexingProgress(null), 3000);
+      }
+    });
+    return () => {
+      if (typeof unsub === 'function') unsub();
+    };
+  }, []);
+
+  const indexingBusy = rescanLoading || reembedLoading || resetLoading || (indexingProgress && indexingProgress.phase !== 'done' && indexingProgress.phase !== 'error');
+
+  const handleRescanSystem = async () => {
+    setRescanLoading(true);
+    try {
+      toast('Starting system scan for indexing…', { type: 'info' });
+      await (ipc?.indexDevice ? ipc.indexDevice() : window.electron?.ipcRenderer?.invoke?.('index-device'));
+      toast('System re-scan completed.', { type: 'success' });
+    } catch (e) {
+      toast('System re-scan failed.', { type: 'error' });
+    } finally {
+      setRescanLoading(false);
+    }
+  };
+
+  const handleRecreateEmbeddings = async () => {
+    setReembedLoading(true);
+    try {
+      toast('Re-creating AI embeddings for extracted files…', { type: 'info' });
+      const res = await (ipc?.recreateEmbeddings ? ipc.recreateEmbeddings() : window.electron?.ipcRenderer?.invoke?.('index:recreate-embeddings'));
+      if (res?.success) {
+        toast(res.message || 'Embeddings re-created successfully.', { type: 'success' });
+      } else {
+        toast(res?.error || 'Failed to re-create embeddings.', { type: 'error' });
+      }
+    } catch (e) {
+      toast('Re-creating embeddings failed.', { type: 'error' });
+    } finally {
+      setReembedLoading(false);
+    }
+  };
+
+  const handleResetIndexing = async () => {
+    const ok = window.confirm('Are you sure you want to reset the vector database and search index? All current index data will be purged and rebuilt.');
+    if (!ok) return;
+    setResetLoading(true);
+    try {
+      toast('Resetting vector database and index…', { type: 'info' });
+      const res = await (ipc?.resetIndexAll ? ipc.resetIndexAll() : window.electron?.ipcRenderer?.invoke?.('index:reset-all'));
+      if (res?.success) {
+        toast('Vector DB and index reset. Starting fresh scan…', { type: 'success' });
+        handleRescanSystem();
+      } else {
+        toast(res?.error || 'Failed to reset index.', { type: 'error' });
+      }
+    } catch (e) {
+      toast('Reset index failed.', { type: 'error' });
+    } finally {
+      setResetLoading(false);
+    }
+  };
+
   // Load settings
   const loadSettings = async () => {
     try {
@@ -256,6 +328,7 @@ export default function Settings({ theme, onThemeChange, onStartTour }) {
     loadRecent();
     const unsub = ipc?.onAutoSortNotification?.(() => loadRecent());
     return () => { if (typeof unsub === 'function') unsub(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Update listeners & initial version fetch
@@ -634,6 +707,71 @@ export default function Settings({ theme, onThemeChange, onStartTour }) {
                     <input type="checkbox" checked={indexEnabled} onChange={() => persistSetting('index_enabled', !indexEnabled)} />
                     <span className="slider"></span>
                   </label>
+                </div>
+
+                <div style={{ marginTop: '1.5rem', paddingTop: '1.25rem', borderTop: '1px solid var(--bo-light)', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                  <div style={{ fontSize: 'var(--text-sm)', fontWeight: '700', color: 'var(--t-primary)' }}>
+                    🛠️ Indexing Operations
+                  </div>
+
+                  {/* Option 1: Re-scan System */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.75rem 1rem', background: 'var(--s-hover)', borderRadius: 'var(--rd-md)' }}>
+                    <div>
+                      <div style={{ fontSize: 'var(--text-sm)', fontWeight: '600', color: 'var(--t-primary)' }}>1. Re-scan System Files & Folders</div>
+                      <div style={{ fontSize: 'var(--text-xs)', color: 'var(--t-muted)', marginTop: '2px' }}>Scan system for new & modified files for indexing</div>
+                    </div>
+                    <button
+                      className="settings-button primary"
+                      disabled={indexingBusy}
+                      onClick={handleRescanSystem}
+                    >
+                      {rescanLoading ? 'Scanning…' : 'Re-scan System'}
+                    </button>
+                  </div>
+
+                  {/* Option 2: Re-create Embeddings */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.75rem 1rem', background: 'var(--s-hover)', borderRadius: 'var(--rd-md)' }}>
+                    <div>
+                      <div style={{ fontSize: 'var(--text-sm)', fontWeight: '600', color: 'var(--t-primary)' }}>2. Re-create Embeddings</div>
+                      <div style={{ fontSize: 'var(--text-xs)', color: 'var(--t-muted)', marginTop: '2px' }}>Re-generate vector embeddings for already extracted files</div>
+                    </div>
+                    <button
+                      className="settings-button secondary"
+                      disabled={indexingBusy}
+                      onClick={handleRecreateEmbeddings}
+                    >
+                      {reembedLoading ? 'Re-creating…' : 'Re-create Embeddings'}
+                    </button>
+                  </div>
+
+                  {/* Option 3: Reset Indexing & Embeddings */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.75rem 1rem', background: 'var(--c-error-soft, rgba(239, 68, 68, 0.1))', borderRadius: 'var(--rd-md)', border: '1px solid rgba(239, 68, 68, 0.2)' }}>
+                    <div>
+                      <div style={{ fontSize: 'var(--text-sm)', fontWeight: '600', color: 'var(--c-error, #ef4444)' }}>3. Reset Indexing & Embeddings</div>
+                      <div style={{ fontSize: 'var(--text-xs)', color: 'var(--t-muted)', marginTop: '2px' }}>Purge previous vector DB & index, building the whole vector DB again from scratch</div>
+                    </div>
+                    <button
+                      className="settings-button secondary"
+                      style={{ color: 'var(--c-error, #ef4444)', borderColor: 'rgba(239, 68, 68, 0.4)' }}
+                      disabled={indexingBusy}
+                      onClick={handleResetIndexing}
+                    >
+                      {resetLoading ? 'Resetting…' : 'Reset Index & Vector DB'}
+                    </button>
+                  </div>
+
+                  {/* Live Indexing Progress Indicator Bar */}
+                  {indexingProgress && (
+                    <div style={{ marginTop: '0.5rem', padding: '0.85rem 1rem', background: 'var(--c-brand-soft, rgba(37, 99, 235, 0.08))', borderRadius: 'var(--rd-md)', border: '1px solid var(--color-primary)' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.45rem', fontSize: 'var(--text-xs)', fontWeight: '700', color: 'var(--color-primary)' }}>
+                        <span>⚡ {indexingProgress.phase ? String(indexingProgress.phase).toUpperCase() : 'INDEXING'}: {indexingProgress.detail || 'Processing indexing task…'}</span>
+                        <span>{indexingProgress.pct ?? 0}%</span>
+                      </div>
+                      <div style={{ height: '8px', background: 'rgba(0, 0, 0, 0.15)', borderRadius: '4px', overflow: 'hidden' }}>
+                        <div style={{ width: `${indexingProgress.pct ?? 0}%`, height: '100%', background: 'var(--color-primary)', transition: 'width 0.3s ease-in-out' }} />
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             </section>

@@ -26,7 +26,7 @@ function FileLockModal({ visible, mode, file, onClose, onSuccess }) {
       setOldPassword('');
       setNewPassword('');
       setConfirmNewPassword('');
-      setRenameNewName(file?.name || file?.originalName || '');
+      setRenameNewName(file?.targetNewName || file?.name || file?.originalName || '');
       setShowPassword(false);
       setError('');
       setLoading(false);

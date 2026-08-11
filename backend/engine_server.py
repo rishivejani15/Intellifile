@@ -471,6 +471,65 @@ while True:
             except Exception as e:
                 print(json.dumps({"_id": req_id, "error": f"Index reset failed: {e}"}), flush=True)
 
+        elif action == "recreate_embeddings":
+            try:
+                from core.db import get_connection
+                from indexing.update_faiss import update_faiss
+                from core.faiss_manager import invalidate_cache, load_index
+
+                def _progress(phase, detail="", pct=None):
+                    payload = {"_id": req_id, "type": "progress", "phase": phase, "detail": detail}
+                    if pct is not None:
+                        payload["pct"] = pct
+                    print(json.dumps(payload), flush=True)
+
+                conn = get_connection()
+                cur = conn.cursor()
+                cur.execute("SELECT id FROM chunks")
+                chunk_ids = [row[0] for row in cur.fetchall()]
+                conn.close()
+
+                if not chunk_ids:
+                    print(json.dumps({"_id": req_id, "success": True, "message": "No chunks found to recreate embeddings."}), flush=True)
+                else:
+                    update_faiss(chunk_ids, progress_cb=_progress)
+                    invalidate_cache()
+                    load_index(force_reload=True)
+                    print(json.dumps({"_id": req_id, "success": True, "message": f"Successfully re-created embeddings for {len(chunk_ids)} chunks."}), flush=True)
+            except Exception as e:
+                print(json.dumps({"_id": req_id, "error": f"Re-creating embeddings failed: {e}"}), flush=True)
+
+        elif action == "reset_index_all":
+            try:
+                from core.db import get_connection
+                from core.faiss_manager import invalidate_cache, save_index
+                import faiss
+                from core.model import MODEL
+
+                conn = get_connection()
+                cur = conn.cursor()
+                cur.execute("DELETE FROM chunks")
+                cur.execute("DELETE FROM files")
+                try:
+                    cur.execute("DELETE FROM chunks_fts")
+                except Exception:
+                    pass
+                conn.commit()
+                conn.close()
+
+                try:
+                    dim = MODEL.get_embedding_dimension()
+                    base = faiss.IndexFlatIP(dim)
+                    empty_index = faiss.IndexIDMap(base)
+                    save_index(empty_index)
+                    invalidate_cache()
+                except Exception:
+                    pass
+
+                print(json.dumps({"_id": req_id, "success": True, "message": "Index and vector database reset completely."}), flush=True)
+            except Exception as e:
+                print(json.dumps({"_id": req_id, "error": f"Index reset failed: {e}"}), flush=True)
+
         elif action == "analytics_log":
             try:
                 from core.db import log_analytics_event

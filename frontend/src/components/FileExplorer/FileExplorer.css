@@ -917,6 +917,57 @@
   cursor: not-allowed;
 }
 
+/* Navbar Update Pill Button */
+.navbar-update-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 4px 12px;
+  border-radius: 20px;
+  font-size: var(--text-xs);
+  font-weight: 700;
+  cursor: pointer;
+  border: none;
+  transition: all var(--dur-150) var(--ease-spring-sm);
+  white-space: nowrap;
+  animation: pulseGlow 2s infinite;
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.25);
+}
+
+.navbar-update-btn.available {
+  background: linear-gradient(135deg, var(--color-primary), #3b82f6);
+  color: #ffffff;
+}
+
+.navbar-update-btn.available:hover {
+  transform: translateY(-1px) scale(1.02);
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.4);
+}
+
+.navbar-update-btn.downloading {
+  background: var(--c-brand-soft);
+  color: var(--color-primary);
+  border: 1px solid var(--color-primary);
+  cursor: default;
+}
+
+.navbar-update-btn.downloaded {
+  background: linear-gradient(135deg, #10b981, #059669);
+  color: #ffffff;
+  box-shadow: 0 2px 8px rgba(16, 185, 129, 0.3);
+}
+
+.navbar-update-btn.downloaded:hover {
+  transform: translateY(-1px) scale(1.02);
+  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.45);
+}
+
+@keyframes pulseGlow {
+  0% { box-shadow: 0 0 0 0 rgba(37, 99, 235, 0.4); }
+  70% { box-shadow: 0 0 0 6px rgba(37, 99, 235, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(37, 99, 235, 0); }
+}
+
 /* Index Status Badge */
 .index-status {
   display: inline-flex;
@@ -2053,6 +2104,24 @@
   background: var(--color-primary);
   transform: translateY(-1px);
   box-shadow: var(--sh-md);
+}
+
+.properties-danger-btn {
+  background: #ef4444;
+  color: #ffffff;
+  border: none;
+  padding: var(--sp-2) var(--sp-5);
+  border-radius: var(--rd-md);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--dur-150) var(--ease-spring-sm);
+}
+
+.properties-danger-btn:hover {
+  background: #dc2626;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(239, 68, 68, 0.35);
 }
 
 .properties-secondary-btn {
@@ -3417,4 +3486,31 @@ mark.preview-highlight {
   0% { transform: rotate(0deg); opacity: 0.7; }
   50% { transform: rotate(180deg); opacity: 1; }
   100% { transform: rotate(360deg); opacity: 0.7; }
+}
+
+.statusbar-pill--progress {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--c-brand-soft, rgba(37, 99, 235, 0.12));
+  color: var(--color-primary, #2563eb);
+  border: 1px solid var(--color-primary, #2563eb);
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 12px;
+}
+
+.statusbar-progress-bar {
+  width: 80px;
+  height: 6px;
+  background: rgba(0, 0, 0, 0.15);
+  border-radius: 3px;
+  overflow: hidden;
+  display: inline-block;
+}
+
+.statusbar-progress-fill {
+  height: 100%;
+  background: var(--color-primary, #2563eb);
+  transition: width 0.2s ease-in-out;
 }

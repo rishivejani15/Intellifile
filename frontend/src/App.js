@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import './App.css';
 import FileExplorer from './components/FileExplorer/FileExplorer';
 import SyncManager from './components/Sync/SyncManager';
@@ -13,11 +13,6 @@ import OnboardingTour from './components/OnboardingTour';
 const ipcRenderer = window.electron?.ipcRenderer;
 const TOUR_COMPLETED_KEY = 'intellifile-onboarding-completed-v1';
 
-
-
-
-
-
 function getInitialTheme() {
   const saved = localStorage.getItem('intellifile-theme');
   if (saved && ['light', 'dark', 'system'].includes(saved)) return saved;
@@ -31,8 +26,11 @@ function App() {
   const [versioningFile, setVersioningFile] = useState(null);
   const [setupComplete, setSetupComplete] = useState(false);
   const [offlineSetupKey, setOfflineSetupKey] = useState(0);
+  // eslint-disable-next-line no-unused-vars
   const [updateAvailable, setUpdateAvailable] = useState(false);
+  // eslint-disable-next-line no-unused-vars
   const [updateDownloaded, setUpdateDownloaded] = useState(false);
+  // eslint-disable-next-line no-unused-vars
   const [updateVersion, setUpdateVersion] = useState('');
   const [theme, setTheme] = useState(getInitialTheme);
   const [showOnboardingTour, setShowOnboardingTour] = useState(false);

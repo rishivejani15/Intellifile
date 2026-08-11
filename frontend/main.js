@@ -8,26 +8,30 @@ app.on('second-instance', (event, commandLine, workingDirectory) => {
 const { autoUpdater } = require('electron-updater');
 
 // Configure autoUpdater
+autoUpdater.logger = console;
 autoUpdater.autoDownload = false;
 autoUpdater.autoInstallOnAppQuit = true;
 
 autoUpdater.on('checking-for-update', () => {
+  console.log('[Update] Checking for updates on GitHub...');
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('update-checking');
   }
 });
 
 autoUpdater.on('update-available', (info) => {
+  console.log('[Update] 🎉 New version available:', info?.version);
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('update-available', {
-      version: info.version || 'unknown',
-      releaseNotes: info.releaseNotes,
-      releaseDate: info.releaseDate
+      version: info?.version || 'unknown',
+      releaseNotes: info?.releaseNotes,
+      releaseDate: info?.releaseDate
     });
   }
 });
 
 autoUpdater.on('update-not-available', (info) => {
+  console.log('[Update] ✓ Application is up to date.');
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('update-not-available', {
       version: app.getVersion()
@@ -36,6 +40,7 @@ autoUpdater.on('update-not-available', (info) => {
 });
 
 autoUpdater.on('download-progress', (progressObj) => {
+  console.log(`[Update] Download progress: ${Math.round(progressObj.percent || 0)}%`);
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('update-download-progress', {
       percent: Math.round(progressObj.percent || 0),
@@ -47,6 +52,7 @@ autoUpdater.on('download-progress', (progressObj) => {
 });
 
 autoUpdater.on('update-downloaded', (info) => {
+  console.log('[Update] ⚡ Update downloaded and ready to install:', info ? info.version : '');
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('update-downloaded', {
       version: info ? info.version : ''
@@ -55,12 +61,45 @@ autoUpdater.on('update-downloaded', (info) => {
 });
 
 autoUpdater.on('error', (err) => {
+  const msg = err && err.message ? err.message : String(err);
+  const lower = msg.toLowerCase();
+  console.warn('[Update] Notice/Warning during update check:', msg);
   if (mainWindow && !mainWindow.isDestroyed()) {
+    if (lower.includes('no update') || lower.includes('404') || lower.includes('cannot find') || lower.includes('latest.yml')) {
+      mainWindow.webContents.send('update-not-available', {
+        version: app.getVersion()
+      });
+      return;
+    }
     mainWindow.webContents.send('update-error', {
-      message: err && err.message ? err.message : String(err)
+      message: msg
     });
   }
 });
+
+// Daily automatic background update check (runs 15s after startup and every 24h)
+function setupDailyUpdateCheck() {
+  setTimeout(() => {
+    console.log('[Update] Running automatic background update check...');
+    if (app.isPackaged) {
+      autoUpdater.checkForUpdates().catch((err) => {
+        console.log('[Update] Background check skipped:', err?.message || err);
+      });
+    }
+  }, 15000);
+
+  const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000;
+  setInterval(() => {
+    console.log('[Update] Running 24-hour scheduled update check...');
+    if (app.isPackaged) {
+      autoUpdater.checkForUpdates().catch((err) => {
+        console.log('[Update] Scheduled check skipped:', err?.message || err);
+      });
+    }
+  }, TWENTY_FOUR_HOURS);
+}
+
+setupDailyUpdateCheck();
 
 ipcMain.handle('get-app-version', () => {
   return app.getVersion();
@@ -105,13 +144,16 @@ ipcMain.handle('check-for-updates', async () => {
     }
   } catch (err) {
     const msg = err && err.message ? err.message : String(err);
+    const lower = msg.toLowerCase();
     if (mainWindow && !mainWindow.isDestroyed()) {
-      // If error contains "no update" or "404", treat as no update found
-      if (msg.toLowerCase().includes('no update') || msg.includes('404')) {
+      if (lower.includes('no update') || lower.includes('404') || lower.includes('cannot find') || lower.includes('latest.yml')) {
         mainWindow.webContents.send('update-not-available', { version: app.getVersion() });
         return { updateAvailable: false, version: app.getVersion() };
       }
       mainWindow.webContents.send('update-error', { message: msg });
+    }
+    if (lower.includes('no update') || lower.includes('404') || lower.includes('cannot find') || lower.includes('latest.yml')) {
+      return { updateAvailable: false, version: app.getVersion() };
     }
     return { error: msg, updateAvailable: false };
   }
@@ -175,6 +217,49 @@ function saveOpenWithMap() {
 loadOpenWithMap();
 
 const PROJECT_ROOT = path.join(__dirname, '..');
+
+// ── Session Undo Trash Buffer (Bounded max 50 items) ──────────────────
+let _sessionTrashDir = null;
+const _sessionTrashMap = new Map();
+const MAX_SESSION_TRASH_ITEMS = 50;
+
+function getSessionTrashDir() {
+  if (!_sessionTrashDir) {
+    _sessionTrashDir = path.join(app.getPath('userData'), 'session_trash');
+  }
+  if (!fs.existsSync(_sessionTrashDir)) {
+    fs.mkdirSync(_sessionTrashDir, { recursive: true });
+  }
+  return _sessionTrashDir;
+}
+
+function commitSessionTrashToRecycleBin() {
+  try {
+    if (!_sessionTrashDir || !fs.existsSync(_sessionTrashDir)) return;
+    const { execSync } = require('child_process');
+    for (const [lowerKey, entry] of _sessionTrashMap.entries()) {
+      if (entry && fs.existsSync(entry.trashPath)) {
+        const escaped = entry.trashPath.replace(/'/g, "''");
+        try {
+          const psCmd = entry.isDir
+            ? `Add-Type -AssemblyName Microsoft.VisualBasic; [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory('${escaped}','OnlyErrorDialogs','SendToRecycleBin')`
+            : `Add-Type -AssemblyName Microsoft.VisualBasic; [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile('${escaped}','OnlyErrorDialogs','SendToRecycleBin')`;
+          execSync(`powershell -NoProfile -Command "${psCmd}"`, { timeout: 5000 });
+        } catch (_) {
+          try { fs.rmSync(entry.trashPath, { recursive: true, force: true }); } catch (e) {}
+        }
+      }
+    }
+    _sessionTrashMap.clear();
+    try { fs.rmSync(_sessionTrashDir, { recursive: true, force: true }); } catch (_) {}
+  } catch (err) {
+    console.warn('[SessionTrash] Exit cleanup warning:', err);
+  }
+}
+
+app.on('before-quit', () => {
+  commitSessionTrashToRecycleBin();
+});
 
 // Single-instance lock and path arguments handling
 let startupPathPayload = null;
@@ -1606,13 +1691,23 @@ function isPortOpen(port, host = '127.0.0.1', timeout = 500) {
 function getLocalIpv4() {
   const nets = require('os').networkInterfaces();
   const candidates = [];
+  const linkLocalCandidates = [];
+  let loopbackAddress = '127.0.0.1';
 
   for (const name of Object.keys(nets)) {
     for (const net of nets[name] || []) {
       const family = typeof net.family === 'string' ? net.family : String(net.family);
-      if (family !== 'IPv4' || net.internal) continue;
-      if (net.address && !net.address.startsWith('169.254.')) {
-        candidates.push({ name, address: net.address });
+      if (family !== 'IPv4') continue;
+      if (net.internal) {
+        if (net.address) loopbackAddress = net.address;
+        continue;
+      }
+      if (net.address) {
+        if (net.address.startsWith('169.254.')) {
+          linkLocalCandidates.push({ name, address: net.address });
+        } else {
+          candidates.push({ name, address: net.address });
+        }
       }
     }
   }
@@ -1628,7 +1723,15 @@ function getLocalIpv4() {
     if (match) return { address: match.address, candidates };
   }
 
-  return { address: candidates[0]?.address || null, candidates };
+  if (candidates.length > 0) {
+    return { address: candidates[0].address, candidates };
+  }
+
+  if (linkLocalCandidates.length > 0) {
+    return { address: linkLocalCandidates[0].address, candidates: linkLocalCandidates };
+  }
+
+  return { address: loopbackAddress, candidates: [{ name: 'loopback', address: loopbackAddress }] };
 }
 
 function checkInternetConnectivity(timeoutMs = 3000) {
@@ -2406,6 +2509,18 @@ ipcMain.handle('indexing-preferences-set', async (_event, updates = {}) => {
 
 ipcMain.handle('settings:get', async (_event, key) => {
   return sendToPython({ action: 'settings_get', key });
+});
+
+ipcMain.handle('get-setting', async (_event, key) => {
+  return sendToPython({ action: 'settings_get', key });
+});
+
+ipcMain.handle('index:recreate-embeddings', async () => {
+  return sendToPython({ action: 'recreate_embeddings' }, 600000);
+});
+
+ipcMain.handle('index:reset-all', async () => {
+  return sendToPython({ action: 'reset_index_all' });
 });
 
 ipcMain.handle('settings:set', async (_event, payload = {}) => {
@@ -4190,11 +4305,15 @@ function registerIpcHandlers() {
     }
   });
 
+  const emitFileOpProgress = (data) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('file-op-progress', data);
+    }
+  };
+
   ipcMain.handle('copy-file', async (event, sourcePath, destPath) => {
     try {
-      // Check if destination exists
       if (fs.existsSync(destPath)) {
-        // Modify destination name if file exists
         const dir = path.dirname(destPath);
         const ext = path.extname(destPath);
         const name = path.basename(destPath, ext);
@@ -4208,33 +4327,87 @@ function registerIpcHandlers() {
       }
 
       const stat = fs.statSync(sourcePath);
-      if (stat.isDirectory()) {
-        // Copy directory recursively
-        const copyDir = (src, dst) => {
+      const isDir = stat.isDirectory();
+      const opName = 'Copying';
+
+      if (isDir) {
+        const filesToCopy = [];
+        const collectFiles = (src, dst) => {
           if (!fs.existsSync(dst)) fs.mkdirSync(dst, { recursive: true });
-          fs.readdirSync(src).forEach(file => {
-            const srcFile = path.join(src, file);
-            const dstFile = path.join(dst, file);
-            if (fs.statSync(srcFile).isDirectory()) {
-              copyDir(srcFile, dstFile);
+          const items = fs.readdirSync(src);
+          for (const item of items) {
+            const s = path.join(src, item);
+            const d = path.join(dst, item);
+            const st = fs.statSync(s);
+            if (st.isDirectory()) {
+              collectFiles(s, d);
             } else {
-              fs.copyFileSync(srcFile, dstFile);
+              filesToCopy.push({ src: s, dst: d, size: st.size });
             }
-          });
+          }
         };
-        copyDir(sourcePath, destPath);
+        collectFiles(sourcePath, destPath);
+
+        const totalFiles = filesToCopy.length;
+        const totalBytes = filesToCopy.reduce((sum, f) => sum + f.size, 0);
+        let processedFiles = 0;
+        let processedBytes = 0;
+
+        emitFileOpProgress({ operation: 'copy', active: true, title: `${opName} folder…`, pct: 0, processedFiles, totalFiles, processedBytes, totalBytes });
+
+        for (const file of filesToCopy) {
+          fs.copyFileSync(file.src, file.dst);
+          processedFiles++;
+          processedBytes += file.size;
+          const pct = totalBytes > 0 ? Math.round((processedBytes / totalBytes) * 100) : Math.round((processedFiles / Math.max(1, totalFiles)) * 100);
+          emitFileOpProgress({
+            operation: 'copy',
+            active: true,
+            title: `${opName} ${path.basename(file.src)}`,
+            pct: Math.min(99, pct),
+            processedFiles,
+            totalFiles,
+            processedBytes,
+            totalBytes
+          });
+        }
+        emitFileOpProgress({ operation: 'copy', active: false, done: true, pct: 100 });
       } else {
-        fs.copyFileSync(sourcePath, destPath);
+        const totalBytes = stat.size;
+        const fileName = path.basename(sourcePath);
+        if (totalBytes > 5 * 1024 * 1024) {
+          const CHUNK = 1024 * 1024;
+          const rfd = fs.openSync(sourcePath, 'r');
+          const wfd = fs.openSync(destPath, 'w');
+          const buf = Buffer.alloc(CHUNK);
+          let written = 0;
+
+          emitFileOpProgress({ operation: 'copy', active: true, title: `${opName} ${fileName}`, pct: 0, processedBytes: 0, totalBytes });
+
+          while (written < totalBytes) {
+            const bytesRead = fs.readSync(rfd, buf, 0, CHUNK, written);
+            if (bytesRead === 0) break;
+            fs.writeSync(wfd, buf, 0, bytesRead);
+            written += bytesRead;
+            const pct = Math.round((written / totalBytes) * 100);
+            emitFileOpProgress({ operation: 'copy', active: true, title: `${opName} ${fileName}`, pct: Math.min(99, pct), processedBytes: written, totalBytes });
+          }
+          fs.closeSync(rfd);
+          fs.closeSync(wfd);
+          emitFileOpProgress({ operation: 'copy', active: false, done: true, pct: 100 });
+        } else {
+          fs.copyFileSync(sourcePath, destPath);
+        }
       }
       return { success: true };
     } catch (err) {
+      emitFileOpProgress({ operation: 'copy', active: false, error: err.message });
       return { success: false, error: err.message };
     }
   });
 
   ipcMain.handle('move-file', async (event, sourcePath, destPath) => {
     try {
-      // Check if source is protected
       if (isProtectedPath(sourcePath)) {
         return { success: false, error: 'Cannot move system files or folders' };
       }
@@ -4250,9 +4423,16 @@ function registerIpcHandlers() {
         }
         destPath = newDest;
       }
+
+      const stat = fs.statSync(sourcePath);
+      const fileName = path.basename(sourcePath);
+
+      emitFileOpProgress({ operation: 'move', active: true, title: `Moving ${fileName}…`, pct: 10 });
       fs.renameSync(sourcePath, destPath);
+      emitFileOpProgress({ operation: 'move', active: false, done: true, pct: 100 });
       return { success: true };
     } catch (err) {
+      emitFileOpProgress({ operation: 'move', active: false, error: err.message });
       return { success: false, error: err.message };
     }
   });
@@ -4289,11 +4469,9 @@ function registerIpcHandlers() {
 
   ipcMain.handle('delete-file', async (event, filePath) => {
     try {
-      // Check if path is protected
       if (isProtectedPath(filePath)) {
         return { success: false, error: 'Cannot delete system files or folders' };
       }
-      // Check if file is locked
       const lockStatus = getFileLockService().getFileStatus(filePath);
       if (lockStatus?.isLocked || getFileLockService().isLockedExtension(filePath)) {
         return {
@@ -4304,59 +4482,85 @@ function registerIpcHandlers() {
           filePath
         };
       }
-      // Move to Recycle Bin using Windows API.
-      // IMPORTANT: We must AWAIT completion so chokidar sees a clean state
-      // transition instead of catching the directory mid-operation (which
-      // causes it to fire unlink/add for ALL files in the directory).
-      const { exec } = require('child_process');
-      const stats = fs.statSync(filePath);
-      const escapedPath = filePath.replace(/'/g, "''");
 
-      // Track this path so the watcher can suppress spurious events
-      _recentlyDeletedPaths.add(filePath.toLowerCase());
-      setTimeout(() => _recentlyDeletedPaths.delete(filePath.toLowerCase()), 5000);
+      const trashDir = getSessionTrashDir();
+      const lowerKey = filePath.toLowerCase();
+      const stat = fs.statSync(filePath);
 
-      const psCommand = stats.isDirectory()
-        ? `Add-Type -AssemblyName Microsoft.VisualBasic; [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory('${escapedPath}','OnlyErrorDialogs','SendToRecycleBin')`
-        : `Add-Type -AssemblyName Microsoft.VisualBasic; [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile('${escapedPath}','OnlyErrorDialogs','SendToRecycleBin')`;
-
-      return await new Promise((resolve) => {
-        exec(`powershell -NoProfile -Command "${psCommand}"`, { timeout: 15000 }, (err) => {
-          if (err) {
-            console.error('Error deleting:', err.message || err);
-            resolve({ success: false, error: err.message || 'Delete failed' });
-          } else {
-            resolve({ success: true });
+      // Enforce max capacity (50 items) — commit oldest item to Recycle Bin
+      if (_sessionTrashMap.size >= MAX_SESSION_TRASH_ITEMS) {
+        const oldestKey = _sessionTrashMap.keys().next().value;
+        if (oldestKey) {
+          const oldestEntry = _sessionTrashMap.get(oldestKey);
+          _sessionTrashMap.delete(oldestKey);
+          if (oldestEntry && fs.existsSync(oldestEntry.trashPath)) {
+            const escaped = oldestEntry.trashPath.replace(/'/g, "''");
+            const psCmd = oldestEntry.isDir
+              ? `Add-Type -AssemblyName Microsoft.VisualBasic; [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory('${escaped}','OnlyErrorDialogs','SendToRecycleBin')`
+              : `Add-Type -AssemblyName Microsoft.VisualBasic; [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile('${escaped}','OnlyErrorDialogs','SendToRecycleBin')`;
+            require('child_process').exec(`powershell -NoProfile -Command "${psCmd}"`, () => {});
           }
-        });
+        }
+      }
+
+      const trashId = Date.now() + '_' + Math.random().toString(36).substring(2, 8);
+      const trashPath = path.join(trashDir, `${trashId}_${path.basename(filePath)}`);
+
+      _recentlyDeletedPaths.add(lowerKey);
+      setTimeout(() => _recentlyDeletedPaths.delete(lowerKey), 5000);
+
+      // Move file into session trash folder
+      fs.renameSync(filePath, trashPath);
+
+      _sessionTrashMap.set(lowerKey, {
+        trashId,
+        originalPath: filePath,
+        trashPath,
+        isDir: stat.isDirectory(),
+        timestamp: Date.now()
       });
+
+      return { success: true, trashId, originalPath: filePath };
     } catch (err) {
-      return { success: false, error: err.message };
+      return { success: false, error: err.message || 'Delete failed' };
     }
   });
 
   ipcMain.handle('restore-deleted-file', async (event, originalPath) => {
     try {
-      const escapedPath = String(originalPath || '').replace(/'/g, "''");
-      const command = [
-        '$shell = New-Object -ComObject Shell.Application',
-        '$recycle = $shell.Namespace(10)',
-        '$item = $recycle.Items() | Where-Object { $_.ExtendedProperty(\'System.Recycle.DeletedFrom\') -eq \'${escapedPath}\' } | Select-Object -First 1',
-        'if ($item) { $item.InvokeVerb(\'RESTORE\'); exit 0 } else { exit 1 }'
-      ].join('; ');
+      if (!originalPath) return { success: false, error: 'No original path provided' };
+      const lowerKey = originalPath.toLowerCase();
+      const entry = _sessionTrashMap.get(lowerKey);
 
+      if (entry && fs.existsSync(entry.trashPath)) {
+        const parentDir = path.dirname(originalPath);
+        if (!fs.existsSync(parentDir)) {
+          fs.mkdirSync(parentDir, { recursive: true });
+        }
+        fs.renameSync(entry.trashPath, originalPath);
+        _sessionTrashMap.delete(lowerKey);
+        return { success: true, restoredPath: originalPath };
+      }
+
+      // Fallback: restore from Recycle Bin if deleted earlier
+      const baseName = path.basename(originalPath).replace(/'/g, "''");
+      const psScript = `
+        $shell = New-Object -ComObject Shell.Application
+        $bin = $shell.Namespace(10)
+        $item = $bin.Items() | Where-Object { $_.Name -eq '${baseName}' } | Select-Object -First 1
+        if ($item) { $item.InvokeVerb('RESTORE'); exit 0 } else { exit 1 }
+      `;
       return await new Promise((resolve) => {
-        const { exec } = require('child_process');
-        exec(`powershell -NoProfile -Command "${command}"`, (err) => {
-          if (err) {
-            resolve({ success: false, error: err.message });
+        require('child_process').exec(`powershell -NoProfile -Command "${psScript}"`, (err) => {
+          if (!err) {
+            resolve({ success: true, restoredPath: originalPath });
           } else {
-            resolve({ success: true });
+            resolve({ success: false, error: 'Item not found in session trash or Recycle Bin' });
           }
         });
       });
     } catch (err) {
-      return { success: false, error: err.message };
+      return { success: false, error: err.message || 'Restore failed' };
     }
   });
 

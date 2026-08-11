@@ -134,6 +134,28 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
   // New flag – allow indexing only after the first directory load
   const [canStartIndexing, setCanStartIndexing] = useState(false);
 
+  // File Operation Progress State (copy, move, delete)
+  const [fileOpProgress, setFileOpProgress] = useState(null);
+
+  useEffect(() => {
+    if (!ipcRenderer) return undefined;
+
+    const handleProgress = (data) => {
+      if (!data) return;
+      if (data.done || data.error || !data.active) {
+        setFileOpProgress(data);
+        setTimeout(() => setFileOpProgress(null), 3000);
+      } else {
+        setFileOpProgress(data);
+      }
+    };
+
+    ipcRenderer.on('file-op-progress', handleProgress);
+    return () => {
+      ipcRenderer.off('file-op-progress', handleProgress);
+    };
+  }, []);
+
   // Use canStartIndexing to avoid unused variable lint warning.
   useEffect(() => {
     // This effect runs whenever canStartIndexing changes.
@@ -617,6 +639,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
         }
       }
     } catch (_) { }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadDirectory]);
 
   // Ensure breadcrumb is set on first load when currentPath is known but breadcrumb is empty
@@ -784,7 +807,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
 
   useEffect(() => {
     const handlePromptRename = (e) => {
-      const { item, fileId } = e.detail || {};
+      const { item, fileId, newName } = e.detail || {};
       if (!item) return;
       window.intellifile?.fileLock?.getStatus?.(item.path).then((status) => {
         setLockModalFile({
@@ -793,6 +816,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
           path: item.path,
           size: status?.entry?.originalSize || item.size,
           originalName: status?.entry?.originalName || item.name,
+          targetNewName: newName || item.name
         });
         setLockModalMode('renameLocked');
         setShowLockModal(true);
@@ -922,19 +946,39 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
   const handleCharacterType = useCallback((char) => {
     if (renamingItem || !displayItems || displayItems.length === 0) return;
 
+    const lowerChar = char.toLowerCase();
     if (typeTimerRef.current) clearTimeout(typeTimerRef.current);
-    typeBufferRef.current += char.toLowerCase();
+    typeBufferRef.current += lowerChar;
 
     typeTimerRef.current = setTimeout(() => {
       typeBufferRef.current = '';
     }, 1000);
 
     const query = typeBufferRef.current;
-    let match = displayItems.find(item => (item.name || '').toLowerCase().startsWith(query));
+    const isRepeatedSingleChar = query.length > 0 && query.split('').every(c => c === lowerChar);
 
-    if (!match && query.length > 1) {
-      match = displayItems.find(item => (item.name || '').toLowerCase().startsWith(char.toLowerCase()));
-      if (match) typeBufferRef.current = char.toLowerCase();
+    let match = null;
+
+    if (isRepeatedSingleChar) {
+      const matchingIndices = [];
+      displayItems.forEach((item, index) => {
+        if ((item.name || '').toLowerCase().startsWith(lowerChar)) {
+          matchingIndices.push(index);
+        }
+      });
+
+      if (matchingIndices.length > 0) {
+        const nextIndex = matchingIndices.find(idx => idx > lastSelectedIndex);
+        const targetIndex = nextIndex !== undefined ? nextIndex : matchingIndices[0];
+        match = displayItems[targetIndex];
+      }
+    } else {
+      match = displayItems.find(item => (item.name || '').toLowerCase().startsWith(query));
+
+      if (!match && query.length > 1) {
+        match = displayItems.find(item => (item.name || '').toLowerCase().startsWith(lowerChar));
+        if (match) typeBufferRef.current = lowerChar;
+      }
     }
 
     if (match) {
@@ -961,7 +1005,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
         } catch (_) {}
       }, 50);
     }
-  }, [renamingItem, displayItems]);
+  }, [renamingItem, displayItems, lastSelectedIndex]);
 
   const handleBreadcrumbClick = (path) => {
     // Load breadcrumb navigation in background without spinner
@@ -1140,11 +1184,21 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
   };
 
   const handleUndo = async () => {
-    await fileOps.handleUndo(() => { });
+    const success = await fileOps.handleUndo(() => {
+      handleRefresh();
+    });
+    if (success) {
+      showToast('Undo action completed.', { type: 'info', title: 'Undo' });
+    }
   };
 
   const handleRedo = async () => {
-    await fileOps.handleRedo(() => { });
+    const success = await fileOps.handleRedo(() => {
+      handleRefresh();
+    });
+    if (success) {
+      showToast('Redo action completed.', { type: 'info', title: 'Redo' });
+    }
   };
 
   const handleCopyPath = async () => {
@@ -1205,6 +1259,18 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
     if (currentPath) {
       loadDirectory(currentPath, { soft: true, trackHistory: false });
     }
+  };
+
+  const handleProperties = () => {
+    if ((!selectedItem || isEmptySpaceContext) && currentPath) {
+      const folderName = currentPath.split('\\').pop() || currentPath.split('/').pop() || currentPath;
+      setSelectedItem({
+        name: folderName,
+        path: currentPath,
+        type: 'folder'
+      });
+    }
+    setShowProperties(true);
   };
 
   const handleOpenPreview = () => {
@@ -1932,6 +1998,14 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
                 📋 {clipboard.operation === 'cut' ? 'Cut' : 'Copied'}: {clipboard.items.length}
               </span>
             )}
+            {fileOpProgress && fileOpProgress.active && (
+              <span className="statusbar-pill statusbar-pill--progress">
+                ⚡ {fileOpProgress.title || 'Processing…'} ({fileOpProgress.pct || 0}%)
+                <span className="statusbar-progress-bar">
+                  <span className="statusbar-progress-fill" style={{ width: `${fileOpProgress.pct || 0}%` }} />
+                </span>
+              </span>
+            )}
           </div>
 
           {selectedItem?.type === 'file' && (
@@ -2017,7 +2091,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
           setRenameValue(selectedItem?.name || '');
         }}
         onDelete={handleDelete}
-        onProperties={() => setShowProperties(true)}
+        onProperties={handleProperties}
         onCopyPath={handleCopyPath}
         onOpenTerminal={handleOpenTerminal}
         onOpenInVSCode={handleOpenInVSCode}
