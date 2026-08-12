@@ -46,16 +46,38 @@ function ExplorerNavbar({
   const [updateState, setUpdateState] = React.useState({ status: 'none', version: '', progress: 0 });
 
   React.useEffect(() => {
+    if (window.electron?.getUpdateState) {
+      window.electron.getUpdateState().then((state) => {
+        if (state && state.status && state.status !== 'idle') {
+          setUpdateState({
+            status: state.status,
+            version: state.version || '',
+            progress: state.progress || 0
+          });
+        }
+      });
+    }
+
     const ipcRenderer = window.electron?.ipcRenderer;
     if (!ipcRenderer) return undefined;
 
-    const onAvail = (_, data) => {
+    const parsePayload = (a, b) => {
+      if (a && typeof a === 'object' && ('percent' in a || 'version' in a)) return a;
+      if (b && typeof b === 'object' && ('percent' in b || 'version' in b)) return b;
+      return a || b || {};
+    };
+
+    const onAvail = (a, b) => {
+      const data = parsePayload(a, b);
       setUpdateState({ status: 'available', version: data?.version || '', progress: 0 });
     };
-    const onProgress = (_, data) => {
-      setUpdateState({ status: 'downloading', version: '', progress: data?.percent || 0 });
+    const onProgress = (a, b) => {
+      const data = parsePayload(a, b);
+      const pct = typeof data?.percent === 'number' ? data.percent : (typeof a === 'number' ? a : 0);
+      setUpdateState((prev) => ({ status: 'downloading', version: prev.version, progress: pct }));
     };
-    const onDone = (_, data) => {
+    const onDone = (a, b) => {
+      const data = parsePayload(a, b);
       setUpdateState({ status: 'downloaded', version: data?.version || '', progress: 100 });
     };
 

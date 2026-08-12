@@ -337,24 +337,56 @@ export default function Settings({ theme, onThemeChange, onStartTour }) {
       ipc.getAppVersion().then((v) => { if (v) setCurrentVersion(v); });
     }
 
+    const getStateFn = window.electron?.getUpdateState || ipc?.getUpdateState;
+    if (getStateFn) {
+      getStateFn().then((state) => {
+        if (state) {
+          if (state.version) setLatestVersion(state.version);
+          if (state.status && state.status !== 'idle') {
+            setUpdateStatus(state.status);
+          }
+          if (typeof state.progress === 'number' && state.progress > 0) {
+            setDownloadProgress(state.progress);
+          }
+        }
+      });
+    }
+
     const ipcRenderer = ipc?.ipcRenderer || window.electron?.ipcRenderer;
     if (!ipcRenderer) return;
 
-    const onChecking = () => setUpdateStatus('checking');
-    const onAvail = (_, data) => {
-      setLatestVersion(data?.version || 'new');
+    const parsePayload = (a, b) => {
+      if (a && typeof a === 'object' && ('percent' in a || 'version' in a || 'message' in a || 'status' in a)) return a;
+      if (b && typeof b === 'object' && ('percent' in b || 'version' in b || 'message' in b || 'status' in b)) return b;
+      return a || b || {};
+    };
+
+    const onChecking = () => {
+      setUpdateStatus((prev) => (prev === 'available' || prev === 'downloading' || prev === 'downloaded' ? prev : 'checking'));
+    };
+    const onAvail = (a, b) => {
+      const data = parsePayload(a, b);
+      const ver = data?.version || (typeof a === 'string' ? a : typeof b === 'string' ? b : '');
+      if (ver) setLatestVersion(ver);
       setUpdateStatus('available');
     };
-    const onNotAvail = () => setUpdateStatus('latest');
-    const onProgress = (_, data) => {
-      setUpdateStatus('downloading');
-      setDownloadProgress(data?.percent || 0);
+    const onNotAvail = () => {
+      setUpdateStatus((prev) => (prev === 'available' || prev === 'downloading' || prev === 'downloaded' ? prev : 'latest'));
     };
-    const onDone = (_, data) => {
-      if (data?.version) setLatestVersion(data.version);
+    const onProgress = (a, b) => {
+      const data = parsePayload(a, b);
+      const pct = typeof data?.percent === 'number' ? data.percent : (typeof a === 'number' ? a : 0);
+      setUpdateStatus('downloading');
+      setDownloadProgress(pct);
+    };
+    const onDone = (a, b) => {
+      const data = parsePayload(a, b);
+      const ver = data?.version || (typeof a === 'string' ? a : typeof b === 'string' ? b : '');
+      if (ver) setLatestVersion(ver);
       setUpdateStatus('downloaded');
     };
-    const onError = (_, data) => {
+    const onError = (a, b) => {
+      const data = parsePayload(a, b);
       setUpdateError(data?.message || 'Failed to check for updates');
       setUpdateStatus('error');
     };
@@ -377,21 +409,50 @@ export default function Settings({ theme, onThemeChange, onStartTour }) {
   }, []);
 
   const handleCheckForUpdates = async () => {
+    // If state is already available or downloaded, display it directly
+    const getStateFn = window.electron?.getUpdateState || ipc?.getUpdateState;
+    if (getStateFn) {
+      try {
+        const state = await getStateFn();
+        if (state?.status === 'available' || state?.status === 'downloaded') {
+          if (state.version) setLatestVersion(state.version);
+          setUpdateStatus(state.status);
+          if (state.status === 'downloaded') setDownloadProgress(100);
+          return;
+        }
+      } catch (_e) {}
+    }
+
     setUpdateStatus('checking');
     setUpdateError('');
     try {
       let res;
-      if (typeof ipc?.checkForUpdates === 'function') {
-        res = await ipc.checkForUpdates();
-      } else if (window.electron?.ipcRenderer) {
-        res = await window.electron.ipcRenderer.invoke('check-for-updates');
+      const checkPromise = (typeof ipc?.checkForUpdates === 'function')
+        ? ipc.checkForUpdates()
+        : (window.electron?.ipcRenderer ? window.electron.ipcRenderer.invoke('check-for-updates') : Promise.resolve(null));
+
+      const timeoutPromise = new Promise((resolve) => setTimeout(() => resolve({ timeout: true }), 4000));
+      res = await Promise.race([checkPromise, timeoutPromise]);
+
+      if (res?.timeout) {
+        const state = getStateFn ? await getStateFn() : null;
+        if (state?.status && state.status !== 'idle') {
+          if (state.version) setLatestVersion(state.version);
+          setUpdateStatus(state.status);
+          return;
+        }
       }
 
       if (res) {
-        if (res.updateAvailable && res.version) {
-          setLatestVersion(res.version);
+        const ver = res.version || res.latestVersion;
+        if (ver) setLatestVersion(ver);
+
+        if (res.downloaded || res.status === 'downloaded') {
+          setUpdateStatus('downloaded');
+          setDownloadProgress(100);
+        } else if (res.updateAvailable || res.status === 'available') {
           setUpdateStatus('available');
-        } else if (res.updateAvailable === false) {
+        } else if (res.updateAvailable === false || res.status === 'latest') {
           setUpdateStatus('latest');
         } else if (res.error) {
           if (res.error.toLowerCase().includes('no update') || res.error.includes('404')) {
@@ -400,6 +461,8 @@ export default function Settings({ theme, onThemeChange, onStartTour }) {
             setUpdateError(res.error);
             setUpdateStatus('error');
           }
+        } else {
+          setUpdateStatus('latest');
         }
       }
     } catch (err) {
@@ -412,10 +475,16 @@ export default function Settings({ theme, onThemeChange, onStartTour }) {
     setUpdateStatus('downloading');
     setDownloadProgress(0);
     try {
+      let res;
       if (typeof ipc?.downloadUpdate === 'function') {
-        await ipc.downloadUpdate();
+        res = await ipc.downloadUpdate();
       } else if (window.electron?.ipcRenderer) {
-        window.electron.ipcRenderer.invoke('download-update');
+        res = await window.electron.ipcRenderer.invoke('download-update');
+      }
+      if (res?.downloaded || res?.status === 'downloaded') {
+        if (res.version) setLatestVersion(res.version);
+        setUpdateStatus('downloaded');
+        setDownloadProgress(100);
       }
     } catch (err) {
       setUpdateError(err.message || 'Download failed');

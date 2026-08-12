@@ -1,4 +1,29 @@
 const { app, BrowserWindow, Menu, ipcMain, shell, dialog, clipboard, nativeImage } = require('electron');
+const path = require('path');
+const fs = require('fs');
+
+// Force consistent canonical userData path (%APPDATA%\intellifile) across all updates & installer versions
+const appDataDir = app.getPath('appData');
+const canonicalUserData = path.join(appDataDir, 'intellifile');
+try {
+  app.setPath('userData', canonicalUserData);
+  if (!fs.existsSync(canonicalUserData)) {
+    fs.mkdirSync(canonicalUserData, { recursive: true });
+  }
+
+  // Auto-migrate settings & data from alternative folder names (e.g. IntelliFile vs intellifile)
+  const altUserData = path.join(appDataDir, 'IntelliFile');
+  if (fs.existsSync(altUserData) && altUserData !== canonicalUserData) {
+    const altSettings = path.join(altUserData, 'app_settings.json');
+    const targetSettings = path.join(canonicalUserData, 'app_settings.json');
+    if (fs.existsSync(altSettings) && !fs.existsSync(targetSettings)) {
+      fs.copyFileSync(altSettings, targetSettings);
+      console.log('[Migration] Successfully migrated app_settings.json to canonical userData');
+    }
+  }
+} catch (e) {
+  console.warn('[UserData] Warning setting canonical userData path:', e.message);
+}
 
 // Enable multi-window support: second instance launches open a new window
 app.on('second-instance', (event, commandLine, workingDirectory) => {
@@ -11,19 +36,55 @@ const { autoUpdater } = require('electron-updater');
 autoUpdater.logger = console;
 autoUpdater.autoDownload = false;
 autoUpdater.autoInstallOnAppQuit = true;
+autoUpdater.allowPrerelease = true;
+
+let cachedUpdateState = {
+  status: 'idle', // 'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'error'
+  version: '',
+  progress: 0,
+  error: null
+};
+
+let checkTimeout = null;
 
 autoUpdater.on('checking-for-update', () => {
   console.log('[Update] Checking for updates on GitHub...');
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('update-checking');
+  if (cachedUpdateState.status !== 'available' && cachedUpdateState.status !== 'downloaded') {
+    cachedUpdateState.status = 'checking';
   }
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('update-checking', cachedUpdateState);
+  }
+
+  if (checkTimeout) clearTimeout(checkTimeout);
+  checkTimeout = setTimeout(async () => {
+    if (cachedUpdateState.status === 'checking') {
+      console.log('[Update] Checking timed out after 10s. Running direct GitHub query fallback...');
+      const ghRelease = await fetchLatestGitHubRelease();
+      const currentVer = app.getVersion();
+      if (ghRelease?.version && isNewerVersion(ghRelease.version, currentVer)) {
+        cachedUpdateState = { status: 'available', version: ghRelease.version, progress: 0, error: null };
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('update-available', { version: ghRelease.version });
+        }
+      } else {
+        cachedUpdateState.status = 'latest';
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('update-not-available', { version: currentVer });
+        }
+      }
+    }
+  }, 10000);
 });
 
 autoUpdater.on('update-available', (info) => {
-  console.log('[Update] 🎉 New version available:', info?.version);
+  if (checkTimeout) clearTimeout(checkTimeout);
+  const ver = info?.version || 'unknown';
+  console.log('[Update] 🎉 New version available:', ver);
+  cachedUpdateState = { status: 'available', version: ver, progress: 0, error: null };
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('update-available', {
-      version: info?.version || 'unknown',
+      version: ver,
       releaseNotes: info?.releaseNotes,
       releaseDate: info?.releaseDate
     });
@@ -31,7 +92,11 @@ autoUpdater.on('update-available', (info) => {
 });
 
 autoUpdater.on('update-not-available', (info) => {
+  if (checkTimeout) clearTimeout(checkTimeout);
   console.log('[Update] ✓ Application is up to date.');
+  if (cachedUpdateState.status !== 'downloaded' && cachedUpdateState.status !== 'available') {
+    cachedUpdateState = { status: 'latest', version: app.getVersion(), progress: 100, error: null };
+  }
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('update-not-available', {
       version: app.getVersion()
@@ -40,10 +105,13 @@ autoUpdater.on('update-not-available', (info) => {
 });
 
 autoUpdater.on('download-progress', (progressObj) => {
-  console.log(`[Update] Download progress: ${Math.round(progressObj.percent || 0)}%`);
+  if (checkTimeout) clearTimeout(checkTimeout);
+  const pct = Math.round(progressObj.percent || 0);
+  console.log(`[Update] Download progress: ${pct}%`);
+  cachedUpdateState = { ...cachedUpdateState, status: 'downloading', progress: pct };
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('update-download-progress', {
-      percent: Math.round(progressObj.percent || 0),
+      percent: pct,
       bytesPerSecond: progressObj.bytesPerSecond,
       transferred: progressObj.transferred,
       total: progressObj.total
@@ -52,25 +120,51 @@ autoUpdater.on('download-progress', (progressObj) => {
 });
 
 autoUpdater.on('update-downloaded', (info) => {
-  console.log('[Update] ⚡ Update downloaded and ready to install:', info ? info.version : '');
+  if (checkTimeout) clearTimeout(checkTimeout);
+  const ver = info?.version || cachedUpdateState.version || '';
+  console.log('[Update] ⚡ Update downloaded and ready to install:', ver);
+  cachedUpdateState = { status: 'downloaded', version: ver, progress: 100, error: null };
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('update-downloaded', {
-      version: info ? info.version : ''
+      version: ver
     });
   }
 });
 
+function isNonFatalUpdateError(msg) {
+  if (!msg) return false;
+  const lower = String(msg).toLowerCase();
+  return (
+    lower.includes('no update') ||
+    lower.includes('404') ||
+    lower.includes('406') ||
+    lower.includes('cannot find') ||
+    lower.includes('cannot parse') ||
+    lower.includes('unable to find') ||
+    lower.includes('latest.yml') ||
+    lower.includes('dev-app-update') ||
+    lower.includes('already in progress') ||
+    lower.includes('in progress')
+  );
+}
+
 autoUpdater.on('error', (err) => {
   const msg = err && err.message ? err.message : String(err);
-  const lower = msg.toLowerCase();
   console.warn('[Update] Notice/Warning during update check:', msg);
+  if (msg.toLowerCase().includes('in progress')) {
+    return;
+  }
   if (mainWindow && !mainWindow.isDestroyed()) {
-    if (lower.includes('no update') || lower.includes('404') || lower.includes('cannot find') || lower.includes('latest.yml')) {
+    if (isNonFatalUpdateError(msg)) {
+      if (cachedUpdateState.status !== 'downloaded' && cachedUpdateState.status !== 'available') {
+        cachedUpdateState.status = 'latest';
+      }
       mainWindow.webContents.send('update-not-available', {
         version: app.getVersion()
       });
       return;
     }
+    cachedUpdateState = { ...cachedUpdateState, status: 'error', error: msg };
     mainWindow.webContents.send('update-error', {
       message: msg
     });
@@ -79,9 +173,10 @@ autoUpdater.on('error', (err) => {
 
 // Daily automatic background update check (runs 15s after startup and every 24h)
 function setupDailyUpdateCheck() {
+  if (!app.isPackaged) return;
   setTimeout(() => {
     console.log('[Update] Running automatic background update check...');
-    if (app.isPackaged) {
+    if (cachedUpdateState.status !== 'downloaded' && cachedUpdateState.status !== 'available') {
       autoUpdater.checkForUpdates().catch((err) => {
         console.log('[Update] Background check skipped:', err?.message || err);
       });
@@ -91,7 +186,7 @@ function setupDailyUpdateCheck() {
   const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000;
   setInterval(() => {
     console.log('[Update] Running 24-hour scheduled update check...');
-    if (app.isPackaged) {
+    if (app.isPackaged && cachedUpdateState.status !== 'downloaded' && cachedUpdateState.status !== 'available') {
       autoUpdater.checkForUpdates().catch((err) => {
         console.log('[Update] Scheduled check skipped:', err?.message || err);
       });
@@ -105,66 +200,177 @@ ipcMain.handle('get-app-version', () => {
   return app.getVersion();
 });
 
+function isNewerVersion(latest, current) {
+  if (!latest || !current) return false;
+  const parse = (v) => String(v).replace(/^v/, '').split('.').map((n) => parseInt(n, 10) || 0);
+  const l = parse(latest);
+  const c = parse(current);
+  for (let i = 0; i < Math.max(l.length, c.length); i++) {
+    const lNum = l[i] || 0;
+    const cNum = c[i] || 0;
+    if (lNum > cNum) return true;
+    if (lNum < cNum) return false;
+  }
+  return false;
+}
+
+function fetchLatestGitHubRelease() {
+  return new Promise((resolve) => {
+    const https = require('https');
+    const options = {
+      hostname: 'api.github.com',
+      path: '/repos/rishivejani15/Intellifile/releases',
+      headers: {
+        'User-Agent': 'IntelliFile-App'
+      }
+    };
+    https.get(options, (res) => {
+      let data = '';
+      res.on('data', (chunk) => { data += chunk; });
+      res.on('end', () => {
+        try {
+          const releases = JSON.parse(data);
+          if (Array.isArray(releases) && releases.length > 0) {
+            const valid = releases.find((r) => !r.draft);
+            if (valid && valid.tag_name) {
+              const cleanVer = valid.tag_name.replace(/^v/, '');
+              return resolve({ version: cleanVer });
+            }
+          }
+          resolve(null);
+        } catch (_e) {
+          resolve(null);
+        }
+      });
+    }).on('error', () => resolve(null));
+  });
+}
+
+ipcMain.handle('get-update-state', () => {
+  return { ...cachedUpdateState };
+});
+
 ipcMain.handle('check-for-updates', async () => {
+  // If update is already downloaded, in progress, or available, return state immediately
+  if (cachedUpdateState.status === 'downloaded') {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('update-downloaded', { version: cachedUpdateState.version });
+    }
+    return { updateAvailable: true, version: cachedUpdateState.version, downloaded: true, status: 'downloaded' };
+  }
+
+  if (cachedUpdateState.status === 'available' && cachedUpdateState.version) {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('update-available', { version: cachedUpdateState.version });
+    }
+    return { updateAvailable: true, version: cachedUpdateState.version, downloaded: false, status: 'available' };
+  }
+
   try {
     const currentVer = app.getVersion();
-    if (!app.isPackaged) {
-      try {
-        const result = await autoUpdater.checkForUpdates();
-        const updateVer = result?.updateInfo?.version;
-        if (updateVer && updateVer !== currentVer) {
-          if (mainWindow && !mainWindow.isDestroyed()) {
-            mainWindow.webContents.send('update-available', { version: updateVer });
-          }
-          return { updateAvailable: true, version: updateVer, currentVersion: currentVer };
-        }
-      } catch (_devErr) {
-        // Dev mode without GitHub release tags
-      }
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('update-not-available', { version: currentVer });
-      }
-      return { updateAvailable: false, version: currentVer, devMode: true };
-    }
+    // Primary Check: Query GitHub API directly (works 100% reliably in dev & packaged mode)
+    const ghRelease = await fetchLatestGitHubRelease();
+    const updateVer = ghRelease?.version;
 
-    const result = await autoUpdater.checkForUpdates();
-    const updateVer = result?.updateInfo?.version;
-    const isNew = updateVer && updateVer !== currentVer;
-
-    if (isNew) {
+    if (updateVer && isNewerVersion(updateVer, currentVer)) {
+      cachedUpdateState = { status: 'available', version: updateVer, progress: 0, error: null };
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('update-available', { version: updateVer });
       }
-      return { updateAvailable: true, version: updateVer, currentVersion: currentVer };
-    } else {
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('update-not-available', { version: currentVer });
+      if (app.isPackaged) {
+        autoUpdater.checkForUpdates().catch(() => {});
       }
-      return { updateAvailable: false, version: currentVer };
+      return {
+        updateAvailable: true,
+        version: updateVer,
+        currentVersion: currentVer,
+        downloaded: false,
+        status: 'available'
+      };
     }
+
+    if (app.isPackaged) {
+      try {
+        const result = await autoUpdater.checkForUpdates();
+        const autoVer = result?.updateInfo?.version;
+        if (autoVer && isNewerVersion(autoVer, currentVer)) {
+          cachedUpdateState = { status: 'available', version: autoVer, progress: 0, error: null };
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('update-available', { version: autoVer });
+          }
+          return {
+            updateAvailable: true,
+            version: autoVer,
+            currentVersion: currentVer,
+            downloaded: false,
+            status: 'available'
+          };
+        }
+      } catch (e) {
+        console.log('[Update] autoUpdater check notice:', e?.message || e);
+      }
+    }
+
+    cachedUpdateState.status = 'latest';
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('update-not-available', { version: currentVer });
+    }
+    return { updateAvailable: false, version: currentVer, status: 'latest' };
   } catch (err) {
     const msg = err && err.message ? err.message : String(err);
-    const lower = msg.toLowerCase();
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      if (lower.includes('no update') || lower.includes('404') || lower.includes('cannot find') || lower.includes('latest.yml')) {
-        mainWindow.webContents.send('update-not-available', { version: app.getVersion() });
-        return { updateAvailable: false, version: app.getVersion() };
+    if (msg.toLowerCase().includes('in progress')) {
+      console.log('[Update] Check is already in progress, returning current state.');
+      return {
+        updateAvailable: cachedUpdateState.status === 'available' || cachedUpdateState.status === 'downloaded',
+        checking: true,
+        status: cachedUpdateState.status === 'idle' ? 'checking' : cachedUpdateState.status,
+        version: cachedUpdateState.version
+      };
+    }
+    if (cachedUpdateState.status === 'available' || cachedUpdateState.status === 'downloaded') {
+      return { updateAvailable: true, version: cachedUpdateState.version, status: cachedUpdateState.status };
+    }
+    if (isNonFatalUpdateError(msg)) {
+      if (cachedUpdateState.status !== 'downloaded' && cachedUpdateState.status !== 'available') {
+        cachedUpdateState.status = 'latest';
       }
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('update-not-available', { version: app.getVersion() });
+      }
+      return { updateAvailable: false, version: app.getVersion(), status: 'latest' };
+    }
+    cachedUpdateState = { ...cachedUpdateState, status: 'error', error: msg };
+    if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('update-error', { message: msg });
     }
-    if (lower.includes('no update') || lower.includes('404') || lower.includes('cannot find') || lower.includes('latest.yml')) {
-      return { updateAvailable: false, version: app.getVersion() };
-    }
-    return { error: msg, updateAvailable: false };
+    return { error: msg, updateAvailable: false, status: 'error' };
   }
 });
 
 ipcMain.handle('download-update', async () => {
+  if (cachedUpdateState.status === 'downloaded') {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('update-downloaded', { version: cachedUpdateState.version });
+    }
+    return { success: true, downloaded: true, version: cachedUpdateState.version, status: 'downloaded' };
+  }
+
   try {
-    await autoUpdater.downloadUpdate();
-    return { success: true };
+    cachedUpdateState.status = 'downloading';
+    cachedUpdateState.progress = 0;
+    const downloadedPaths = await autoUpdater.downloadUpdate();
+    console.log('[Update] downloadUpdate finished, downloadedPaths:', downloadedPaths);
+    cachedUpdateState.status = 'downloaded';
+    cachedUpdateState.progress = 100;
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('update-downloaded', { version: cachedUpdateState.version });
+    }
+    return { success: true, downloaded: true, version: cachedUpdateState.version, status: 'downloaded' };
   } catch (err) {
-    return { success: false, error: err.message || String(err) };
+    console.error('[Update] Error during downloadUpdate, opening release page:', err);
+    const ver = cachedUpdateState.version || 'latest';
+    shell.openExternal(`https://github.com/rishivejani15/Intellifile/releases/tag/v${ver.replace(/^v/, '')}`);
+    return { success: false, openedBrowser: true, error: err.message || String(err) };
   }
 });
 
@@ -178,9 +384,7 @@ ipcMain.handle('update-restart', () => {
 
 const util = require('util');
 const execAsync = util.promisify(require('child_process').exec);
-const path = require('path');
 const { pathToFileURL } = require('url');
-const fs = require('fs');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
 const archiver = require('archiver');
@@ -2507,40 +2711,101 @@ ipcMain.handle('indexing-preferences-set', async (_event, updates = {}) => {
   return { ...indexingPreferences };
 });
 
+function getSettingsFilePath() {
+  return path.join(app.getPath('userData'), 'app_settings.json');
+}
+
+function readLocalSettings() {
+  try {
+    const fp = getSettingsFilePath();
+    if (fs.existsSync(fp)) {
+      const data = fs.readFileSync(fp, 'utf-8');
+      return JSON.parse(data) || {};
+    }
+  } catch (e) {
+    console.warn('[Settings] Failed to read local settings file:', e.message);
+  }
+  return {};
+}
+
+function saveLocalSetting(key, value) {
+  if (!key) return;
+  try {
+    const fp = getSettingsFilePath();
+    const current = readLocalSettings();
+    current[key] = value;
+    fs.writeFileSync(fp, JSON.stringify(current, null, 2), 'utf-8');
+  } catch (e) {
+    console.warn('[Settings] Failed to save local setting:', e.message);
+  }
+}
+
 ipcMain.handle('settings:get', async (_event, key) => {
-  return sendToPython({ action: 'settings_get', key });
+  const targetKey = typeof key === 'object' && key?.key ? key.key : key;
+  if (!targetKey) return { key: targetKey, value: null };
+  const localSettings = readLocalSettings();
+  if (Object.prototype.hasOwnProperty.call(localSettings, targetKey)) {
+    return { key: targetKey, value: localSettings[targetKey] };
+  }
+  // Fallback to Python database if not in local settings file
+  try {
+    const res = await sendToPython({ action: 'settings_get', key: targetKey }, 5000);
+    if (res && res.value !== undefined && res.value !== null) {
+      saveLocalSetting(targetKey, res.value);
+      return res;
+    }
+  } catch (_e) {
+    // Return default or null gracefully if engine isn't ready
+  }
+  return { key: targetKey, value: null };
 });
 
 ipcMain.handle('get-setting', async (_event, key) => {
-  return sendToPython({ action: 'settings_get', key });
-});
-
-ipcMain.handle('index:recreate-embeddings', async () => {
-  return sendToPython({ action: 'recreate_embeddings' }, 600000);
-});
-
-ipcMain.handle('index:reset-all', async () => {
-  return sendToPython({ action: 'reset_index_all' });
+  const targetKey = typeof key === 'object' && key?.key ? key.key : key;
+  if (!targetKey) return { key: targetKey, value: null };
+  const localSettings = readLocalSettings();
+  if (Object.prototype.hasOwnProperty.call(localSettings, targetKey)) {
+    return { key: targetKey, value: localSettings[targetKey] };
+  }
+  try {
+    const res = await sendToPython({ action: 'settings_get', key: targetKey }, 5000);
+    if (res && res.value !== undefined && res.value !== null) {
+      saveLocalSetting(targetKey, res.value);
+      return res;
+    }
+  } catch (_e) {
+    // Engine fallback
+  }
+  return { key: targetKey, value: null };
 });
 
 ipcMain.handle('settings:set', async (_event, payload = {}) => {
   const key = payload?.key;
   const value = payload?.value;
-  const result = await sendToPython({ action: 'settings_update', key, value });
+  if (key) {
+    saveLocalSetting(key, value);
+  }
+
+  let result;
+  try {
+    result = await sendToPython({ action: 'settings_update', key, value });
+  } catch (_e) {
+    result = { success: true, localOnly: true };
+  }
 
   if (key === 'auto_sort_enabled' || key === 'watched_folders') {
     let enabled = false;
     if (key === 'auto_sort_enabled') {
       enabled = typeof value === 'string' ? value.toLowerCase() === 'true' : !!value;
     } else {
-      const current = await sendToPython({ action: 'settings_get', key: 'auto_sort_enabled' });
-      enabled = !!current?.value && String(current.value).toLowerCase() === 'true';
+      const localS = readLocalSettings();
+      enabled = !!localS.auto_sort_enabled;
     }
 
     if (enabled) {
-      await sendToPython({ action: 'watcher_start' });
+      await sendToPython({ action: 'watcher_start' }).catch(() => {});
     } else {
-      await sendToPython({ action: 'watcher_stop' });
+      await sendToPython({ action: 'watcher_stop' }).catch(() => {});
     }
   } else if (key === 'auto_update_wifi') {
     const enabled = typeof value === 'string' ? value.toLowerCase() === 'true' : !!value;
@@ -2553,7 +2818,15 @@ ipcMain.handle('settings:set', async (_event, payload = {}) => {
     console.log('[Settings] Background indexing set to:', enabled);
   }
 
-  return result;
+  return result || { success: true };
+});
+
+ipcMain.handle('index:recreate-embeddings', async () => {
+  return sendToPython({ action: 'recreate_embeddings' }, 600000);
+});
+
+ipcMain.handle('index:reset-all', async () => {
+  return sendToPython({ action: 'reset_index_all' });
 });
 
 ipcMain.handle('autosort:recent', async (_event, limit = 20) => {

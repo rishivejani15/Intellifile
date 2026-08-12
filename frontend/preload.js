@@ -220,6 +220,9 @@ contextBridge.exposeInMainWorld('intellifile', {
   getAppVersion: () => {
     return ipcRenderer.invoke('get-app-version');
   },
+  getUpdateState: () => {
+    return ipcRenderer.invoke('get-update-state');
+  },
   checkForUpdates: () => {
     return ipcRenderer.invoke('check-for-updates');
   },
