@@ -59,7 +59,7 @@ function PreviewPanel({ selectedItem, visible, onClose, searchQuery }) {
 		}
 		try {
 			const escapedWords = words.map((w) =>
-				w.replace(/[-\/\\^$*+?.()|[\]{}]/g, "\\$&"),
+				w.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&"),
 			);
 			const regex = new RegExp(`(${escapedWords.join("|")})`, "gi");
 			const parts = text.split(regex);

@@ -582,6 +582,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
 
     directoryLoadInFlightRef.current.set(loadKey, requestPromise);
     return requestPromise;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [updateBreadcrumb, searchQuery, sortBy, sortDirection, showHidden, updateHistory, updateActiveTab, setCurrentPath, setAddressPath, setRenamingItem, onFileSelect, currentPath]);
 
   const handleRecentChooserSelect = (file) => {

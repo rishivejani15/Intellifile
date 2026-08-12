@@ -393,10 +393,22 @@ function FileLockManager() {
             <div className="flm-grid">
               {filteredFiles.map(([fileId, entry]) => (
                 <div key={fileId} className={`flm-card ${!entry.fileExists ? 'missing' : ''}`}>
-                  <div className="flm-card-icon">
-                    {getFileIcon(entry.originalExt)}
-                    <span className="flm-card-lock-badge"><MdLock size={10} /></span>
+                  <div className="flm-card-header">
+                    <div className="flm-card-icon">
+                      {getFileIcon(entry.originalExt)}
+                      <span className="flm-card-lock-badge"><MdLock size={10} /></span>
+                    </div>
+                    {entry.fileExists ? (
+                      <span className="flm-card-status-badge status-encrypted">
+                        <MdSecurity size={12} /> Secured
+                      </span>
+                    ) : (
+                      <span className="flm-card-status-badge status-missing">
+                        ⚠️ Missing
+                      </span>
+                    )}
                   </div>
+
                   <div className="flm-card-info">
                     <div className="flm-card-name" title={entry.originalName}>
                       {entry.originalName}
@@ -404,13 +416,11 @@ function FileLockManager() {
                     <div className="flm-card-meta">
                       {formatFileSize(entry.originalSize)} · {formatDate(entry.lockedAt)}
                     </div>
-                    {!entry.fileExists && (
-                      <div className="flm-card-warning">⚠️ File missing</div>
-                    )}
                   </div>
+
                   <div className="flm-card-actions">
                     <button
-                      className="flm-card-btn flm-card-btn-unlock"
+                      className="flm-card-btn flm-card-btn-open"
                       onClick={() => handleAccessFile(fileId, entry)}
                       disabled={!entry.fileExists}
                       title="Open file"
@@ -485,7 +495,7 @@ function FileLockManager() {
                   </span>
                   <span className="flm-list-col flm-list-col-actions">
                     <button
-                      className="flm-card-btn flm-card-btn-unlock"
+                      className="flm-card-btn flm-card-btn-open"
                       onClick={() => handleAccessFile(fileId, entry)}
                       disabled={!entry.fileExists}
                       title="Open"

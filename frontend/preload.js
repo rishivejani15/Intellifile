@@ -327,8 +327,12 @@ contextBridge.exposeInMainWorld('intellifile', {
   // ── File Lock (Vault) APIs ──
   fileLock: {
     lockFile: (filePath, password, options) => ipcRenderer.invoke('file-lock:lock', filePath, password, options),
-    unlockFile: (fileId, password) => ipcRenderer.invoke('file-lock:unlock', fileId, password),
-    accessFile: (fileId, password) => ipcRenderer.invoke('file-lock:access', fileId, password),
+    unlockFile: (fileId, password, recoveryKey, securityAnswers) => ipcRenderer.invoke('file-lock:unlock', fileId, password, recoveryKey, securityAnswers),
+    accessFile: (fileId, password, recoveryKey, securityAnswers) => ipcRenderer.invoke('file-lock:access', fileId, password, recoveryKey, securityAnswers),
+    recoverFileWithKey: (fileId, recoveryKey) => ipcRenderer.invoke('file-lock:recover-key', fileId, recoveryKey),
+    recoverFileWithQuestions: (fileId, answers) => ipcRenderer.invoke('file-lock:recover-questions', fileId, answers),
+    resetFilePassword: (fileId, payload) => ipcRenderer.invoke('file-lock:reset-password', fileId, payload),
+    getSecurityQuestions: (fileId) => ipcRenderer.invoke('file-lock:get-security-questions', fileId),
     verifyPassword: (fileId, password) => ipcRenderer.invoke('file-lock:verify', fileId, password),
     changePassword: (fileId, oldPassword, newPassword) => ipcRenderer.invoke('file-lock:change-password', fileId, oldPassword, newPassword),
     renameLockedFile: (fileId, password, newName) => ipcRenderer.invoke('file-lock:rename', fileId, password, newName),

@@ -2582,16 +2582,32 @@ ipcMain.handle('file-lock:lock', async (_event, filePath, password, options) => 
   return getFileLockService().lockFile(filePath, password, options);
 });
 
-ipcMain.handle('file-lock:unlock', async (_event, fileId, password) => {
-  return getFileLockService().unlockFile(fileId, password);
+ipcMain.handle('file-lock:unlock', async (_event, fileId, password, recoveryKey, securityAnswers) => {
+  return getFileLockService().unlockFile(fileId, password, recoveryKey, securityAnswers);
 });
 
-ipcMain.handle('file-lock:access', async (_event, fileId, password) => {
-  const result = await getFileLockService().accessFile(fileId, password);
+ipcMain.handle('file-lock:access', async (_event, fileId, password, recoveryKey, securityAnswers) => {
+  const result = await getFileLockService().accessFile(fileId, password, recoveryKey, securityAnswers);
   if (result.success && result.tempPath) {
     shell.openPath(result.tempPath);
   }
   return result;
+});
+
+ipcMain.handle('file-lock:recover-key', async (_event, fileId, recoveryKey) => {
+  return getFileLockService().recoverFileWithKey(fileId, recoveryKey);
+});
+
+ipcMain.handle('file-lock:recover-questions', async (_event, fileId, answers) => {
+  return getFileLockService().recoverFileWithSecurityQuestions(fileId, answers);
+});
+
+ipcMain.handle('file-lock:reset-password', async (_event, fileId, payload) => {
+  return getFileLockService().resetFilePassword(fileId, payload);
+});
+
+ipcMain.handle('file-lock:get-security-questions', async (_event, fileId) => {
+  return getFileLockService().getSecurityQuestions(fileId);
 });
 
 ipcMain.handle('file-lock:verify', async (_event, fileId, password) => {

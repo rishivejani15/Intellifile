@@ -232,14 +232,138 @@ class FileLockService {
     return crypto.randomUUID();
   }
 
-  // ── Cryptographic Primitives ──
+  // ── Cryptographic Primitives & Envelope Encryption ──
+
+  generateRecoveryKey() {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // Exclude lookalikes O, 0, I, 1
+    const bytes = crypto.randomBytes(16);
+    let raw = '';
+    for (let i = 0; i < 16; i++) {
+      raw += chars[bytes[i] % chars.length];
+    }
+    return `${raw.slice(0, 4)}-${raw.slice(4, 8)}-${raw.slice(8, 12)}-${raw.slice(12, 16)}`;
+  }
+
+  _normalizeRecoveryKey(key) {
+    if (!key || typeof key !== 'string') return '';
+    return key.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  }
 
   _deriveKey(password, salt) {
     return crypto.pbkdf2Sync(password, salt, PBKDF2_ITERATIONS, KEY_LENGTH, PBKDF2_DIGEST);
   }
 
+  _encryptDek(dek, key) {
+    const iv = crypto.randomBytes(IV_LENGTH);
+    const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+    const encrypted = Buffer.concat([cipher.update(dek), cipher.final()]);
+    const authTag = cipher.getAuthTag();
+    return {
+      iv: iv.toString('hex'),
+      ciphertext: encrypted.toString('hex'),
+      authTag: authTag.toString('hex'),
+    };
+  }
+
+  _decryptDek(encryptedDekObj, key) {
+    if (!encryptedDekObj || !encryptedDekObj.iv || !encryptedDekObj.ciphertext || !encryptedDekObj.authTag) {
+      throw new Error('Invalid encrypted DEK structure.');
+    }
+    const iv = Buffer.from(encryptedDekObj.iv, 'hex');
+    const ciphertext = Buffer.from(encryptedDekObj.ciphertext, 'hex');
+    const authTag = Buffer.from(encryptedDekObj.authTag, 'hex');
+
+    const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+    decipher.setAuthTag(authTag);
+    return Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+  }
+
+  _encryptBufferWithDek(plainBuffer, dek) {
+    const salt = crypto.randomBytes(SALT_LENGTH);
+    const iv = crypto.randomBytes(IV_LENGTH);
+
+    const verificationBuf = Buffer.from(VERIFICATION_TOKEN, 'utf-8');
+    const lenBuf = Buffer.alloc(4);
+    lenBuf.writeUInt32BE(verificationBuf.length, 0);
+    const payload = Buffer.concat([lenBuf, verificationBuf, plainBuffer]);
+
+    const cipher = crypto.createCipheriv('aes-256-gcm', dek, iv);
+    const encrypted = Buffer.concat([cipher.update(payload), cipher.final()]);
+    const authTag = cipher.getAuthTag();
+
+    return { salt, iv, encryptedData: Buffer.concat([encrypted, authTag]) };
+  }
+
+  _decryptBufferWithDek(encryptedData, dek, iv) {
+    const ciphertext = encryptedData.slice(0, encryptedData.length - AUTH_TAG_LENGTH);
+    const authTag = encryptedData.slice(encryptedData.length - AUTH_TAG_LENGTH);
+
+    const decipher = crypto.createDecipheriv('aes-256-gcm', dek, iv);
+    decipher.setAuthTag(authTag);
+
+    let decrypted;
+    try {
+      decrypted = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+    } catch (err) {
+      throw new Error('Decryption failed — incorrect key or corrupted payload.');
+    }
+
+    const tokenLen = decrypted.readUInt32BE(0);
+    const token = decrypted.slice(4, 4 + tokenLen).toString('utf-8');
+    if (token !== VERIFICATION_TOKEN) {
+      throw new Error('Verification failed — invalid token.');
+    }
+
+    return decrypted.slice(4 + tokenLen);
+  }
+
   /**
-   * Encrypt a file using AES-256-GCM.
+   * Extract DEK from metadata entry using Password, Recovery Key, or Security Answers
+   */
+  _getDekForEntry(entry, { password, recoveryKey, securityAnswers } = {}) {
+    if (!entry) throw new Error('File entry not found.');
+
+    // 1. Password Attempt
+    if (password && entry.encryptedDekByPassword) {
+      const saltHex = entry.passwordSalt || entry.salt;
+      if (saltHex) {
+        const salt = Buffer.from(saltHex, 'hex');
+        const pwdKey = this._deriveKey(password, salt);
+        try {
+          return this._decryptDek(entry.encryptedDekByPassword, pwdKey);
+        } catch (_) {}
+      }
+    }
+
+    // 2. Recovery Key Attempt
+    if (recoveryKey && entry.encryptedDekByRecoveryKey && entry.recoverySalt) {
+      const cleanKey = this._normalizeRecoveryKey(recoveryKey);
+      if (cleanKey.length >= 12) {
+        const recSalt = Buffer.from(entry.recoverySalt, 'hex');
+        const recKey = this._deriveKey(cleanKey, recSalt);
+        try {
+          return this._decryptDek(entry.encryptedDekByRecoveryKey, recKey);
+        } catch (_) {}
+      }
+    }
+
+    // 3. Security Answers Attempt
+    if (Array.isArray(securityAnswers) && securityAnswers.length > 0 && entry.encryptedDekByQuestions && entry.questionsSalt) {
+      const answersString = securityAnswers.map(a => (a || '').trim().toLowerCase()).filter(Boolean).join('|');
+      if (answersString) {
+        const qSalt = Buffer.from(entry.questionsSalt, 'hex');
+        const qKey = this._deriveKey(answersString, qSalt);
+        try {
+          return this._decryptDek(entry.encryptedDekByQuestions, qKey);
+        } catch (_) {}
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Encrypt a file using AES-256-GCM (legacy mode).
    * Returns { salt, iv, encryptedData } where encryptedData includes auth tag appended.
    */
   _encryptBuffer(plainBuffer, password) {
@@ -261,7 +385,7 @@ class FileLockService {
   }
 
   /**
-   * Decrypt a file using AES-256-GCM.
+   * Decrypt a file using AES-256-GCM (legacy mode).
    * Returns the original file buffer, or throws on failure.
    */
   _decryptBuffer(encryptedData, password, salt, iv) {
@@ -363,17 +487,16 @@ class FileLockService {
   // ── Public API ──
 
   /**
-   * Lock a file with a password.
+   * Lock a file with envelope encryption (Password + Master Recovery Key + Optional Security Questions).
    * @param {string} filePath - Absolute path to the file to lock
    * @param {string} password - User's password/PIN
-   * @param {object} options - { hint?: string, autoLockTimeout?: number }
-   * @returns {{ success: boolean, error?: string, fileId?: string }}
+   * @param {object} options - { hint?: string, autoLockTimeout?: number, securityQuestions?: Array<{question: string, answer: string}> }
+   * @returns {{ success: boolean, error?: string, fileId?: string, recoveryKey?: string }}
    */
   async lockFile(filePath, password, options = {}) {
     this._ensureLoaded();
 
     try {
-      // Validate inputs
       if (!filePath || !password) {
         return { success: false, error: 'File path and password are required.' };
       }
@@ -382,7 +505,6 @@ class FileLockService {
         return { success: false, error: 'Password must be at least 4 characters.' };
       }
 
-      // Check file exists
       if (!fs.existsSync(filePath)) {
         return { success: false, error: 'File not found.' };
       }
@@ -392,12 +514,10 @@ class FileLockService {
         return { success: false, error: 'Cannot lock directories directly. Use folder lock instead.' };
       }
 
-      // Check if already locked
       if (filePath.endsWith(ENCRYPTED_EXTENSION)) {
         return { success: false, error: 'File is already locked.' };
       }
 
-      // Check if this file path is already tracked as locked
       const existingEntry = Object.values(this.metadata.lockedFiles).find(
         (entry) => entry.originalPath.toLowerCase() === filePath.toLowerCase() && entry.lockStatus === 'locked'
       );
@@ -405,21 +525,49 @@ class FileLockService {
         return { success: false, error: 'This file is already locked.' };
       }
 
-      // Read the file
       console.log('[FileLock] Reading file for encryption:', filePath);
       const fileData = fs.readFileSync(filePath);
 
-      // Encrypt
-      console.log('[FileLock] Encrypting file...');
-      const { salt, iv, encryptedData } = this._encryptBuffer(fileData, password);
+      // Generate random DEK (32 bytes)
+      const dek = crypto.randomBytes(32);
 
-      // Build the locked file
+      // Encrypt file content payload using DEK
+      const { salt, iv, encryptedData } = this._encryptBufferWithDek(fileData, dek);
+
+      // Generate Master Recovery Key & Salting
+      const recoveryKey = this.generateRecoveryKey();
+      const cleanRecoveryKey = this._normalizeRecoveryKey(recoveryKey);
+      const recoverySalt = crypto.randomBytes(SALT_LENGTH);
+
+      // Derive Key Wrappers
+      const passwordKey = this._deriveKey(password, salt);
+      const recoveryKeyDerived = this._deriveKey(cleanRecoveryKey, recoverySalt);
+
+      const encryptedDekByPassword = this._encryptDek(dek, passwordKey);
+      const encryptedDekByRecoveryKey = this._encryptDek(dek, recoveryKeyDerived);
+
+      // Security Questions Envelope Wrapping (Optional)
+      let questionsSaltHex = null;
+      let encryptedDekByQuestions = null;
+      let securityQuestionsList = [];
+
+      if (Array.isArray(options.securityQuestions) && options.securityQuestions.length > 0) {
+        const validQs = options.securityQuestions.filter(q => q && q.question && q.answer && q.answer.trim());
+        if (validQs.length > 0) {
+          const questionsSalt = crypto.randomBytes(SALT_LENGTH);
+          questionsSaltHex = questionsSalt.toString('hex');
+          securityQuestionsList = validQs.map(q => q.question.trim());
+
+          const answersString = validQs.map(q => q.answer.trim().toLowerCase()).join('|');
+          const questionsKeyDerived = this._deriveKey(answersString, questionsSalt);
+          encryptedDekByQuestions = this._encryptDek(dek, questionsKeyDerived);
+        }
+      }
+
+      // Build & Write .intellilock File
       const lockedFileBuffer = this._buildLockedFile(salt, iv, encryptedData);
-
-      // Determine output path
       const encryptedPath = filePath + ENCRYPTED_EXTENSION;
 
-      // Write encrypted file
       console.log('[FileLock] Writing encrypted file:', encryptedPath);
       fs.writeFileSync(encryptedPath, lockedFileBuffer);
 
@@ -441,16 +589,23 @@ class FileLockService {
         lastAccessedAt: null,
         passwordHint: options.hint || '',
         autoLockTimeout: options.autoLockTimeout || 0,
+        passwordSalt: salt.toString('hex'),
+        recoverySalt: recoverySalt.toString('hex'),
+        encryptedDekByPassword,
+        encryptedDekByRecoveryKey,
+        securityQuestionsList,
+        questionsSalt: questionsSaltHex,
+        encryptedDekByQuestions,
       };
 
       this._addHistory(fileId, 'locked', filePath);
       this._saveMetadata();
 
-      // Acquire OS kernel handle lock on the .intellilock file
+      // Acquire OS kernel handle lock on .intellilock
       this._acquireOSLock(fileId, encryptedPath);
 
-      console.log('[FileLock] File locked successfully:', fileId);
-      return { success: true, fileId };
+      console.log('[FileLock] File locked successfully with Envelope Encryption:', fileId);
+      return { success: true, fileId, recoveryKey };
     } catch (err) {
       console.error('[FileLock] Lock failed:', err.message || err);
       return { success: false, error: err.message || 'Failed to lock file.' };
@@ -458,115 +613,22 @@ class FileLockService {
   }
 
   /**
-   * Unlock a file by its ID.
+   * Unlock a file using Password, Recovery Key, or Security Answers.
    * @param {string} fileId - The locked file's UUID
-   * @param {string} password - User's password/PIN
-   * @returns {{ success: boolean, error?: string, restoredPath?: string }}
+   * @param {string} [password] - User's password/PIN
+   * @param {string} [recoveryKey] - Master Recovery Key
+   * @param {Array<string>} [securityAnswers] - Answers to security questions
    */
-  async unlockFile(fileId, password) {
+  async unlockFile(fileId, password, recoveryKey = null, securityAnswers = null) {
     this._ensureLoaded();
 
     try {
-      if (!fileId || !password) {
-        return { success: false, error: 'File ID and password are required.' };
+      if (!fileId) {
+        return { success: false, error: 'File ID is required.' };
       }
 
-      const entry = this.metadata.lockedFiles[fileId];
-      if (!entry) {
-        return { success: false, error: 'Locked file not found in vault.' };
-      }
-
-      if (entry.lockStatus !== 'locked') {
-        return { success: false, error: 'File is not currently locked.' };
-      }
-
-      // Check encrypted file exists
-      if (!fs.existsSync(entry.encryptedPath)) {
-        return { success: false, error: 'Encrypted file not found on disk. It may have been moved or deleted.' };
-      }
-
-      // Release OS handle lock and remove NTFS ACL deny before reading encrypted file
-      this._releaseOSLock(fileId);
-      this._removeNTFSACLDeny(entry.encryptedPath);
-
-      // Read encrypted file
-      console.log('[FileLock] Reading encrypted file:', entry.encryptedPath);
-      let fileBuffer;
-      try {
-        fileBuffer = fs.readFileSync(entry.encryptedPath);
-      } catch (readErr) {
-        this._applyNTFSACLDeny(entry.encryptedPath);
-        this._acquireOSLock(fileId, entry.encryptedPath);
-        return { success: false, error: 'Failed to read encrypted file.' };
-      }
-
-      // Parse the locked file format
-      const { salt, iv, encryptedData } = this._parseLockedFile(fileBuffer);
-
-      // Decrypt
-      console.log('[FileLock] Decrypting file...');
-      let originalData;
-      try {
-        originalData = this._decryptBuffer(encryptedData, password, salt, iv);
-      } catch (decryptErr) {
-        this._applyNTFSACLDeny(entry.encryptedPath);
-        this._acquireOSLock(fileId, entry.encryptedPath);
-        return { success: false, error: 'Incorrect password.' };
-      }
-
-      // Restore original file
-      const restoredPath = entry.originalPath;
-      console.log('[FileLock] Restoring original file:', restoredPath);
-
-      // Ensure parent directory exists
-      const parentDir = path.dirname(restoredPath);
-      if (!fs.existsSync(parentDir)) {
-        fs.mkdirSync(parentDir, { recursive: true });
-      }
-
-      fs.writeFileSync(restoredPath, originalData);
-
-      // Delete encrypted file
-      try {
-        fs.unlinkSync(entry.encryptedPath);
-      } catch (e) {
-        console.warn('[FileLock] Could not delete encrypted file:', e.message);
-      }
-
-      // Clear auto-lock timer if active
-      if (this.autoLockTimers.has(fileId)) {
-        clearTimeout(this.autoLockTimers.get(fileId));
-        this.autoLockTimers.delete(fileId);
-      }
-
-      // Update metadata
-      this._addHistory(fileId, 'unlocked', entry.originalPath);
-
-      // Remove from locked files after unlocking
-      delete this.metadata.lockedFiles[fileId];
-      this._saveMetadata();
-
-      console.log('[FileLock] File unlocked successfully:', restoredPath);
-      return { success: true, restoredPath };
-    } catch (err) {
-      console.error('[FileLock] Unlock failed:', err.message || err);
-      return { success: false, error: err.message || 'Failed to unlock file.' };
-    }
-  }
-
-  /**
-   * Temporarily decrypt a file to the OS temp directory for viewing.
-   * The original encrypted file remains in the vault.
-   * @param {string} fileId - The locked file's UUID
-   * @param {string} password - User's password/PIN
-   * @returns {{ success: boolean, error?: string, tempPath?: string }}
-   */
-  async accessFile(fileId, password) {
-    this._ensureLoaded();
-
-    try {
-      if (!fileId || !password) {
-        return { success: false, error: 'File ID and password are required.' };
+      if (!password && !recoveryKey && (!securityAnswers || securityAnswers.length === 0)) {
+        return { success: false, error: 'A password, recovery key, or security answers are required.' };
       }
 
       const entry = this.metadata.lockedFiles[fileId];
@@ -582,39 +644,154 @@ class FileLockService {
         return { success: false, error: 'Encrypted file not found on disk.' };
       }
 
-      // Read encrypted file
-      console.log('[FileLock] Reading encrypted file for access:', entry.encryptedPath);
-      const fileBuffer = fs.readFileSync(entry.encryptedPath);
+      // Release OS handle lock & NTFS ACL before reading
+      this._releaseOSLock(fileId);
+      this._removeNTFSACLDeny(entry.encryptedPath);
 
-      // Parse the locked file format
+      let fileBuffer;
+      try {
+        fileBuffer = fs.readFileSync(entry.encryptedPath);
+      } catch (readErr) {
+        this._applyNTFSACLDeny(entry.encryptedPath);
+        this._acquireOSLock(fileId, entry.encryptedPath);
+        return { success: false, error: 'Failed to read encrypted file.' };
+      }
+
       const { salt, iv, encryptedData } = this._parseLockedFile(fileBuffer);
 
-      // Decrypt
-      console.log('[FileLock] Decrypting file to memory...');
-      let originalData;
-      try {
-        originalData = this._decryptBuffer(encryptedData, password, salt, iv);
-      } catch (decryptErr) {
+      let originalData = null;
+
+      // Attempt Envelope Encryption DEK Unwrapping
+      const dek = this._getDekForEntry(entry, { password, recoveryKey, securityAnswers });
+      if (dek) {
+        try {
+          originalData = this._decryptBufferWithDek(encryptedData, dek, iv);
+        } catch (e) {
+          console.warn('[FileLock] DEK decrypt buffer failed:', e.message);
+        }
+      }
+
+      // Fallback for Legacy Files (direct PBKDF2 key from password)
+      if (!originalData && password) {
+        try {
+          originalData = this._decryptBuffer(encryptedData, password, salt, iv);
+        } catch (_) {}
+      }
+
+      if (!originalData) {
+        this._applyNTFSACLDeny(entry.encryptedPath);
+        this._acquireOSLock(fileId, entry.encryptedPath);
+        if (recoveryKey) {
+          return { success: false, error: 'Invalid Master Recovery Key.' };
+        }
+        if (securityAnswers) {
+          return { success: false, error: 'Incorrect answers to security questions.' };
+        }
         return { success: false, error: 'Incorrect password.' };
       }
 
-      // Create temp file path
+      // Restore original file
+      const restoredPath = entry.originalPath;
+      const parentDir = path.dirname(restoredPath);
+      if (!fs.existsSync(parentDir)) {
+        fs.mkdirSync(parentDir, { recursive: true });
+      }
+
+      fs.writeFileSync(restoredPath, originalData);
+
+      try {
+        fs.unlinkSync(entry.encryptedPath);
+      } catch (e) {
+        console.warn('[FileLock] Could not delete encrypted file:', e.message);
+      }
+
+      if (this.autoLockTimers.has(fileId)) {
+        clearTimeout(this.autoLockTimers.get(fileId));
+        this.autoLockTimers.delete(fileId);
+      }
+
+      this._addHistory(fileId, 'unlocked', entry.originalPath);
+      delete this.metadata.lockedFiles[fileId];
+      this._saveMetadata();
+
+      console.log('[FileLock] File unlocked successfully:', restoredPath);
+      return { success: true, restoredPath };
+    } catch (err) {
+      console.error('[FileLock] Unlock failed:', err.message || err);
+      return { success: false, error: err.message || 'Failed to unlock file.' };
+    }
+  }
+
+  /**
+   * Temporarily access file using Password, Recovery Key, or Security Answers.
+   */
+  async accessFile(fileId, password, recoveryKey = null, securityAnswers = null) {
+    this._ensureLoaded();
+
+    try {
+      if (!fileId) {
+        return { success: false, error: 'File ID is required.' };
+      }
+
+      const entry = this.metadata.lockedFiles[fileId];
+      if (!entry) {
+        return { success: false, error: 'Locked file not found in vault.' };
+      }
+
+      if (entry.lockStatus !== 'locked') {
+        return { success: false, error: 'File is not currently locked.' };
+      }
+
+      // Release OS handle lock & remove NTFS ACL deny before reading encrypted file
+      this._releaseOSLock(fileId);
+      this._removeNTFSACLDeny(entry.encryptedPath);
+
+      let fileBuffer;
+      try {
+        fileBuffer = fs.readFileSync(entry.encryptedPath);
+      } catch (readErr) {
+        this._applyNTFSACLDeny(entry.encryptedPath);
+        this._acquireOSLock(fileId, entry.encryptedPath);
+        return { success: false, error: 'Failed to read encrypted file.' };
+      } finally {
+        this._applyNTFSACLDeny(entry.encryptedPath);
+        this._acquireOSLock(fileId, entry.encryptedPath);
+      }
+
+      const { salt, iv, encryptedData } = this._parseLockedFile(fileBuffer);
+
+      let originalData = null;
+      const dek = this._getDekForEntry(entry, { password, recoveryKey, securityAnswers });
+      if (dek) {
+        try {
+          originalData = this._decryptBufferWithDek(encryptedData, dek, iv);
+        } catch (_) {}
+      }
+
+      if (!originalData && password) {
+        try {
+          originalData = this._decryptBuffer(encryptedData, password, salt, iv);
+        } catch (_) {}
+      }
+
+      if (!originalData) {
+        if (recoveryKey) return { success: false, error: 'Invalid Master Recovery Key.' };
+        if (securityAnswers) return { success: false, error: 'Incorrect answers to security questions.' };
+        return { success: false, error: 'Incorrect password.' };
+      }
+
       const tempDir = path.join(os.tmpdir(), 'intellifile-secure-view');
       if (!fs.existsSync(tempDir)) {
         fs.mkdirSync(tempDir, { recursive: true });
       }
 
-      // Add a random suffix to avoid collisions but keep the original extension for the OS to know how to open it
       const randomSuffix = crypto.randomBytes(4).toString('hex');
       const tempFileName = `[Locked] ${entry.originalName.replace(entry.originalExt, '')}_${randomSuffix}${entry.originalExt}`;
       const tempPath = path.join(tempDir, tempFileName);
 
       fs.writeFileSync(tempPath, originalData);
-      
-      // Track for cleanup
       this.tempAccessFiles.add(tempPath);
 
-      // Update metadata to show it was accessed
       entry.lastAccessedAt = new Date().toISOString();
       this._addHistory(fileId, 'accessed', entry.originalPath);
       this._saveMetadata();
@@ -625,6 +802,118 @@ class FileLockService {
       console.error('[FileLock] Access failed:', err.message || err);
       return { success: false, error: err.message || 'Failed to access file.' };
     }
+  }
+
+  /**
+   * Recover file using Master Recovery Key.
+   */
+  async recoverFileWithKey(fileId, recoveryKey) {
+    return this.unlockFile(fileId, null, recoveryKey, null);
+  }
+
+  /**
+   * Recover file using Security Question Answers.
+   */
+  async recoverFileWithSecurityQuestions(fileId, answers) {
+    return this.unlockFile(fileId, null, null, answers);
+  }
+
+  /**
+   * Reset file password after recovery or verification.
+   * @param {string} fileId
+   * @param {object} payload - { recoveryKey?: string, securityAnswers?: Array<string>, oldPassword?: string, newPassword: string, hint?: string }
+   */
+  async resetFilePassword(fileId, { recoveryKey, securityAnswers, oldPassword, newPassword, hint }) {
+    this._ensureLoaded();
+
+    try {
+      if (!fileId || !newPassword) {
+        return { success: false, error: 'File ID and new password are required.' };
+      }
+
+      if (newPassword.length < 4) {
+        return { success: false, error: 'New password must be at least 4 characters.' };
+      }
+
+      const entry = this.metadata.lockedFiles[fileId];
+      if (!entry) {
+        return { success: false, error: 'Locked file not found in vault.' };
+      }
+
+      if (!fs.existsSync(entry.encryptedPath)) {
+        return { success: false, error: 'Encrypted file not found on disk.' };
+      }
+
+      // Try retrieving DEK
+      let dek = this._getDekForEntry(entry, { password: oldPassword, recoveryKey, securityAnswers });
+
+      // If legacy file without DEK, decrypt file data to get DEK
+      if (!dek && oldPassword) {
+        const fileBuffer = fs.readFileSync(entry.encryptedPath);
+        const { salt, iv, encryptedData } = this._parseLockedFile(fileBuffer);
+        let originalData;
+        try {
+          originalData = this._decryptBuffer(encryptedData, oldPassword, salt, iv);
+        } catch (_) {
+          return { success: false, error: 'Incorrect password or recovery credentials.' };
+        }
+        // Upgrade legacy file: generate DEK and re-encrypt content
+        dek = crypto.randomBytes(32);
+        const newEncrypted = this._encryptBufferWithDek(originalData, dek);
+        const newLockedBuffer = this._buildLockedFile(newEncrypted.salt, newEncrypted.iv, newEncrypted.encryptedData);
+
+        this._releaseOSLock(fileId);
+        fs.writeFileSync(entry.encryptedPath, newLockedBuffer);
+        this._acquireOSLock(fileId, entry.encryptedPath);
+      }
+
+      if (!dek) {
+        return { success: false, error: 'Invalid recovery key or security answers.' };
+      }
+
+      // Re-wrap DEK with new password and new recovery key
+      const newSalt = crypto.randomBytes(SALT_LENGTH);
+      const newRecoverySalt = crypto.randomBytes(SALT_LENGTH);
+      const newRecoveryKey = this.generateRecoveryKey();
+      const cleanNewRecKey = this._normalizeRecoveryKey(newRecoveryKey);
+
+      const newPasswordKey = this._deriveKey(newPassword, newSalt);
+      const newRecoveryKeyDerived = this._deriveKey(cleanNewRecKey, newRecoverySalt);
+
+      entry.passwordSalt = newSalt.toString('hex');
+      entry.recoverySalt = newRecoverySalt.toString('hex');
+      entry.encryptedDekByPassword = this._encryptDek(dek, newPasswordKey);
+      entry.encryptedDekByRecoveryKey = this._encryptDek(dek, newRecoveryKeyDerived);
+
+      if (typeof hint === 'string') {
+        entry.passwordHint = hint.trim();
+      }
+
+      this._addHistory(fileId, 'password_reset', entry.originalPath);
+      this._saveMetadata();
+
+      console.log('[FileLock] Password successfully reset for file:', fileId);
+      return { success: true, newRecoveryKey };
+    } catch (err) {
+      console.error('[FileLock] Password reset failed:', err.message || err);
+      return { success: false, error: err.message || 'Failed to reset password.' };
+    }
+  }
+
+  /**
+   * Get list of Security Questions set for a file.
+   */
+  getSecurityQuestions(fileId) {
+    this._ensureLoaded();
+    const entry = this.metadata.lockedFiles[fileId];
+    if (!entry) {
+      return { success: false, error: 'File not found in vault.' };
+    }
+    return {
+      success: true,
+      hasSecurityQuestions: Boolean(entry.securityQuestionsList && entry.securityQuestionsList.length > 0),
+      questions: entry.securityQuestionsList || [],
+    };
   }
 
   /**

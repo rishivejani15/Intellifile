@@ -106,12 +106,14 @@ function App() {
     setActiveTab('explorer');
   };
 
+  // eslint-disable-next-line no-unused-vars
   const handleOpenFile = () => {
     if (selectedFile) {
       window.electron.ipcRenderer.send('open-file', selectedFile.path);
     }
   };
 
+  // eslint-disable-next-line no-unused-vars
   const handleResetOfflineSetup = async () => {
     const confirmed = window.confirm('This will delete downloaded AI models and run offline setup again. Continue?');
     if (!confirmed || !ipcRenderer) return;

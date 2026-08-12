@@ -1,5 +1,5 @@
 import React from 'react';
-import { MdArrowBack, MdArrowDownward, MdArrowForward, MdArrowUpward, MdRefresh, MdSearch, MdHistory, MdOutlineVisibility, MdOutlineVisibilityOff, MdViewModule, MdViewList, MdTableChart, MdUnfoldMore, MdUnfoldLess, MdCalendarToday, MdOutlineDateRange, MdDelete, MdViewSidebar } from 'react-icons/md';
+import { MdArrowBack, MdArrowForward, MdArrowUpward, MdRefresh, MdSearch, MdHistory, MdOutlineVisibility, MdOutlineVisibilityOff, MdViewModule, MdViewList, MdTableChart, MdUnfoldMore, MdUnfoldLess, MdOutlineDateRange, MdDelete, MdViewSidebar } from 'react-icons/md';
 import './FileExplorer/FileExplorer.css';
 
 function ExplorerNavbar({
