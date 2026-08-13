@@ -19,7 +19,7 @@ export default function DeleteConfirmModal({ visible, items = [], onConfirm, onC
 
   if (!visible) return null;
 
-  const names = items.map(i => (typeof i === 'string' ? i : (i.name || i.path))).join(', ');
+  const names = items.map(i => (typeof i === 'string' ? i : (i.name || i.path)));
 
   const handleConfirm = () => {
     if (dontAskAgain) {
@@ -39,7 +39,11 @@ export default function DeleteConfirmModal({ visible, items = [], onConfirm, onC
         </div>
         <div className="dfm-body">
           <p>Are you sure you want to move the following item(s) to the Recycle Bin?</p>
-          <div className="dfm-items">{names}</div>
+          <div className="dfm-items">
+            {names.map((name, index) => (
+              <div className="dfm-item" key={`${name}-${index}`}>{name}</div>
+            ))}
+          </div>
           <label className="dfm-checkbox-label">
             <input
               type="checkbox"

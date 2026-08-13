@@ -43,6 +43,8 @@ const DOCUMENT_EXTS = [".pdf", ".docx", ".xlsx", ".pptx"];
 function PreviewPanel({ selectedItem, visible, onClose, searchQuery }) {
 	const [thumbnail, setThumbnail] = useState(null);
 	const [textPreview, setTextPreview] = useState(null);
+	const [documentImages, setDocumentImages] = useState([]);
+	const [previewBlocks, setPreviewBlocks] = useState([]);
 	const [previewMessage, setPreviewMessage] = useState(null);
 	const [loading, setLoading] = useState(false);
 
@@ -59,7 +61,7 @@ function PreviewPanel({ selectedItem, visible, onClose, searchQuery }) {
 		}
 		try {
 			const escapedWords = words.map((w) =>
-				w.replace(/[-\/\\^$*+?.()|[\]{}]/g, "\\$&"),
+				w.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&"),
 			);
 			const regex = new RegExp(`(${escapedWords.join("|")})`, "gi");
 			const parts = text.split(regex);
@@ -91,6 +93,8 @@ function PreviewPanel({ selectedItem, visible, onClose, searchQuery }) {
 		if (!selectedItem || !visible) {
 			setThumbnail(null);
 			setTextPreview(null);
+			setDocumentImages([]);
+			setPreviewBlocks([]);
 			setPreviewMessage(null);
 			setLoading(false);
 			return () => {
@@ -101,6 +105,8 @@ function PreviewPanel({ selectedItem, visible, onClose, searchQuery }) {
 		const ext = (selectedItem.ext || "").toLowerCase();
 		setThumbnail(null);
 		setTextPreview(null);
+		setDocumentImages([]);
+		setPreviewBlocks([]);
 		setPreviewMessage(null);
 		setLoading(false);
 
@@ -174,11 +180,14 @@ function PreviewPanel({ selectedItem, visible, onClose, searchQuery }) {
 				?.invoke("get-document-preview", selectedItem.path)
 				.then((result) => {
 					if (!active) return;
-					if (result?.success && result.content) {
-						setTextPreview(
-							result.content +
-								(result.truncated ? "\n\n... (preview truncated)" : ""),
-						);
+					const images = Array.isArray(result?.images) ? result.images : [];
+					const blocks = Array.isArray(result?.blocks) ? result.blocks : [];
+					if (result?.success && (result.content || images.length > 0 || blocks.length > 0)) {
+						setTextPreview(blocks.length === 0 && result.content
+							? result.content + (result.truncated ? "\n\n... (preview truncated)" : "")
+							: null);
+						setPreviewBlocks(blocks);
+						setDocumentImages(blocks.length > 0 ? [] : images);
 					} else {
 						setPreviewMessage(
 							result?.error || "No readable text was found in this document.",
@@ -241,11 +250,46 @@ function PreviewPanel({ selectedItem, visible, onClose, searchQuery }) {
 				<div className="preview-filename">{selectedItem.name}</div>
 
 				{/* Text preview */}
-				{!loading && textPreview && (
+				{!loading && previewBlocks.length === 0 && textPreview && (
 					<div
 						className={`preview-text-content ${isDocument ? "document-preview-content" : ""}`}
 					>
 						{renderHighlightedText(textPreview, searchQuery)}
+					</div>
+				)}
+
+				{!loading && previewBlocks.length > 0 && (
+					<div className="preview-document-flow">
+						{previewBlocks.map((block, index) => block.type === 'image' ? (
+							<img
+								key={`image-${block.name || index}`}
+								src={block.data_url}
+								alt={block.name || `Embedded document image ${index + 1}`}
+								className="preview-embedded-image"
+							/>
+						) : block.type === 'notice' ? (
+							<div key={`notice-${index}`} className="preview-unavailable">
+								{block.content}
+							</div>
+						) : (
+							<div key={`text-${index}`} className="preview-text-content">
+								{renderHighlightedText(block.content, searchQuery)}
+							</div>
+						))}
+					</div>
+				)}
+
+				{!loading && documentImages.length > 0 && (
+					<div className="preview-embedded-images">
+						<div className="preview-embedded-images-title">Images in this document</div>
+						{documentImages.map((image, index) => (
+							<img
+								key={`${image.name || 'image'}-${index}`}
+								src={image.data_url}
+								alt={image.name || `Embedded document image ${index + 1}`}
+								className="preview-embedded-image"
+							/>
+						))}
 					</div>
 				)}
 

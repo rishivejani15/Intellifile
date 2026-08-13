@@ -3418,3 +3418,32 @@ mark.preview-highlight {
   50% { transform: rotate(180deg); opacity: 1; }
   100% { transform: rotate(360deg); opacity: 0.7; }
 }
+
+.preview-embedded-images {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.preview-document-flow {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+.preview-embedded-images-title {
+  color: var(--t-secondary);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.preview-embedded-image {
+  width: 100%;
+  max-height: 320px;
+  object-fit: contain;
+  border: 1px solid var(--bo-light);
+  border-radius: var(--rd-sm);
+  background: var(--s-elev);
+}

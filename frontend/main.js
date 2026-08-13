@@ -4192,19 +4192,8 @@ function registerIpcHandlers() {
 
   ipcMain.handle('copy-file', async (event, sourcePath, destPath) => {
     try {
-      // Check if destination exists
       if (fs.existsSync(destPath)) {
-        // Modify destination name if file exists
-        const dir = path.dirname(destPath);
-        const ext = path.extname(destPath);
-        const name = path.basename(destPath, ext);
-        let counter = 1;
-        let newDest = destPath;
-        while (fs.existsSync(newDest)) {
-          newDest = path.join(dir, `${name} (${counter})${ext}`);
-          counter++;
-        }
-        destPath = newDest;
+        return { success: false, error: 'An item with this name already exists in the destination folder.' };
       }
 
       const stat = fs.statSync(sourcePath);

@@ -82,7 +82,7 @@ export const useKeyboardShortcuts = ({
       } else if (e.key === 'Enter' && selectedItem && !renamingItem) {
         handleOpen?.(selectedItem);
         e.preventDefault();
-      } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Home' || e.key === 'End') {
+      } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'Home' || e.key === 'End') {
         if (!displayItems || displayItems.length === 0) return;
         const currentIdx = displayItems.findIndex(i => i.path === selectedItem?.path);
         let nextIdx = 0;
@@ -91,9 +91,9 @@ export const useKeyboardShortcuts = ({
           nextIdx = 0;
         } else if (e.key === 'End') {
           nextIdx = displayItems.length - 1;
-        } else if (e.key === 'ArrowDown') {
+        } else if (e.key === 'ArrowDown' || e.key === 'ArrowRight') {
           nextIdx = currentIdx < 0 ? 0 : Math.min(displayItems.length - 1, currentIdx + 1);
-        } else if (e.key === 'ArrowUp') {
+        } else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
           nextIdx = currentIdx < 0 ? 0 : Math.max(0, currentIdx - 1);
         }
 

@@ -74,6 +74,10 @@
   border: 1px solid var(--bo-light, transparent);
 }
 
+.dfm-item + .dfm-item {
+  margin-top: 6px;
+}
+
 .dfm-checkbox-label {
   display: inline-flex;
   align-items: center;

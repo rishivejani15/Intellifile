@@ -24,7 +24,7 @@ import './FileExplorer.css';
 
 
 const ipcRenderer = window.electron?.ipcRenderer;
-const VERSIONING_BLOCKED_EXTENSIONS = new Set(['.zip', '.ppt', '.pptx', '.pptm']);
+const VERSIONING_BLOCKED_EXTENSIONS = new Set(['.zip', '.ppt', '.pptx', '.pptm', '.pak', '.bin', '.backup']);
 
 function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWithAI }) {
   // UI State
@@ -1976,17 +1976,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
             </div>
           </div>
           <div className="versioning-body">
-            {!canVersionItem(selectedItem) ? (
-              <div className="versioning-empty-state">
-                <h4>Version history is not available for this file type.</h4>
-                <p>
-                  ZIP and PowerPoint files are excluded from versioning because they are archive/presentation formats and
-                  cannot be compared reliably here.
-                </p>
-              </div>
-            ) : (
-              <VersionTimeline filePath={selectedItem.path} />
-            )}
+            <VersionTimeline filePath={selectedItem.path} />
           </div>
         </div>
       )}

@@ -29,7 +29,7 @@ const SECTIONS = [
   { id: 'ai-model', label: 'AI Model', icon: '🤖' },
   { id: 'updates', label: 'Updates', icon: '🔄' },
   { id: 'privacy', label: 'Privacy', icon: '🔒' },
-  { id: 'take-tour', label: 'Take a Tour', icon: '✦', isAction: true },
+  { id: 'take-tour', label: 'Take a Tour', icon: '🧭', isAction: true },
   { id: 'about', label: 'About', icon: 'ℹ️' },
 ];
 
@@ -241,7 +241,7 @@ export default function Settings({ theme, onThemeChange, onStartTour }) {
       'ai-model': ['ai', 'model', 'llm', 'path', 'download'],
       updates: ['update', 'version', 'download', 'wifi'],
       privacy: ['privacy', 'telemetry', 'data', 'analytics'],
-      'take-tour': ['tour', 'guide', 'tutorial', 'onboarding', 'take a tour'],
+      'take-tour': ['tour', 'guided tour', 'guide', 'tutorial', 'onboarding', 'take a tour'],
       about: ['about', 'version', 'help', 'reset'],
     };
     const sec = SECTIONS.find(s => s.id === sectionId);
@@ -882,15 +882,6 @@ export default function Settings({ theme, onThemeChange, onStartTour }) {
           {/* ═══ ABOUT ═══ */}
           {activeTab === 'about' && matchesSection('about') && (
             <>
-              <button className="settings-tour-banner" type="button" onClick={onStartTour} style={{ marginBottom: '16px' }}>
-                <span className="settings-tour-icon">✦</span>
-                <span>
-                  <strong>Take a tour</strong>
-                  <small>See how IntelliFile search, sync, vault, and version history work.</small>
-                </span>
-                <span className="settings-tour-arrow">›</span>
-              </button>
-
               <section className="settings-panel">
                 <div className="settings-panel-header">
                   <div>

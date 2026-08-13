@@ -60,31 +60,31 @@ export const useFileExplorer = (ipcRenderer) => {
   const handlePaste = useCallback(async (currentPath, onPasteComplete) => {
     if (clipboard && currentPath) {
       try {
+        let allSucceeded = true;
         for (const item of clipboard.items) {
           const operation = clipboard.operation === 'cut' ? 'move' : 'copy';
           const destPath = currentPath + '\\' + item.name;
 
           if (operation === 'copy') {
-        // If this was a move (cut) and all moves succeeded, clear the staged clipboard
-        if (clipboard.operation === 'cut') {
-          setClipboard(null);
-        }
             const result = await ipcRenderer?.invoke('copy-file', item.path, destPath);
-            if (!result.success) {
-              console.error('Copy error:', result.error);
-              showErrorToast('Copy failed.', result.error || 'The copy operation was rejected.', 'Check file permissions or whether the destination already exists.');
+            if (!result?.success) {
+              allSucceeded = false;
+              console.error('Copy error:', result?.error);
+              showErrorToast('Copy failed.', result?.error || 'The copy operation was rejected.', 'Check file permissions or whether the destination already exists.');
             }
           } else {
             const result = await ipcRenderer?.invoke('move-file', item.path, destPath);
-            if (!result.success) {
-              console.error('Move error:', result.error);
-              showErrorToast('Move failed.', result.error || 'The move operation was rejected.', 'Check file permissions or whether the destination already exists.');
+            if (!result?.success) {
+              allSucceeded = false;
+              console.error('Move error:', result?.error);
+              showErrorToast('Move failed.', result?.error || 'The move operation was rejected.', 'Check file permissions or whether the destination already exists.');
             }else {
               pushUndo({ type: 'move', from: item.path, to: destPath });}
           }
         }
 
-        if (clipboard.operation === 'cut') {
+        // Consume the clipboard only after every selected item is pasted.
+        if (allSucceeded) {
           setClipboard(null);
           if (clipboardTimerRef.current) clearTimeout(clipboardTimerRef.current);
         }
