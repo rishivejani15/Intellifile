@@ -9,6 +9,7 @@ import AutoSortToastHost from './components/AutoSortToastHost';
 import Settings from './pages/Settings';
 import FileLockManager from './components/FileLockManager';
 import OnboardingTour from './components/OnboardingTour';
+import { FiDownload, FiZap } from 'react-icons/fi';
 
 const ipcRenderer = window.electron?.ipcRenderer;
 const TOUR_COMPLETED_KEY = 'intellifile-onboarding-completed-v1';
@@ -26,13 +27,16 @@ function App() {
   const [versioningFile, setVersioningFile] = useState(null);
   const [setupComplete, setSetupComplete] = useState(false);
   const [offlineSetupKey, setOfflineSetupKey] = useState(0);
-  // eslint-disable-next-line no-unused-vars
   const [updateAvailable, setUpdateAvailable] = useState(false);
-  // eslint-disable-next-line no-unused-vars
   const [updateDownloaded, setUpdateDownloaded] = useState(false);
-  // eslint-disable-next-line no-unused-vars
   const [updateVersion, setUpdateVersion] = useState('');
   const [theme, setTheme] = useState(getInitialTheme);
+  const [settingsSubTab, setSettingsSubTab] = useState('appearance');
+
+  const openSettingsTab = (tabId = 'appearance') => {
+    setSettingsSubTab(tabId);
+    setActiveTab('settings');
+  };
   const [showOnboardingTour, setShowOnboardingTour] = useState(false);
 
   useEffect(() => {
@@ -59,19 +63,37 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (!ipcRenderer) return;
+    // Query initial update status on mount
+    const checkUpdateState = async () => {
+      try {
+        const getFn = window.electron?.getUpdateState || (ipcRenderer ? () => ipcRenderer.invoke('get-update-state') : null);
+        if (getFn) {
+          const state = await getFn();
+          if (state?.status === 'available' || state?.status === 'downloaded') {
+            if (state.version) setUpdateVersion(state.version);
+            if (state.status === 'downloaded') setUpdateDownloaded(true);
+            setUpdateAvailable(true);
+          }
+        }
+      } catch (_e) {}
+    };
+    checkUpdateState();
+
+    if (!ipcRenderer) return undefined;
 
     // Listen for update-available event
     const handleUpdateAvailable = (event, data) => {
-      console.log('[App] Update available:', data.version);
-      setUpdateVersion(data.version);
+      console.log('[App] Update available:', data?.version);
+      if (data?.version) setUpdateVersion(data.version);
       setUpdateAvailable(true);
     };
 
     // Listen for update-downloaded event
     const handleUpdateDownloaded = (event, data) => {
-      console.log('[App] Update downloaded:', data.version);
+      console.log('[App] Update downloaded:', data?.version);
+      if (data?.version) setUpdateVersion(data.version);
       setUpdateDownloaded(true);
+      setUpdateAvailable(true);
     };
 
     ipcRenderer.on('update-available', handleUpdateAvailable);
@@ -81,6 +103,14 @@ function App() {
       ipcRenderer.removeListener('update-available', handleUpdateAvailable);
       ipcRenderer.removeListener('update-downloaded', handleUpdateDownloaded);
     };
+  }, []);
+
+  useEffect(() => {
+    const handleRevealEvent = () => {
+      setActiveTab('explorer');
+    };
+    window.addEventListener('intellifile-reveal-file', handleRevealEvent);
+    return () => window.removeEventListener('intellifile-reveal-file', handleRevealEvent);
   }, []);
 
   useEffect(() => {
@@ -220,6 +250,20 @@ function App() {
             Settings
           </button>
         </div>
+
+        <div className="header-right">
+          {(updateAvailable || updateDownloaded) && (
+            <button
+              className="update-nav-btn pulse"
+              onClick={() => openSettingsTab('updates')}
+              title={updateDownloaded ? `Update ${updateVersion || ''} Ready to Install — Click to Open Settings` : `Update ${updateVersion || ''} Available — Click to Open Settings`}
+            >
+              {updateDownloaded ? <FiZap className="update-nav-icon" /> : <FiDownload className="update-nav-icon" />}
+              <span>{updateDownloaded ? 'Install Update' : 'Update Available'}</span>
+              {updateVersion && <span className="update-version-chip">v{updateVersion}</span>}
+            </button>
+          )}
+        </div>
       </header>
 
       {setupComplete && (
@@ -250,8 +294,8 @@ function App() {
               <LogsPanel />
             </div>
 
-            <div style={{ display: activeTab === 'settings' ? 'block' : 'none', height: '100%' }}>
-              <Settings theme={theme} onThemeChange={setTheme} onStartTour={startOnboardingTour} />
+            <div style={{ display: activeTab === 'settings' ? 'flex' : 'none', flexDirection: 'column', height: '100%', minHeight: 0, overflow: 'hidden' }}>
+              <Settings theme={theme} onThemeChange={setTheme} onStartTour={startOnboardingTour} initialTab={settingsSubTab} />
             </div>
           </main>
         </div>)}

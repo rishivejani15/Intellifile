@@ -1,30 +1,18 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   MdFolder, MdFolderOpen, MdInsertDriveFile, MdArrowBack,
-  MdClose, MdLock, MdHome, MdStorage, MdCheck, MdSearch,
+  MdClose, MdLock, MdHome, MdStorage, MdCheck,
   MdDesktopMac, MdDownload, MdDescription, MdImage, MdMusicNote,
   MdVideoLibrary, MdChevronRight,
+  MdVisibility, MdErrorOutline
 } from 'react-icons/md';
+import { getFileIcon } from './utils/fileUtils';
+import PreviewPanel from './PreviewPanel';
 import './VaultFilePicker.css';
 
 const ipcRenderer = window.electron?.ipcRenderer;
 
 const normalizePath = (p) => (p || '').toLowerCase().replace(/\//g, '\\').replace(/[\\]+$/, '');
-
-const getFileIcon = (ext) => {
-  const map = {
-    '.pdf': '📕', '.doc': '📘', '.docx': '📘', '.txt': '📄', '.md': '📝',
-    '.xls': '📗', '.xlsx': '📗', '.csv': '📊', '.ppt': '📙', '.pptx': '📙',
-    '.jpg': '🖼️', '.jpeg': '🖼️', '.png': '🖼️', '.gif': '🖼️', '.svg': '🎨', '.webp': '🖼️',
-    '.mp4': '🎬', '.avi': '🎬', '.mkv': '🎬', '.mov': '🎬',
-    '.mp3': '🎵', '.wav': '🎵', '.flac': '🎵',
-    '.zip': '🗜️', '.rar': '🗜️', '.7z': '🗜️',
-    '.js': '⚡', '.ts': '💎', '.py': '🐍', '.html': '🌐', '.css': '🎨',
-    '.json': '📋', '.xml': '📋', '.yaml': '📋', '.yml': '📋',
-    '.exe': '⚙️', '.msi': '⚙️', '.dll': '🔧',
-  };
-  return map[ext?.toLowerCase()] || '📄';
-};
 
 const getFolderIcon = (name = '') => {
   const lower = String(name).toLowerCase();
@@ -74,9 +62,9 @@ function VaultFilePicker({ onSelect, onCancel }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [selectedFile, setSelectedFile] = useState(null);
+  const [showPreview, setShowPreview] = useState(false);
   const [drives, setDrives] = useState([]);
   const [quickAccess, setQuickAccess] = useState([]);
-  const [search, setSearch] = useState('');
   const [navHistory, setNavHistory] = useState([]);
   const listRef = useRef(null);
 
@@ -111,7 +99,6 @@ function VaultFilePicker({ onSelect, onCancel }) {
     if (!dirPath) { setItems([]); setLoading(false); return; }
     setLoading(true);
     setError(null);
-    setSearch('');
     try {
       const result = await ipcRenderer?.invoke('list-directory', dirPath, { showHidden: false });
       if (result?.error) { setError(result.error); setItems([]); }
@@ -132,6 +119,7 @@ function VaultFilePicker({ onSelect, onCancel }) {
     setNavHistory((h) => [...h, currentPath]);
     setCurrentPath(path);
     setSelectedFile(null);
+    setShowPreview(false);
   };
 
   const navigateBack = () => {
@@ -140,6 +128,7 @@ function VaultFilePicker({ onSelect, onCancel }) {
     setNavHistory((h) => h.slice(0, -1));
     setCurrentPath(prev);
     setSelectedFile(null);
+    setShowPreview(false);
   };
 
   const handleItemClick = (item) => {
@@ -156,15 +145,11 @@ function VaultFilePicker({ onSelect, onCancel }) {
     if (selectedFile) onSelect(selectedFile.path);
   };
 
-  const filteredItems = search
-    ? items.filter((i) => i.name.toLowerCase().includes(search.toLowerCase()))
-    : items;
-
   const isHome = currentPath === null;
 
   return (
     <div className="vfp-overlay" onClick={(e) => { if (e.target === e.currentTarget) onCancel(); }}>
-      <div className="vfp-modal" role="dialog" aria-modal="true" aria-label="Select a file to lock">
+      <div className={`vfp-modal ${showPreview ? 'vfp-modal-with-preview' : ''}`} role="dialog" aria-modal="true" aria-label="Select a file to lock">
         {/* Header */}
         <div className="vfp-header">
           <div className="vfp-header-left">
@@ -189,20 +174,10 @@ function VaultFilePicker({ onSelect, onCancel }) {
               <span className="vfp-bread-home-label"><MdHome size={13} style={{ marginRight: 4 }} />Home</span>
             ) : (
               <Breadcrumb pathStr={currentPath} onNavigate={(p) => {
-                if (p === null) { setNavHistory((h) => [...h, currentPath]); setCurrentPath(null); setSelectedFile(null); }
+                if (p === null) { setNavHistory((h) => [...h, currentPath]); setCurrentPath(null); setSelectedFile(null); setShowPreview(false); }
                 else navigateTo(p);
               }} />
             )}
-          </div>
-          <div className="vfp-search-wrap">
-            <MdSearch size={14} className="vfp-search-icon" />
-            <input
-              className="vfp-search-input"
-              placeholder="Filter files…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
-            {search && <button className="vfp-search-clear" onClick={() => setSearch('')}>✕</button>}
           </div>
         </div>
 
@@ -252,7 +227,10 @@ function VaultFilePicker({ onSelect, onCancel }) {
                 </div>
               )}
               {!loading && error && (
-                <div className="vfp-status-msg vfp-error">⚠ {error}</div>
+                <div className="vfp-status-msg vfp-error">
+                  <MdErrorOutline size={16} style={{ marginRight: 6 }} />
+                  {error}
+                </div>
               )}
               {!loading && !error && isHome && (
                 <div className="vfp-home">
@@ -286,43 +264,43 @@ function VaultFilePicker({ onSelect, onCancel }) {
                 </div>
               )}
               {!loading && !error && !isHome && (
-                filteredItems.length === 0
-                  ? <div className="vfp-status-msg">{search ? `No items matching "${search}"` : 'This folder is empty.'}</div>
-                  : filteredItems.map((item) => {
-                      const isSelected = selectedFile && normalizePath(selectedFile.path) === normalizePath(item.path);
-                      return (
-                        <div
-                          key={item.path}
-                          className={`vfp-item ${item.type === 'folder' ? 'vfp-folder' : 'vfp-file'} ${isSelected ? 'vfp-item-selected' : ''}`}
-                          onClick={() => handleItemClick(item)}
-                          onDoubleClick={() => handleItemDoubleClick(item)}
-                          role="row"
-                          tabIndex={0}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') handleItemDoubleClick(item);
-                            if (e.key === ' ' && item.type === 'file') { e.preventDefault(); setSelectedFile(item); }
-                          }}
-                        >
-                          {item.type === 'file' && (
-                            <span
-                              className={`vfp-file-selector ${isSelected ? 'selected' : ''}`}
-                              role="checkbox"
-                              aria-checked={isSelected}
-                              aria-label={`Select ${item.name}`}
-                            >
-                              {isSelected && <MdCheck size={14} />}
-                            </span>
-                          )}
-                          <span className="vfp-item-icon">
-                            {item.type === 'folder'
-                              ? (isSelected ? <MdFolderOpen /> : <MdFolder />)
-                              : getFileIcon(item.ext)}
+                items.length === 0
+                  ? <div className="vfp-status-msg">This folder is empty.</div>
+                  : items.map((item) => {
+                    const isSelected = selectedFile && normalizePath(selectedFile.path) === normalizePath(item.path);
+                    return (
+                      <div
+                        key={item.path}
+                        className={`vfp-item ${item.type === 'folder' ? 'vfp-folder' : 'vfp-file'} ${isSelected ? 'vfp-item-selected' : ''}`}
+                        onClick={() => handleItemClick(item)}
+                        onDoubleClick={() => handleItemDoubleClick(item)}
+                        role="row"
+                        tabIndex={0}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') handleItemDoubleClick(item);
+                          if (e.key === ' ' && item.type === 'file') { e.preventDefault(); setSelectedFile(item); }
+                        }}
+                      >
+                        {item.type === 'file' && (
+                          <span
+                            className={`vfp-file-selector ${isSelected ? 'selected' : ''}`}
+                            role="checkbox"
+                            aria-checked={isSelected}
+                            aria-label={`Select ${item.name}`}
+                          >
+                            {isSelected && <MdCheck size={14} />}
                           </span>
-                          <span className="vfp-item-name" title={item.name}>{item.name}</span>
-                          {item.type === 'folder' && <MdChevronRight size={14} className="vfp-item-arrow" />}
-                        </div>
-                      );
-                    })
+                        )}
+                        <span className="vfp-item-icon">
+                          {item.type === 'folder'
+                            ? (isSelected ? <MdFolderOpen /> : <MdFolder />)
+                            : getFileIcon(item)}
+                        </span>
+                        <span className="vfp-item-name" title={item.name}>{item.name}</span>
+                        {item.type === 'folder' && <MdChevronRight size={14} className="vfp-item-arrow" />}
+                      </div>
+                    );
+                  })
               )}
             </div>
 
@@ -340,12 +318,29 @@ function VaultFilePicker({ onSelect, onCancel }) {
               </div>
               <div className="vfp-actions">
                 <button className="vfp-btn-cancel" onClick={onCancel}>Cancel</button>
+                <button
+                  className="vfp-btn-preview"
+                  onClick={() => setShowPreview(true)}
+                  disabled={!selectedFile}
+                  title="Preview the selected file"
+                >
+                  <MdVisibility size={15} /> Preview
+                </button>
                 <button className="vfp-btn-select" onClick={handleConfirm} disabled={!selectedFile}>
                   <MdLock size={14} /> Select &amp; Lock
                 </button>
               </div>
             </div>
           </div>
+
+          {showPreview && selectedFile && (
+            <PreviewPanel
+              selectedItem={selectedFile}
+              visible={showPreview}
+              onClose={() => setShowPreview(false)}
+              searchQuery=""
+            />
+          )}
         </div>
       </div>
     </div>

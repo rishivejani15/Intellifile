@@ -1,65 +1,15 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { QRCodeCanvas } from 'qrcode.react';
+import {
+  FiRefreshCw, FiTrash2, FiExternalLink, FiCloud, FiLink,
+  FiCheck, FiX, FiPlus, FiSmartphone, FiMonitor, FiDownload,
+  FiActivity, FiCopy, FiWifi
+} from 'react-icons/fi';
+import { MdFolder, MdClose, MdSearch, MdContentCopy } from 'react-icons/md';
 import './SyncManager.css';
+import '../FileLockManager.css';
 import { showErrorToast } from '../../utils/toast';
-
-// ── Icons ───────────────────────────────────────────────────────────────────
-
-const SyncIcon = () => (
-  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
-    <polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline>
-    <line x1="12" y1="22.08" x2="12" y2="12"></line>
-  </svg>
-);
-
-const TrashIcon = () => (
-  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <polyline points="3 6 5 6 21 6"></polyline>
-    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-  </svg>
-);
-
-const OpenIcon = () => (
-  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
-    <polyline points="15 3 21 3 21 9"></polyline>
-    <line x1="10" y1="14" x2="21" y2="3"></line>
-  </svg>
-);
-
-const CloudIcon = () => (
-  <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"></path>
-  </svg>
-);
-
-const LinkIcon = () => (
-  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
-    <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
-  </svg>
-);
-
-const DisconnectIcon = () => (
-  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <line x1="18" y1="6" x2="6" y2="18"></line>
-    <line x1="6" y1="6" x2="18" y2="18"></line>
-  </svg>
-);
-
-const CheckIcon = () => (
-  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-    <polyline points="20 6 9 17 4 12"></polyline>
-  </svg>
-);
-
-const XIcon = () => (
-  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-    <line x1="18" y1="6" x2="6" y2="18"></line>
-    <line x1="6" y1="6" x2="18" y2="18"></line>
-  </svg>
-);
+import { getFileIcon } from '../../utils/fileUtils';
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -78,7 +28,12 @@ const formatTimeAgo = (timestamp) => {
   if (diff < 60000) return `${Math.floor(diff / 1000)}s ago`;
   if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
   if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
-  return new Date(timestamp).toLocaleString();
+  return new Date(timestamp).toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
 };
 
 function generateSessionCode() {
@@ -88,23 +43,23 @@ function generateSessionCode() {
   return code;
 }
 
-// ── Status indicator colors ──────────────────────────────────────────────
+// ── Status indicator configuration ──────────────────────────────────────────
 
 const STATUS_CONFIG = {
-  idle: { color: '#636e72', label: 'Idle', dot: '⚪', cssClass: '' },
-  connecting: { color: '#f39c12', label: 'Connecting', dot: '🟡', cssClass: '' },
-  reconnecting: { color: '#e17055', label: 'Reconnecting', dot: '🟠', cssClass: 'pulsing' },
-  waiting: { color: '#3498db', label: 'Waiting', dot: '🔵', cssClass: '' },
-  syncing: { color: '#6c5ce7', label: 'Syncing', dot: '🟣', cssClass: '' },
-  synced: { color: '#00b894', label: 'Connected', dot: '🟢', cssClass: '' },
-  connected_p2p: { color: '#00b894', label: 'Connected (P2P)', dot: '🟢', cssClass: '' },
-  connected_relay: { color: '#fdcb6e', label: 'Connected (Relay)', dot: '🟡', cssClass: '' },
-  error: { color: '#e74c3c', label: 'Error', dot: '🔴', cssClass: '' },
-  disconnected: { color: '#636e72', label: 'Disconnected', dot: '⚪', cssClass: '' },
+  idle: { color: 'var(--t-muted)', label: 'Idle', dotColor: 'var(--t-muted)' },
+  connecting: { color: '#f59e0b', label: 'Connecting', dotColor: '#f59e0b' },
+  reconnecting: { color: '#f97316', label: 'Reconnecting', dotColor: '#f97316', pulsing: true },
+  waiting: { color: '#0284c7', label: 'Waiting for Peer', dotColor: '#0284c7' },
+  syncing: { color: '#8b5cf6', label: 'Syncing', dotColor: '#8b5cf6', pulsing: true },
+  synced: { color: 'var(--color-primary)', label: 'Connected', dotColor: 'var(--color-primary)' },
+  connected_p2p: { color: 'var(--color-primary)', label: 'Connected (P2P)', dotColor: 'var(--color-primary)' },
+  connected_relay: { color: '#eab308', label: 'Connected (Relay)', dotColor: '#eab308' },
+  error: { color: 'var(--c-error, #ef4444)', label: 'Error', dotColor: 'var(--c-error, #ef4444)' },
+  disconnected: { color: 'var(--t-muted)', label: 'Disconnected', dotColor: 'var(--t-muted)' },
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
-//  SyncManager Component
+//  SyncManager Component (Sleek Clean Tabbed Layout)
 // ═════════════════════════════════════════════════════════════════════════════
 
 const SyncManager = () => {
@@ -115,6 +70,9 @@ const SyncManager = () => {
   const [previewFile, setPreviewFile] = useState(null);
   const [previewContent, setPreviewContent] = useState('');
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [copiedLogIndex, setCopiedLogIndex] = useState(null);
+  const [copiedIp, setCopiedIp] = useState(false);
   const prevFilesRef = useRef({});
 
   // ── Remote sync state ────────────────────────────────────────────────
@@ -123,22 +81,19 @@ const SyncManager = () => {
   const [pendingChanges, setPendingChanges] = useState([]);
 
   // ── Connection form state ────────────────────────────────────────
-  const savedSettings = JSON.parse(localStorage.getItem('intellifile_sync') || '{}');
-  const [showConnectPanel, setShowConnectPanel] = useState(false);
-  const connectPanelRef = useRef(null);
-
-  useEffect(() => {
-    if (showConnectPanel) {
-      setTimeout(() => {
-        connectPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-      }, 50);
+  const savedSettings = useMemo(() => {
+    try {
+      return JSON.parse(localStorage.getItem('intellifile_sync') || '{}');
+    } catch {
+      return {};
     }
-  }, [showConnectPanel]);
+  }, []);
+
   const [signalingUrl, setSignalingUrl] = useState(savedSettings.signalingUrl || 'wss://intellifile-signaling.onrender.com');
   const [sessionId, setSessionId] = useState(savedSettings.sessionId || '');
   const [isInitiator, setIsInitiator] = useState(savedSettings.isInitiator ?? true);
-  const [activeTab, setActiveTab] = useState('files'); // 'files' | 'activity'
-const [localAddress, setLocalAddress] = useState('');
+  const [activeTab, setActiveTab] = useState('files'); // 'files' | 'devices' | 'activity'
+  const [localAddress, setLocalAddress] = useState('');
   const [localAddressError, setLocalAddressError] = useState('');
   const [connectedDevices, setConnectedDevices] = useState([]);
   const isConnected = ['synced', 'syncing', 'waiting', 'reconnecting', 'connected_p2p', 'connected_relay'].includes(syncStatus.status);
@@ -198,54 +153,40 @@ const [localAddress, setLocalAddress] = useState('');
           }
 
           const newMap = {};
-          for (const file of res.items) newMap[file.name] = { modified: file.modified, size: file.size };
+          res.items.forEach(f => { newMap[f.name] = f; });
           prevFilesRef.current = newMap;
 
+          setFiles(res.items);
           if (newNotifs.length > 0) {
-            setNotifications(prev => [...newNotifs, ...prev].slice(0, 10));
-          }
-
-          const now = Date.now();
-          setFiles(res.items.map(f => ({
-            ...f,
-            isRecent: (now - f.modified) < 60000,
-            justChanged: newNotifs.some(n => n.fileName === f.name),
-          })));
-
-          if (previewFile && newNotifs.some(n => n.fileName === previewFile.name)) {
-            loadPreview(previewFile);
+            setNotifications(prev => [...newNotifs, ...prev].slice(0, 5));
           }
         }
       }
-    } catch (e) {
-      showErrorToast('Sync files not loaded.', e?.message || 'Could not read the sync folder.', 'Check the sync folder path and permissions, then try again.');
+    } catch (err) {
+      console.error('Error loading sync files:', err);
     } finally {
       setLoading(false);
     }
-  }, [previewFile]);
+  }, []);
 
-  // ── Subscribe to engine events ───────────────────────────────────────
+  // ── Initial load & IPC listener registration ─────────────────────────
 
   useEffect(() => {
-    loadLocalAddress();
     loadFiles();
-    const interval = setInterval(() => {
-      loadFiles();
-      loadLocalAddress();
-    }, 3000);
+    loadLocalAddress();
 
-    const handleNetworkChange = () => {
-      loadLocalAddress();
-    };
-
+    const interval = setInterval(loadFiles, 2000);
+    const handleNetworkChange = () => loadLocalAddress();
     window.addEventListener('online', handleNetworkChange);
     window.addEventListener('offline', handleNetworkChange);
 
     const cleanups = [];
-
     if (window.intellifile?.onSyncStatus) {
-      cleanups.push(window.intellifile.onSyncStatus((data) => {
-        setSyncStatus(data);
+      cleanups.push(window.intellifile.onSyncStatus((status) => {
+        setSyncStatus(status);
+        if (status.status === 'error' && status.message) {
+          showErrorToast('Sync Connection Error', status.message, 'Check your signaling server and network connection.');
+        }
       }));
     }
     if (window.intellifile?.onSyncServerError) {
@@ -292,16 +233,23 @@ const [localAddress, setLocalAddress] = useState('');
     savedSettings.sessionId,
     savedSettings.signalingUrl,
     savedSettings.isInitiator,
-  ]);  // note: savedSettings is read outside so we just auto-connect on initial load.
+  ]);
 
   // ── Poll connected devices from server ────────────────────────────────
 
   useEffect(() => {
     const pollDevices = async () => {
       try {
-        if (!localAddress) return;
-        const addr = localAddress.includes(':') ? localAddress : `${localAddress}:8765`;
-        const res = await fetch(`http://${addr}/status`);
+        if (window.intellifile?.getSyncServerStatus) {
+          const res = await window.intellifile.getSyncServerStatus();
+          if (res && res.success && Array.isArray(res.device_ids)) {
+            setConnectedDevices(res.device_ids);
+            return;
+          }
+        }
+        const host = localAddress ? (localAddress.includes(':') ? localAddress : `${localAddress}:8765`) : '127.0.0.1:8765';
+        const cleanHost = host.replace(/^https?:\/\//, '').replace(/\/+$/, '');
+        const res = await fetch(`http://${cleanHost}/status`);
         if (res.ok) {
           const data = await res.json();
           setConnectedDevices(data.device_ids || []);
@@ -311,7 +259,7 @@ const [localAddress, setLocalAddress] = useState('');
       }
     };
     pollDevices();
-    const devicesInterval = setInterval(pollDevices, 5000);
+    const devicesInterval = setInterval(pollDevices, 2000);
     return () => clearInterval(devicesInterval);
   }, [localAddress]);
 
@@ -393,7 +341,6 @@ const [localAddress, setLocalAddress] = useState('');
     if (!window.intellifile?.syncConnect) return;
     if (!signalingUrl.trim() || !sessionId.trim()) return;
     try {
-      // Persist settings so we can auto-reconnect next time
       localStorage.setItem('intellifile_sync', JSON.stringify({
         signalingUrl: signalingUrl.trim(),
         sessionId: sessionId.trim(),
@@ -404,7 +351,6 @@ const [localAddress, setLocalAddress] = useState('');
         sessionId: sessionId.trim(),
         isInitiator,
       });
-      setShowConnectPanel(false);
     } catch (e) {
       showErrorToast('Connection failed.', e?.message || 'The sync session could not be created.', 'Check the signaling URL, session code, and network connection.');
     }
@@ -414,7 +360,6 @@ const [localAddress, setLocalAddress] = useState('');
     if (window.intellifile?.syncDisconnect) {
       await window.intellifile.syncDisconnect();
     }
-    // Clear saved settings on manual disconnect
     localStorage.removeItem('intellifile_sync');
   };
 
@@ -439,328 +384,606 @@ const [localAddress, setLocalAddress] = useState('');
     if (window.intellifile?.syncRejectAll) await window.intellifile.syncRejectAll();
   };
 
-  // ── Render ───────────────────────────────────────────────────────────
+  const handleCopyLog = (text, idx) => {
+    if (!text) return;
+    try {
+      navigator.clipboard?.writeText(text);
+      setCopiedLogIndex(idx);
+      setTimeout(() => setCopiedLogIndex(null), 2000);
+    } catch (err) {
+      console.error('Failed to copy log:', err);
+    }
+  };
+
+  const handleCopyLocalIp = () => {
+    if (!localAddress) return;
+    try {
+      navigator.clipboard?.writeText(localAddress);
+      setCopiedIp(true);
+      setTimeout(() => setCopiedIp(false), 2000);
+    } catch (err) {
+      console.error('Failed to copy IP:', err);
+    }
+  };
+
+  // ── Filtered data ────────────────────────────────────────────────────
+
+  const filteredFiles = files.filter(f => {
+    if (!searchQuery) return true;
+    const q = searchQuery.toLowerCase();
+    return f.name?.toLowerCase().includes(q) || f.path?.toLowerCase().includes(q);
+  });
+
+  const filteredLogs = syncLogs.filter(log => {
+    if (!searchQuery) return true;
+    return log.toLowerCase().includes(searchQuery.toLowerCase());
+  });
 
   const statusCfg = STATUS_CONFIG[syncStatus.status] || STATUS_CONFIG.idle;
 
   return (
-    <div className="sync-container">
-      {/* Notification toasts */}
-      <div className="sync-notifications">
-        {notifications.map(notif => (
-          <div
-            key={notif.id}
-            className={`sync-notification ${notif.type}`}
-            onClick={() => dismissNotification(notif.id)}
-          >
-            <span className="sync-notif-icon">
-              {notif.type === 'updated' ? '🔄' : '📥'}
-            </span>
-            <span className="sync-notif-text">{notif.message}</span>
-            <span className="sync-notif-time">{formatTimeAgo(notif.time)}</span>
-            <button className="sync-notif-close" onClick={(e) => { e.stopPropagation(); dismissNotification(notif.id); }}>×</button>
-          </div>
-        ))}
-      </div>
-
-      {/* ── Header ─────────────────────────────────────────────────────── */}
-      <div data-tour="sync-overview">
-      <div className="sync-header" data-tour="sync-tools">
-        <div className="sync-header-left">
-          <h2><SyncIcon /> Cross-Device Sync</h2>
-          <p>Securely synchronize files between PC and mobile via WebRTC P2P.</p>
-        </div>
-        <div className="sync-header-actions">
-          <button className="add-files-btn" onClick={handleAddFiles}>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <line x1="12" y1="5" x2="12" y2="19"></line>
-              <line x1="5" y1="12" x2="19" y2="12"></line>
-            </svg>
-            Add Files
-          </button>
-          {isConnected ? (
-            <button className="disconnect-btn" onClick={handleDisconnect}>
-              <DisconnectIcon /> Disconnect
-            </button>
-          ) : (
-            <button className="connect-btn" onClick={() => setShowConnectPanel(p => !p)}>
-              <LinkIcon /> Connect
-            </button>
-          )}
-        </div>
-      </div>
-
-      {/* ── Connection Status Bar ──────────────────────────────────────── */}
-      <div className="sync-status-bar" style={{ borderLeftColor: statusCfg.color }}>
-        <span className={`sync-status-dot ${statusCfg.cssClass || ''}`} style={{ background: statusCfg.color }}></span>
-        <span className="sync-status-label">{statusCfg.label} {syncStatus.deviceName ? `to ${syncStatus.deviceName}` : ''}</span>
-        <span className="sync-status-message">{syncStatus.message}</span>
-        {pendingChanges.length > 0 && (
-          <span className="sync-pending-badge">{pendingChanges.length} pending</span>
-        )}
-      </div>
- {/* ── LAN QR Quick Connect ─────────────────────────────────────── */}
-      <div className="sync-qr-card" data-tour="sync-qr-code">
-        <div className="sync-qr-left">
-          <div className="sync-qr-title">LAN Quick Connect</div>
-          <div className="sync-qr-subtitle">Scan from mobile to connect instantly.</div>
-          {localAddress ? (
-            <div className="sync-qr-address">{localAddress}</div>
-          ) : (
-            <div className="sync-qr-error">{localAddressError || 'No LAN address detected.'}</div>
-          )}
-          <button className="sync-qr-refresh" onClick={loadLocalAddress}>
-            Refresh IP
-          </button>
-        </div>
-        <div className="sync-qr-code">
-          {localAddress ? (
-            <QRCodeCanvas value={qrValue} size={140} bgColor="#ffffff" fgColor="#111111" includeMargin={true} level="H" />
-          ) : (
-            <div className="sync-qr-placeholder">QR unavailable</div>
-          )}
-        </div>
-      </div>
-
-      {/* ── Connected Devices ────────────────────────────────────────── */}
-      <div className="sync-devices-card">
-        <div className="sync-devices-header">
-          <span className="sync-devices-title">📱 Connected Devices</span>
-          <span className="sync-devices-count">{connectedDevices.length}</span>
-        </div>
-        {connectedDevices.length > 0 ? (
-          <div className="sync-devices-list">
-            {connectedDevices.map((deviceId, idx) => (
-              <div key={deviceId} className="sync-device-item">
-                <span className="sync-device-dot"></span>
-                <span className="sync-device-name">Mobile Device {idx + 1}</span>
-                <span className="sync-device-id">{deviceId.substring(0, 8)}…</span>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <div className="sync-devices-empty">No devices connected</div>
-        )}
-      </div>
-
-      {/* ── Connect Panel ──────────────────────────────────────────────── */}
-      </div>
-      {showConnectPanel && (
-        <div className="sync-connect-panel" ref={connectPanelRef}>
-          <div className="connect-panel-header">
-            <h3>Remote Sync Connection</h3>
-            <button className="connect-close-btn" onClick={() => setShowConnectPanel(false)}>×</button>
-          </div>
-          <div className="connect-panel-body">
-            <div className="connect-form-group">
-              <label>Signaling Server URL</label>
-              <input
-                type="text"
-                value={signalingUrl}
-                onChange={e => setSignalingUrl(e.target.value)}
-                placeholder="wss://your-signaling-server.onrender.com"
-              />
+    <div className="flm-container sync-container">
+      {/* Toast Notifications */}
+      {notifications.length > 0 && (
+        <div className="sync-notifications">
+          {notifications.map(notif => (
+            <div
+              key={notif.id}
+              className={`sync-notification ${notif.type}`}
+              onClick={() => dismissNotification(notif.id)}
+            >
+              <span className="sync-notif-icon">
+                {notif.type === 'updated' ? <FiRefreshCw size={14} /> : <FiDownload size={14} />}
+              </span>
+              <span className="sync-notif-text">{notif.message}</span>
+              <span className="sync-notif-time">{formatTimeAgo(notif.time)}</span>
+              <button
+                className="sync-notif-close"
+                onClick={(e) => { e.stopPropagation(); dismissNotification(notif.id); }}
+                title="Dismiss"
+              >
+                <MdClose size={14} />
+              </button>
             </div>
-            <div className="connect-form-group">
-              <label>Session Code</label>
-              <div className="connect-session-row">
-                <input
-                  type="text"
-                  value={sessionId}
-                  onChange={e => setSessionId(e.target.value.toUpperCase())}
-                  placeholder="Enter or generate code"
+          ))}
+        </div>
+      )}
+
+      {/* ── Minimalist Top Header (matching Vault) ────────────────────── */}
+      <header className="vault-header" data-tour="sync-overview">
+        <div className="vault-header-left">
+          <div className="vault-icon-badge">
+            <FiRefreshCw size={19} className={isConnected ? 'sync-spin-slow' : ''} />
+          </div>
+          <div className="vault-title-group">
+            <div className="vault-title-line">
+              <h2 className="vault-title">Cross-Device Sync</h2>
+              <span className="vault-count-chip">
+                <FiActivity size={12} />
+                <span>{files.length} {files.length === 1 ? 'file' : 'files'} staged</span>
+              </span>
+              <span className="sync-header-status-pill">
+                <span
+                  className={`sync-status-dot ${statusCfg.pulsing ? 'pulsing' : ''}`}
+                  style={{ background: statusCfg.dotColor }}
                 />
-                <button className="generate-code-btn" onClick={handleGenerateCode}>
-                  Generate
-                </button>
-              </div>
+                <span>{statusCfg.label}</span>
+              </span>
             </div>
-            <div className="connect-form-group">
-              <label>Role</label>
-              <div className="connect-role-toggle">
-                <button
-                  className={`role-btn ${isInitiator ? 'active' : ''}`}
-                  onClick={() => setIsInitiator(true)}
-                >
-                  🖥️ Host (PC)
-                </button>
-                <button
-                  className={`role-btn ${!isInitiator ? 'active' : ''}`}
-                  onClick={() => setIsInitiator(false)}
-                >
-                  📱 Join
-                </button>
-              </div>
-            </div>
-            <button className="connect-go-btn" onClick={handleConnect} disabled={!signalingUrl.trim() || !sessionId.trim()}>
-              Connect
+            <p className="vault-subtitle">Encrypted WebRTC peer-to-peer file synchronization</p>
+          </div>
+        </div>
+
+        {/* 3 Native Tabs for Perfect Organization */}
+        <div className="vault-tabs-segmented">
+          <button
+            className={`vault-tab-pill ${activeTab === 'files' ? 'active' : ''}`}
+            onClick={() => setActiveTab('files')}
+          >
+            <MdFolder size={16} />
+            <span>Synced Files</span>
+            <span className="pill-count">{files.length}</span>
+          </button>
+          <button
+            className={`vault-tab-pill ${activeTab === 'devices' ? 'active' : ''}`}
+            onClick={() => setActiveTab('devices')}
+          >
+            <FiSmartphone size={16} />
+            <span>Pair &amp; Devices</span>
+            <span className="pill-count">{connectedDevices.length}</span>
+          </button>
+          <button
+            className={`vault-tab-pill ${activeTab === 'activity' ? 'active' : ''}`}
+            onClick={() => setActiveTab('activity')}
+          >
+            <FiActivity size={16} />
+            <span>Activity Logs</span>
+            <span className="pill-count">{syncLogs.length}</span>
+          </button>
+        </div>
+
+        {/* Primary Action Buttons */}
+        <div className="vault-header-actions">
+          {activeTab === 'files' ? (
+            <button className="vault-btn-primary" onClick={handleAddFiles}>
+              <FiPlus size={16} />
+              <span>Add Files</span>
             </button>
-            <p className="connect-hint">
-              Deploy signaling server once, use forever. Your files never touch it.<br /><br />
-              <strong>Setup:</strong> Deploy <code>backend/signaling_server.py</code> to Render/Railway (free tier).<br />
-              Paste the URL above (e.g. <code>wss://intellifile-signal.onrender.com</code>).<br />
-              Enter the same session code on your mobile app and tap "Join".<br /><br />
-              <em>Privacy: The signaling server only sees session codes and WebRTC negotiation (~1 KB). Zero file data.</em>
-            </p>
+          ) : activeTab === 'devices' ? (
+            isConnected ? (
+              <button className="vault-btn-secondary btn-danger-action" onClick={handleDisconnect}>
+                <FiX size={15} />
+                <span>Disconnect All</span>
+              </button>
+            ) : (
+              <button className="vault-btn-primary" onClick={loadLocalAddress}>
+                <FiRefreshCw size={15} />
+                <span>Refresh LAN</span>
+              </button>
+            )
+          ) : (
+            <button className="vault-btn-secondary" onClick={() => setActiveTab('devices')}>
+              <FiLink size={15} />
+              <span>Pair Device</span>
+            </button>
+          )}
+        </div>
+      </header>
+
+      {/* ── Toolbar (on Files and Activity tabs) ───────────────────────── */}
+      {activeTab !== 'devices' && (
+        <div className="vault-toolbar">
+          <div className="vault-search-wrapper">
+            <MdSearch className="vault-search-icon" size={17} />
+            <input
+              className="vault-search-input"
+              type="text"
+              placeholder={activeTab === 'files' ? "Search staged files…" : "Search sync activity logs…"}
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
+            {searchQuery && (
+              <button
+                className="vault-search-clear-btn"
+                onClick={() => setSearchQuery('')}
+                title="Clear search"
+              >
+                <MdClose size={14} />
+              </button>
+            )}
+          </div>
+
+          <div className="vault-toolbar-right">
+            <button
+              className="sync-devices-quick-btn"
+              onClick={() => setActiveTab('devices')}
+              title="Open Pair & Devices"
+            >
+              <FiSmartphone size={13} />
+              <span>{connectedDevices.length} {connectedDevices.length === 1 ? 'device' : 'devices'} connected</span>
+            </button>
+            {pendingChanges.length > 0 && (
+              <span className="summary-pending-chip">
+                <FiDownload size={13} style={{ marginRight: 4 }} />
+                {pendingChanges.length} pending
+              </span>
+            )}
           </div>
         </div>
       )}
 
-      {/* ── Pending Changes Banner ─────────────────────────────────────── */}
-      {pendingChanges.length > 0 && (
-        <div className="sync-pending-banner">
-          <div className="pending-banner-header">
-            <span>📥 {pendingChanges.length} incoming change{pendingChanges.length !== 1 ? 's' : ''} from mobile</span>
-            <div className="pending-banner-actions">
-              <button className="pending-approve-all" onClick={handleApproveAll}>
-                <CheckIcon /> Accept All
-              </button>
-              <button className="pending-reject-all" onClick={handleRejectAll}>
-                <XIcon /> Reject All
-              </button>
-            </div>
-          </div>
-          <div className="pending-list">
-            {pendingChanges.map((change) => (
-              <div key={change.filepath} className="pending-item">
-                <span className="pending-filename">{change.filepath}</span>
-                <span className="pending-change-type">{change.changeType}</span>
-                <span className="pending-size">{formatBytes(change.fileSize)}</span>
-                <div className="pending-item-actions">
-                  <button className="pending-approve" onClick={() => handleApprove(change.filepath)} title="Accept">
-                    <CheckIcon />
-                  </button>
-                  <button className="pending-reject" onClick={() => handleReject(change.filepath)} title="Reject">
-                    <XIcon />
-                  </button>
+      {/* ── Main Content Body ─────────────────────────────────────────── */}
+      <div className="vault-content-body sync-content-body">
+        {/* ── TAB 1: SYNCED FILES ────────────────────────────────────── */}
+        {activeTab === 'files' && (
+          <div className="sync-files-tab-view">
+            {/* Pending Changes Banner (if mobile uploaded files) */}
+            {pendingChanges.length > 0 && (
+              <div className="sync-pending-banner-card vault-card">
+                <div className="pending-banner-header">
+                  <div className="pending-banner-title">
+                    <FiDownload size={16} style={{ marginRight: 6, color: 'var(--color-primary)' }} />
+                    <span>{pendingChanges.length} incoming change{pendingChanges.length !== 1 ? 's' : ''} from mobile</span>
+                  </div>
+                  <div className="pending-banner-actions">
+                    <button className="pending-approve-all" onClick={handleApproveAll}>
+                      <FiCheck size={14} /> Accept All
+                    </button>
+                    <button className="pending-reject-all" onClick={handleRejectAll}>
+                      <FiX size={14} /> Reject All
+                    </button>
+                  </div>
+                </div>
+                <div className="pending-list">
+                  {pendingChanges.map((change) => (
+                    <div key={change.filepath} className="pending-item">
+                      <span className="pending-filename">{change.filepath}</span>
+                      <span className="pending-change-type">{change.changeType}</span>
+                      <span className="pending-size">{formatBytes(change.fileSize)}</span>
+                      <div className="pending-item-actions">
+                        <button className="pending-approve-btn" onClick={() => handleApprove(change.filepath)} title="Accept">
+                          <FiCheck size={14} />
+                        </button>
+                        <button className="pending-reject-btn" onClick={() => handleReject(change.filepath)} title="Reject">
+                          <FiX size={14} />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </div>
-            ))}
-          </div>
-        </div>
-      )}
+            )}
 
-      {/* ── Tab bar ────────────────────────────────────────────────────── */}
-      <div className="sync-tab-bar">
-        <button className={`sync-tab ${activeTab === 'files' ? 'active' : ''}`} onClick={() => setActiveTab('files')}>
-          Files ({files.length})
-        </button>
-        <button className={`sync-tab ${activeTab === 'activity' ? 'active' : ''}`} onClick={() => setActiveTab('activity')}>
-          Activity ({syncLogs.length})
-        </button>
-      </div>
-
-      {/* ── Tab Content ────────────────────────────────────────────────── */}
-      <div className="sync-body">
-        {activeTab === 'files' && (
-          <div className={`sync-list-container ${previewFile ? 'with-preview' : ''}`}>
             {loading && files.length === 0 ? (
-              <div className="sync-empty-state"><p>Loading synchronized files...</p></div>
-            ) : files.length === 0 ? (
-              <div className="sync-empty-state">
-                <CloudIcon />
-                <h3>No files yet</h3>
-                <p>Click "Add Files" to stage files for sync, or connect to your mobile app to receive files.</p>
+              <div className="vault-loading-state">
+                <div className="vault-spinner" />
+                <span>Loading sync files…</span>
+              </div>
+            ) : filteredFiles.length === 0 ? (
+              /* Centered Empty State */
+              <div className="vault-empty-state">
+                <div className="empty-icon-wrap">
+                  <FiCloud size={36} />
+                </div>
+                <h3 className="empty-title">
+                  {searchQuery ? 'No matching staged files' : 'No files staged for sync'}
+                </h3>
+                <p className="empty-desc">
+                  {searchQuery
+                    ? 'No staged files match your search keywords.'
+                    : 'Stage files here to automatically synchronize them in real time with your connected mobile devices.'}
+                </p>
+                {!searchQuery && (
+                  <div className="empty-action-group">
+                    <button className="vault-btn-primary empty-action-btn" onClick={handleAddFiles}>
+                      <FiPlus size={16} /> Stage Files for Sync
+                    </button>
+                    <button className="vault-btn-secondary empty-action-btn" onClick={() => setActiveTab('devices')}>
+                      <FiSmartphone size={16} /> Connect Mobile Device
+                    </button>
+                  </div>
+                )}
               </div>
             ) : (
-              <table className="sync-table">
-                <thead>
-                  <tr>
-                    <th>File Name</th>
-                    <th>Size</th>
-                    <th>Status</th>
-                    <th>Modified</th>
-                    <th style={{ textAlign: 'right' }}>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {files.map((file) => (
-                    <tr
-                      key={file.name}
-                      className={`${file.justChanged ? 'just-changed' : ''} ${previewFile?.name === file.name ? 'selected-row' : ''}`}
-                      onClick={() => handlePreviewFile(file)}
-                    >
-                      <td>
-                        <div className="sync-file-name">
-                          <span className="sync-icon">📄</span>
-                          {file.name}
-                          {file.justChanged && <span className="changed-badge">Changed</span>}
-                        </div>
-                      </td>
-                      <td style={{ color: '#888' }}>{formatBytes(file.size)}</td>
-                      <td>
-                        <span className={`status-badge ${file.justChanged ? 'changed' : file.isRecent ? 'recent' : 'synced'}`}>
-                          {file.justChanged ? '🔄 Just Updated' : file.isRecent ? '📡 Recent' : '✅ Synced'}
-                        </span>
-                      </td>
-                      <td style={{ color: '#888' }}>{formatTimeAgo(file.modified)}</td>
-                      <td style={{ textAlign: 'right' }}>
-                        <div className="action-buttons">
-                          <button className="action-btn open-btn" onClick={(e) => { e.stopPropagation(); handleOpenFile(file); }} title="Open file">
-                            <OpenIcon />
-                          </button>
-                          <button className="action-btn delete-btn" onClick={(e) => { e.stopPropagation(); handleDeleteFile(file.name); }} title="Remove from Sync">
-                            <TrashIcon />
-                          </button>
-                        </div>
-                      </td>
+              <div className="vault-table-container">
+                <table className="vault-table">
+                  <thead>
+                    <tr>
+                      <th className="col-name">File Name</th>
+                      <th className="col-size">Size</th>
+                      <th className="col-status">Status</th>
+                      <th className="col-date">Modified</th>
+                      <th className="col-actions">Actions</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {filteredFiles.map((file) => (
+                      <tr
+                        key={file.name}
+                        className={`vault-table-row ${previewFile?.name === file.name ? 'selected-row' : ''}`}
+                        onClick={() => handlePreviewFile(file)}
+                      >
+                        <td className="col-name">
+                          <div className="vault-table-file-cell">
+                            <span className="vault-table-icon">
+                              {getFileIcon(file)}
+                            </span>
+                            <span className="vault-table-filename" title={file.name}>
+                              {file.name}
+                            </span>
+                            {file.justChanged && <span className="vault-status-pill status-secure" style={{ fontSize: 10 }}>Updated</span>}
+                          </div>
+                        </td>
+                        <td className="col-size">{formatBytes(file.size)}</td>
+                        <td className="col-status">
+                          {file.justChanged ? (
+                            <span className="vault-status-pill status-secure">
+                              <FiRefreshCw size={11} /> Just Updated
+                            </span>
+                          ) : file.isRecent ? (
+                            <span className="vault-status-pill" style={{ background: 'rgba(2, 132, 199, 0.12)', color: 'var(--c-info, #0284c7)' }}>
+                              <FiActivity size={11} /> Recent
+                            </span>
+                          ) : (
+                            <span className="vault-status-pill status-secure">
+                              <FiCheck size={11} /> Synced
+                            </span>
+                          )}
+                        </td>
+                        <td className="col-date">{formatTimeAgo(file.modified)}</td>
+                        <td className="col-actions">
+                          <div className="vault-row-actions">
+                            <button
+                              className="vault-row-btn"
+                              onClick={(e) => { e.stopPropagation(); handleOpenFile(file); }}
+                              title="Open file"
+                            >
+                              <FiExternalLink size={14} />
+                            </button>
+                            <button
+                              className="vault-row-btn btn-danger"
+                              onClick={(e) => { e.stopPropagation(); handleDeleteFile(file.name); }}
+                              title="Remove file"
+                            >
+                              <FiTrash2 size={14} />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {/* Live Preview Drawer */}
+            {previewFile && (
+              <div className="sync-preview-drawer vault-card">
+                <div className="sync-preview-header">
+                  <div className="sync-preview-title">
+                    <span className="preview-icon">{getFileIcon(previewFile)}</span>
+                    <span className="preview-name">{previewFile.name}</span>
+                    <span className="preview-size">{formatBytes(previewFile.size)}</span>
+                  </div>
+                  <div className="sync-preview-actions">
+                    <button className="preview-action-btn" onClick={() => handleOpenFile(previewFile)}>Open</button>
+                    <button className="connect-close-btn" onClick={() => { setPreviewFile(null); setPreviewContent(''); }}><MdClose size={16} /></button>
+                  </div>
+                </div>
+                <div className="sync-preview-content">
+                  {previewLoading ? (
+                    <div className="preview-loading">Loading content…</div>
+                  ) : (
+                    <pre className="preview-text">{previewContent}</pre>
+                  )}
+                </div>
+              </div>
             )}
           </div>
         )}
 
+        {/* ── TAB 2: PAIR & DEVICES ──────────────────────────────────── */}
+        {activeTab === 'devices' && (
+          <div className="sync-devices-tab-view">
+            <div className="sync-devices-layout-grid">
+              {/* Left Card: High-Impact LAN Wi-Fi QR Code */}
+              <div className="vault-card sync-qr-showcase-card" data-tour="sync-qr-code">
+                <div className="showcase-header">
+                  <div className="showcase-title-row">
+                    <FiWifi className="showcase-icon" size={20} />
+                    <span className="showcase-title">LAN Wi-Fi Instant Pair</span>
+                  </div>
+                  <span className="showcase-tag">Direct P2P</span>
+                </div>
+
+                <div className="showcase-qr-stage">
+                  <div className="showcase-qr-box">
+                    {localAddress ? (
+                      <QRCodeCanvas value={qrValue} size={200} bgColor="#ffffff" fgColor="#09090b" includeMargin={true} level="H" />
+                    ) : (
+                      <div className="sync-qr-placeholder">QR unavailable</div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="showcase-info-box">
+                  <div className="showcase-ip-row">
+                    <span className="ip-label">LAN Address:</span>
+                    <span className={`ip-val ${!localAddress && localAddressError ? 'ip-val-error' : ''}`}>
+                      {localAddress || localAddressError || 'Detecting address…'}
+                    </span>
+                    {localAddress && (
+                      <button className="ip-copy-btn" onClick={handleCopyLocalIp} title="Copy Address">
+                        {copiedIp ? <FiCheck size={13} color="var(--color-primary)" /> : <FiCopy size={13} />}
+                      </button>
+                    )}
+                  </div>
+                  <p className="showcase-instruction">
+                    Open IntelliFile on your mobile device connected to the same Wi-Fi network and scan the QR code above.
+                  </p>
+                </div>
+              </div>
+
+              {/* Right Column: Connected Devices & Remote WebRTC */}
+              <div className="sync-pairing-side-col">
+                {/* Active Devices */}
+                <div className="vault-card sync-paired-devices-card">
+                  <div className="sync-card-header">
+                    <span className="sync-card-title">
+                      <FiSmartphone size={16} style={{ marginRight: 6, verticalAlign: 'middle' }} />
+                      Connected Devices
+                    </span>
+                    <span className="vault-count-chip">{connectedDevices.length}</span>
+                  </div>
+
+                  {connectedDevices.length > 0 ? (
+                    <div className="sync-devices-list">
+                      {connectedDevices.map((deviceId, idx) => (
+                        <div key={deviceId} className="sync-device-item">
+                          <span className="sync-device-status-dot" />
+                          <div className="sync-device-details">
+                            <span className="sync-device-name">Mobile Device {idx + 1}</span>
+                            <span className="sync-device-id">ID: {deviceId.substring(0, 10)}…</span>
+                          </div>
+                          <span className="sync-device-active-badge">Active</span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="sync-devices-empty-state">
+                      <FiSmartphone size={28} style={{ opacity: 0.4, marginBottom: 8 }} />
+                      <p>No mobile devices currently paired.</p>
+                      <span>Scan the QR code to connect your first phone or tablet.</span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Remote WebRTC Pairing Option */}
+                <div className="vault-card sync-remote-card">
+                  <div className="sync-card-header">
+                    <span className="sync-card-title">
+                      <FiLink size={16} style={{ marginRight: 6, verticalAlign: 'middle' }} />
+                      Remote WebRTC Pairing
+                    </span>
+                    <span className={`sync-status-pill ${isConnected ? 'status-secure' : ''}`} style={{ fontSize: 10 }}>
+                      {statusCfg.label}
+                    </span>
+                  </div>
+
+                  <div className="connect-form-grid">
+                    <div className="connect-form-group">
+                      <label className="connect-label">Signaling Server URL</label>
+                      <input
+                        type="text"
+                        className="connect-input"
+                        value={signalingUrl}
+                        onChange={e => setSignalingUrl(e.target.value)}
+                        placeholder="wss://your-signaling-server.onrender.com"
+                      />
+                    </div>
+                    <div className="connect-form-group">
+                      <label className="connect-label">Session Code</label>
+                      <div className="connect-session-row">
+                        <input
+                          type="text"
+                          className="connect-input"
+                          value={sessionId}
+                          onChange={e => setSessionId(e.target.value.toUpperCase())}
+                          placeholder="Enter code"
+                        />
+                        <button className="generate-code-btn" onClick={handleGenerateCode}>
+                          Generate
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="connect-role-row">
+                    <label className="connect-label">Role:</label>
+                    <div className="connect-role-toggle">
+                      <button
+                        className={`role-btn ${isInitiator ? 'active' : ''}`}
+                        onClick={() => setIsInitiator(true)}
+                      >
+                        <FiMonitor size={14} style={{ marginRight: 4 }} /> Host (PC)
+                      </button>
+                      <button
+                        className={`role-btn ${!isInitiator ? 'active' : ''}`}
+                        onClick={() => setIsInitiator(false)}
+                      >
+                        <FiSmartphone size={14} style={{ marginRight: 4 }} /> Join
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="connect-actions-row">
+                    {isConnected ? (
+                      <button className="vault-btn-secondary btn-danger-action" onClick={handleDisconnect}>
+                        <FiX size={15} /> Disconnect Remote
+                      </button>
+                    ) : (
+                      <button
+                        className="vault-btn-primary"
+                        onClick={handleConnect}
+                        disabled={!signalingUrl.trim() || !sessionId.trim()}
+                      >
+                        Connect Session
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── TAB 3: ACTIVITY LOGS ───────────────────────────────────── */}
         {activeTab === 'activity' && (
-          <div className="sync-log-container">
-            {syncLogs.length === 0 ? (
-              <div className="sync-empty-state"><p>No sync activity yet. Connect to a mobile device to start syncing.</p></div>
+          <div className="vault-history-wrapper">
+            <div className="vault-stats-strip">
+              <div className="vault-stat-item">
+                <span className="stat-num">{syncLogs.length}</span>
+                <span className="stat-lbl">Total Events</span>
+              </div>
+              <div className="vault-stat-item">
+                <span className="stat-num color-emerald">{files.length}</span>
+                <span className="stat-lbl">Staged Files</span>
+              </div>
+              <div className="vault-stat-item">
+                <span className="stat-num color-blue">{connectedDevices.length}</span>
+                <span className="stat-lbl">Connected Devices</span>
+              </div>
+              <div className="vault-stat-item">
+                <span className="stat-num color-purple">{pendingChanges.length}</span>
+                <span className="stat-lbl">Pending Changes</span>
+              </div>
+            </div>
+
+            {filteredLogs.length === 0 ? (
+              <div className="vault-empty-state">
+                <div className="empty-icon-wrap">
+                  <FiActivity size={36} />
+                </div>
+                <h3 className="empty-title">
+                  {syncLogs.length === 0 ? 'No sync activity recorded' : 'No matching logs found'}
+                </h3>
+                <p className="empty-desc">
+                  {syncLogs.length === 0
+                    ? 'Connect to a mobile device or stage files to start logging sync operations in real-time.'
+                    : 'Try clearing your search query to see all logs.'}
+                </p>
+              </div>
             ) : (
-              <div className="sync-log-list">
-                {syncLogs.map((log, i) => {
-                  const isError = log.includes('Error') || log.includes('⚠');
+              <div className="vault-timeline">
+                {filteredLogs.map((log, idx) => {
+                  const isError = log.includes('Error') || log.includes('failed');
                   const isPending = log.includes('pending') || log.includes('Notified');
                   const isApproved = log.includes('Approved') || log.includes('Synced') || log.includes('confirmed');
-                  let cls = 'log-normal';
-                  if (isError) cls = 'log-error';
-                  else if (isPending) cls = 'log-pending';
-                  else if (isApproved) cls = 'log-approved';
+
+                  const color = isError
+                    ? 'var(--c-error, #ef4444)'
+                    : isPending
+                      ? 'var(--c-warning, #f59e0b)'
+                      : isApproved
+                        ? 'var(--color-primary, #10b981)'
+                        : 'var(--c-info, #0284c7)';
+                  const bgColor = isError
+                    ? 'var(--c-error-soft, rgba(239, 68, 68, 0.12))'
+                    : isPending
+                      ? 'var(--c-warning-soft, rgba(245, 158, 11, 0.12))'
+                      : isApproved
+                        ? 'var(--c-brand-soft, rgba(16, 185, 129, 0.12))'
+                        : 'rgba(2, 132, 199, 0.12)';
 
                   return (
-                    <div key={i} className={`sync-log-entry ${cls}`}>{log}</div>
+                    <div key={idx} className="vault-timeline-card">
+                      <div className="timeline-badge" style={{ color, backgroundColor: bgColor }}>
+                        <FiActivity size={13} />
+                        <span className="timeline-badge-text">
+                          {isError ? 'Error' : isPending ? 'Pending' : isApproved ? 'Synced' : 'Event'}
+                        </span>
+                      </div>
+
+                      <div className="timeline-info">
+                        <div className="timeline-filename" title={log}>
+                          {log}
+                        </div>
+                      </div>
+
+                      <div className="timeline-meta">
+                        <button
+                          className="timeline-copy-btn"
+                          onClick={() => handleCopyLog(log, idx)}
+                          title="Copy log entry"
+                        >
+                          {copiedLogIndex === idx ? <FiCheck size={13} color="var(--color-primary)" /> : <MdContentCopy size={13} />}
+                        </button>
+                      </div>
+                    </div>
                   );
                 })}
               </div>
             )}
-          </div>
-        )}
-
-        {/* Live preview panel */}
-        {previewFile && activeTab === 'files' && (
-          <div className="sync-preview-panel">
-            <div className="sync-preview-header">
-              <div className="sync-preview-title">
-                <span className="preview-icon">📄</span>
-                <span className="preview-name">{previewFile.name}</span>
-                <span className="preview-size">{formatBytes(previewFile.size)}</span>
-              </div>
-              <div className="sync-preview-actions">
-                <button className="preview-action-btn" onClick={() => handleOpenFile(previewFile)} title="Open with default app">Open</button>
-                <button className="preview-close-btn" onClick={() => { setPreviewFile(null); setPreviewContent(''); }}>×</button>
-              </div>
-            </div>
-            <div className="sync-preview-content">
-              {previewLoading ? (
-                <div className="preview-loading">Loading content...</div>
-              ) : (
-                <pre className="preview-text">{previewContent}</pre>
-              )}
-            </div>
-            <div className="sync-preview-footer">
-              <span>Last modified: {formatTimeAgo(previewFile.modified)}</span>
-              <span className="preview-auto-refresh">Auto-refreshing</span>
-            </div>
           </div>
         )}
       </div>

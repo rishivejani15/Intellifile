@@ -11,6 +11,9 @@ DEFAULT_SETTINGS = {
     "index_enabled": "true",
     "telemetry_enabled": "false",
     "auto_update_wifi": "false",
+    "auto_model_upgrade": "true",
+    "active_model_version": "v1.0.0",
+    "active_index_version": "v1.0.0",
     "theme": "system",
 }
 

@@ -79,6 +79,9 @@ contextBridge.exposeInMainWorld('intellifile', {
   getLocalSyncAddress: () => {
     return ipcRenderer.invoke('get-local-sync-address');
   },
+  getSyncServerStatus: () => {
+    return ipcRenderer.invoke('get-sync-server-status');
+  },
 
   onIndexComplete: (callback) => {
     const handler = (_event, data) => callback(data);
@@ -234,6 +237,24 @@ contextBridge.exposeInMainWorld('intellifile', {
   },
   getAnalyticsSummary: () => {
     return ipcRenderer.invoke('analytics:summary');
+  },
+  getStorageSummary: (forceRefresh) => {
+    return ipcRenderer.invoke('storage:get-summary', forceRefresh);
+  },
+  getLargestFiles: () => {
+    return ipcRenderer.invoke('storage:get-largest-files');
+  },
+  getFolderBreakdown: () => {
+    return ipcRenderer.invoke('storage:get-folder-breakdown');
+  },
+  cleanTempCache: () => {
+    return ipcRenderer.invoke('storage:clean-temp-cache');
+  },
+  showItemInFolder: (filePath) => {
+    return ipcRenderer.invoke('shell:show-item-in-folder', filePath);
+  },
+  deleteStorageFile: (filePath) => {
+    return ipcRenderer.invoke('storage:delete-file', filePath);
   },
   clearAnalytics: () => {
     return ipcRenderer.invoke('analytics:clear');

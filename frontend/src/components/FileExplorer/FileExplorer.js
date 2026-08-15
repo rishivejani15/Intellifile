@@ -24,7 +24,7 @@ import './FileExplorer.css';
 
 
 const ipcRenderer = window.electron?.ipcRenderer;
-const VERSIONING_BLOCKED_EXTENSIONS = new Set(['.zip', '.ppt', '.pptx', '.pptm']);
+const VERSIONING_BLOCKED_EXTENSIONS = new Set(['.zip', '.ppt', '.pptx', '.pptm', '.pak', '.bin', '.backup']);
 
 function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWithAI }) {
   // UI State
@@ -38,7 +38,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
         const parsed = JSON.parse(saved);
         if (parsed.viewMode) return parsed.viewMode;
       }
-    } catch (_) {}
+    } catch (_) { }
     return 'icons';
   });
 
@@ -49,7 +49,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
         const parsed = JSON.parse(saved);
         if (parsed.sortBy) return parsed.sortBy;
       }
-    } catch (_) {}
+    } catch (_) { }
     return 'name';
   });
 
@@ -60,7 +60,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
         const parsed = JSON.parse(saved);
         if (parsed.sortDirection) return parsed.sortDirection;
       }
-    } catch (_) {}
+    } catch (_) { }
     return 'asc';
   });
 
@@ -71,7 +71,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
         const parsed = JSON.parse(saved);
         if (parsed.groupBy) return parsed.groupBy;
       }
-    } catch (_) {}
+    } catch (_) { }
     return 'none';
   });
 
@@ -84,7 +84,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
         sortDirection,
         groupBy
       }));
-    } catch (_) {}
+    } catch (_) { }
   }, [viewMode, sortBy, sortDirection, groupBy]);
   const [showHidden, setShowHidden] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -201,6 +201,59 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
   // Search abort ref — incremented on each search to cancel stale requests
   const searchIdRef = useRef(0);
   const searchDebounceRef = useRef(null);
+
+  // Handle internal Reveal File event from Settings / Storage
+  useEffect(() => {
+    const handleRevealFile = async (e) => {
+      const rawPath = e.detail?.filePath || e.detail?.path;
+      if (!rawPath) return;
+
+      let targetPath = String(rawPath).trim();
+      const norm = targetPath.replace(/\\/g, '/');
+
+      let parentDir = targetPath;
+      let fileName = null;
+
+      // Determine if target is a file or folder
+      let isFile = false;
+      try {
+        const details = await ipcRenderer?.invoke('get-file-details', targetPath);
+        if (details?.success && details.details?.type === 'file') {
+          isFile = true;
+        }
+      } catch (_) { }
+
+      if (!isFile) {
+        const lastSep = norm.lastIndexOf('/');
+        const lastDot = norm.lastIndexOf('.');
+        if (lastDot > lastSep && lastSep > 0) {
+          isFile = true;
+        }
+      }
+
+      if (isFile) {
+        const lastSep = norm.lastIndexOf('/');
+        if (lastSep > 0) {
+          parentDir = targetPath.substring(0, lastSep);
+          fileName = targetPath.substring(lastSep + 1);
+        }
+      }
+
+      // Handle drive roots like "C:" -> "C:\"
+      if (/^[a-zA-Z]:$/.test(parentDir)) {
+        parentDir += '\\';
+      }
+
+      console.log('[FileExplorer] Revealing target in app:', { targetPath, parentDir, fileName });
+
+      if (loadDirectoryRef.current) {
+        loadDirectoryRef.current(parentDir, { selectFile: fileName, trackHistory: true });
+      }
+    };
+
+    window.addEventListener('intellifile-reveal-file', handleRevealFile);
+    return () => window.removeEventListener('intellifile-reveal-file', handleRevealFile);
+  }, [ipcRenderer]);
 
   // Stable refs for callbacks used inside the watch effect.
   // This prevents the effect from re-running (and recreating the chokidar
@@ -391,6 +444,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
 
   // Load directory with filtering and sorting
   const loadDirectory = useCallback(async (dirPath, options = {}) => {
+    loadDirectoryRef.current = loadDirectory;
     const { soft = false, trackHistory = true, tabId = null, selectFile = null, suppressLoading = false } = options;
     const normalizedPath = (dirPath || '').replace(/[\\/]+$/, '');
     const loadKey = `${normalizedPath}::${soft ? 'soft' : 'full'}::${suppressLoading ? 'suppress' : 'show'}`;
@@ -509,7 +563,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
               // Notify sidebar to track this folder visit for "Frequently used"
               try {
                 window.dispatchEvent(new CustomEvent('intellifile-folder-visited', { detail: { path: actualPath } }));
-              } catch (_) {}
+              } catch (_) { }
             }
 
             let selected = null;
@@ -877,7 +931,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
     if (!item) return;
     if (item.type === 'folder' || item.type === 'drive') {
       setShowPreview(false);
-      loadDirectory(item.path, { soft: true, trackHistory: true });
+      loadDirectory(item.path);
     } else if (item.type === 'file') {
       openFileWithDefaultApp(item.path);
     }
@@ -1003,7 +1057,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
           const escapedPath = (match.path || '').replace(/\\/g, '\\\\').replace(/"/g, '\\"');
           const el = document.querySelector(`[data-path="${escapedPath}"]`);
           el?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-        } catch (_) {}
+        } catch (_) { }
       }, 50);
     }
   }, [renamingItem, displayItems, lastSelectedIndex]);
@@ -1430,7 +1484,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
       try {
         const data = e.dataTransfer.getData('application/json') || e.dataTransfer.getData('text/plain');
         paths = JSON.parse(data || '[]');
-      } catch (_) {}
+      } catch (_) { }
 
       if (Array.isArray(paths) && paths.length > 0) {
         setMoveModalData({
@@ -1485,6 +1539,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
     lastSelectedIndex, setLastSelectedIndex,
     handleCopy, handleCut, handlePaste, handleDelete, handleRename, handleCreateFolder,
     handleBack, handleForward, handleUp, handleRefresh, handleUndo, handleRedo,
+    handleOpen,
     onCharacterType: handleCharacterType,
     setSelectedItems, setSelectedItem, setRenamingItem, setRenameValue, setShowContextMenu
   });
@@ -1796,7 +1851,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
     const handleMouseMove = (e) => {
       const newWidth = Math.max(180, Math.min(e.clientX, 450));
       setSidebarWidth(newWidth);
-      try { localStorage.setItem('intellifile-sidebar-width', String(newWidth)); } catch {}
+      try { localStorage.setItem('intellifile-sidebar-width', String(newWidth)); } catch { }
     };
 
     const handleMouseUp = () => {
@@ -1814,7 +1869,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
   const handleToggleSidebar = () => {
     setShowSidebar(prev => {
       const next = !prev;
-      try { localStorage.setItem('intellifile-show-sidebar', String(next)); } catch {}
+      try { localStorage.setItem('intellifile-show-sidebar', String(next)); } catch { }
       return next;
     });
   };
@@ -2051,17 +2106,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
             </div>
           </div>
           <div className="versioning-body">
-            {!canVersionItem(selectedItem) ? (
-              <div className="versioning-empty-state">
-                <h4>Version history is not available for this file type.</h4>
-                <p>
-                  ZIP and PowerPoint files are excluded from versioning because they are archive/presentation formats and
-                  cannot be compared reliably here.
-                </p>
-              </div>
-            ) : (
-              <VersionTimeline filePath={selectedItem.path} />
-            )}
+            <VersionTimeline filePath={selectedItem.path} />
           </div>
         </div>
       )}

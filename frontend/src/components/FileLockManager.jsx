@@ -1,9 +1,11 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   MdLock, MdLockOpen, MdVpnKey, MdOutlineVisibility, MdHistory, MdFolder,
-  MdSearch, MdViewModule, MdViewList, MdFilterList, MdContentCopy, MdCheck, MdAccessTime, MdSecurity,
-  MdEdit, MdDelete
+  MdSearch, MdViewModule, MdViewList, MdFilterList, MdContentCopy, MdCheck,
+  MdAccessTime, MdSecurity, MdEdit, MdDelete, MdClose, MdWarningAmber,
+  MdAdd
 } from 'react-icons/md';
+import { getFileIcon } from '../utils/fileUtils';
 import FileLockModal from './FileLockModal';
 import VaultFilePicker from './VaultFilePicker';
 import './FileLockManager.css';
@@ -57,7 +59,6 @@ function FileLockManager() {
   }, [activeTab, refresh]);
 
   const handleLockNewFile = () => {
-    // Open IntelliFile's in-app file picker instead of native OS dialog
     setShowFilePicker(true);
   };
 
@@ -155,33 +156,29 @@ function FileLockManager() {
         return {
           label: 'Locked',
           icon: <MdLock size={14} />,
-          color: '#ef4444',
-          bgColor: 'rgba(239, 68, 68, 0.12)',
-          borderColor: 'rgba(239, 68, 68, 0.25)',
+          color: 'var(--c-error, #ef4444)',
+          bgColor: 'var(--c-error-soft, rgba(239, 68, 68, 0.12))',
         };
       case 'unlocked':
         return {
           label: 'Unlocked',
           icon: <MdLockOpen size={14} />,
-          color: '#10b981',
-          bgColor: 'rgba(16, 185, 129, 0.12)',
-          borderColor: 'rgba(16, 185, 129, 0.25)',
+          color: 'var(--color-primary, #10b981)',
+          bgColor: 'var(--c-brand-soft, rgba(16, 185, 129, 0.12))',
         };
       case 'accessed':
         return {
           label: 'Accessed',
           icon: <MdOutlineVisibility size={14} />,
-          color: '#0284c7',
+          color: 'var(--c-info, #0284c7)',
           bgColor: 'rgba(2, 132, 199, 0.12)',
-          borderColor: 'rgba(2, 132, 199, 0.25)',
         };
       case 'password_changed':
         return {
           label: 'Password Changed',
           icon: <MdVpnKey size={14} />,
-          color: '#f59e0b',
-          bgColor: 'rgba(245, 158, 11, 0.12)',
-          borderColor: 'rgba(245, 158, 11, 0.25)',
+          color: 'var(--c-warning, #f59e0b)',
+          bgColor: 'var(--c-warning-soft, rgba(245, 158, 11, 0.12))',
         };
       default:
         return {
@@ -189,7 +186,6 @@ function FileLockManager() {
           icon: <MdHistory size={14} />,
           color: 'var(--t-secondary)',
           bgColor: 'var(--s-elev)',
-          borderColor: 'var(--bo-light)',
         };
     }
   };
@@ -221,21 +217,6 @@ function FileLockManager() {
       entry.originalExt?.toLowerCase().includes(q)
     );
   });
-
-  const getFileIcon = (ext) => {
-    const icons = {
-      '.pdf': '📕', '.doc': '📘', '.docx': '📘', '.txt': '📄', '.md': '📝',
-      '.xls': '📗', '.xlsx': '📗', '.csv': '📊', '.ppt': '📙', '.pptx': '📙',
-      '.jpg': '🖼️', '.jpeg': '🖼️', '.png': '🖼️', '.gif': '🖼️', '.svg': '🎨',
-      '.mp4': '🎬', '.avi': '🎬', '.mkv': '🎬', '.mov': '🎬',
-      '.mp3': '🎵', '.wav': '🎵', '.flac': '🎵',
-      '.zip': '🗜️', '.rar': '🗜️', '.7z': '🗜️',
-      '.js': '⚡', '.ts': '💎', '.py': '🐍', '.html': '🌐', '.css': '🎨',
-      '.json': '📋', '.xml': '📋', '.yaml': '📋', '.yml': '📋',
-      '.exe': '⚙️', '.msi': '⚙️', '.dll': '🔧',
-    };
-    return icons[ext?.toLowerCase()] || '📄';
-  };
 
   const formatFileSize = (bytes) => {
     if (!bytes && bytes !== 0) return '—';
@@ -270,413 +251,404 @@ function FileLockManager() {
   if (loading) {
     return (
       <div className="flm-container">
-        <div className="flm-loading">
-          <div className="flm-loading-spinner" />
+        <div className="vault-loading-state">
+          <div className="vault-spinner" />
           <span>Loading vault…</span>
         </div>
       </div>
     );
   }
 
+  const lockedCount = Object.keys(lockedFiles).length;
+
   return (
     <div className="flm-container">
-      {/* Header */}
-      <div className="flm-header" data-tour="vault-tools">
-        <div className="flm-header-left">
-          <div className="flm-header-icon-wrapper">
-            <MdLock className="flm-header-icon" />
+      {/* Minimalist Top Header (matching Explorer & Settings) */}
+      <header className="vault-header" data-tour="vault-tools">
+        <div className="vault-header-left">
+          <div className="vault-icon-badge">
+            <MdSecurity size={20} />
           </div>
-          <div>
-            <div className="flm-header-eyebrow"><MdSecurity size={14} /> PRIVATE &amp; LOCAL</div>
-            <h2 className="flm-header-title">File Vault</h2>
-            <div className="flm-header-subtitle">
-              <span className="flm-secured-badge">
-                🛡️ {Object.keys(lockedFiles).length} file{Object.keys(lockedFiles).length !== 1 ? 's' : ''} secured
+          <div className="vault-title-group">
+            <div className="vault-title-line">
+              <h2 className="vault-title">File Vault</h2>
+              <span className="vault-count-chip">
+                <MdLock size={12} />
+                <span>{lockedCount} {lockedCount === 1 ? 'file' : 'files'}</span>
               </span>
-              <span className="flm-header-description">Your protected files are encrypted and managed on this device.</span>
             </div>
+            <p className="vault-subtitle">Local AES-256 encrypted file protection</p>
           </div>
         </div>
-        <div className="flm-header-actions">
-          <div className="flm-header-stat">
-            <span className="flm-header-stat-value">{history.length}</span>
-            <span className="flm-header-stat-label">security events</span>
-          </div>
-          <button className="flm-btn-lock-new" onClick={handleLockNewFile}>
-            <MdLock size={16} /> Lock New File
-          </button>
-        </div>
-      </div>
 
-      {/* Tabs */}
-      <div className="flm-tabs-container">
-        <div className="flm-tabs">
+        {/* Segmented Native Tabs */}
+        <div className="vault-tabs-segmented">
           <button
-            className={`flm-tab ${activeTab === 'files' ? 'active' : ''}`}
+            className={`vault-tab-pill ${activeTab === 'files' ? 'active' : ''}`}
             onClick={() => setActiveTab('files')}
           >
-            <MdFolder className="flm-tab-icon" />
+            <MdFolder size={16} />
             <span>Locked Files</span>
-            <span className="flm-tab-count">{Object.keys(lockedFiles).length}</span>
+            <span className="pill-count">{lockedCount}</span>
           </button>
           <button
-            className={`flm-tab ${activeTab === 'history' ? 'active' : ''}`}
+            className={`vault-tab-pill ${activeTab === 'history' ? 'active' : ''}`}
             onClick={() => setActiveTab('history')}
           >
-            <MdHistory className="flm-tab-icon" />
-            <span>History</span>
-            <span className="flm-tab-count">{history.length}</span>
+            <MdHistory size={16} />
+            <span>Activity Log</span>
+            <span className="pill-count">{history.length}</span>
           </button>
         </div>
+
+        {/* Primary Header Action */}
+        <div className="vault-header-actions">
+          <button className="vault-btn-primary" onClick={handleLockNewFile}>
+            <MdAdd size={17} />
+            <span>Lock File</span>
+          </button>
+        </div>
+      </header>
+
+      {/* Minimalist Filter & Search Toolbar */}
+      <div className="vault-toolbar">
+        <div className="vault-search-wrapper">
+          <MdSearch className="vault-search-icon" size={17} />
+          <input
+            className="vault-search-input"
+            type="text"
+            placeholder={activeTab === 'files' ? "Search locked files…" : "Search activity by name or path…"}
+            value={activeTab === 'files' ? searchQuery : historySearch}
+            onChange={(e) => activeTab === 'files' ? setSearchQuery(e.target.value) : setHistorySearch(e.target.value)}
+          />
+          {(activeTab === 'files' ? searchQuery : historySearch) && (
+            <button
+              className="vault-search-clear-btn"
+              onClick={() => activeTab === 'files' ? setSearchQuery('') : setHistorySearch('')}
+              title="Clear search"
+            >
+              <MdClose size={14} />
+            </button>
+          )}
+        </div>
+
+        {activeTab === 'files' ? (
+          <div className="vault-view-toggle">
+            <button
+              className={`vault-view-btn ${viewMode === 'grid' ? 'active' : ''}`}
+              onClick={() => setViewMode('grid')}
+              title="Grid view"
+            >
+              <MdViewModule size={18} />
+            </button>
+            <button
+              className={`vault-view-btn ${viewMode === 'list' ? 'active' : ''}`}
+              onClick={() => setViewMode('list')}
+              title="List view"
+            >
+              <MdViewList size={18} />
+            </button>
+          </div>
+        ) : (
+          <div className="vault-filter-dropdown">
+            <MdFilterList size={16} className="filter-icon" />
+            <select
+              className="vault-select"
+              value={historyFilter}
+              onChange={(e) => setHistoryFilter(e.target.value)}
+            >
+              <option value="all">All Actions</option>
+              <option value="locked">Locked</option>
+              <option value="unlocked">Unlocked</option>
+              <option value="accessed">Accessed</option>
+              <option value="password_changed">Password Changed</option>
+            </select>
+          </div>
+        )}
       </div>
 
-      {/* Files Tab */}
-      {activeTab === 'files' && (
-        <>
-          {/* Toolbar */}
-          {Object.keys(lockedFiles).length > 0 && (
-            <div className="flm-toolbar">
-              <div className="flm-search-wrapper">
-                <MdSearch className="flm-search-icon" />
-                <input
-                  className="flm-search-input"
-                  type="text"
-                  placeholder="Search locked files…"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                />
-                {searchQuery && (
-                  <button className="flm-search-clear" onClick={() => setSearchQuery('')}>✕</button>
+      {/* Main Content Body */}
+      <div className="vault-content-body">
+        {/* ── Files Tab ──────────────────────────────────────────────── */}
+        {activeTab === 'files' && (
+          <>
+            {filteredFiles.length === 0 ? (
+              <div className="vault-empty-state">
+                <div className="empty-icon-wrap">
+                  <MdLock size={36} />
+                </div>
+                <h3 className="empty-title">
+                  {searchQuery ? 'No matching files found' : 'Your vault is empty'}
+                </h3>
+                <p className="empty-desc">
+                  {searchQuery
+                    ? 'No encrypted files match your search query.'
+                    : 'Encrypted files are protected locally with your password and recovery key. Click below to add files to your vault.'}
+                </p>
+                {!searchQuery && (
+                  <button className="vault-btn-primary empty-action-btn" onClick={handleLockNewFile}>
+                    <MdAdd size={16} /> Lock Your First File
+                  </button>
                 )}
               </div>
-              <div className="flm-view-toggle">
-                <button
-                  className={`flm-view-btn ${viewMode === 'grid' ? 'active' : ''}`}
-                  onClick={() => setViewMode('grid')}
-                  title="Grid view"
-                >
-                  <MdViewModule />
-                </button>
-                <button
-                  className={`flm-view-btn ${viewMode === 'list' ? 'active' : ''}`}
-                  onClick={() => setViewMode('list')}
-                  title="List view"
-                >
-                  <MdViewList />
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* Empty State */}
-          {filteredFiles.length === 0 && (
-            <div className="flm-empty">
-              <MdLock className="flm-empty-icon" />
-              <h3 className="flm-empty-title">
-                {searchQuery ? 'No matching files' : 'Your vault is empty'}
-              </h3>
-              <p className="flm-empty-desc">
-                {searchQuery
-                  ? 'Try a different search term.'
-                  : 'Lock files to encrypt them and keep them secure. Right-click any file in the explorer and select "Lock File", or click the button above.'}
-              </p>
-              {!searchQuery && (
-                <button className="flm-btn-lock-new flm-empty-btn" onClick={handleLockNewFile}>
-                  <MdLock size={16} /> Lock Your First File
-                </button>
-              )}
-            </div>
-          )}
-
-          {/* Grid View */}
-          {filteredFiles.length > 0 && viewMode === 'grid' && (
-            <div className="flm-grid">
-              {filteredFiles.map(([fileId, entry]) => (
-                <div key={fileId} className={`flm-card ${!entry.fileExists ? 'missing' : ''}`}>
-                  <div className="flm-card-header">
-                    <div className="flm-card-icon">
-                      {getFileIcon(entry.originalExt)}
-                      <span className="flm-card-lock-badge"><MdLock size={10} /></span>
+            ) : viewMode === 'grid' ? (
+              /* Grid View */
+              <div className="vault-grid">
+                {filteredFiles.map(([fileId, entry]) => (
+                  <div key={fileId} className={`vault-card ${!entry.fileExists ? 'is-missing' : ''}`}>
+                    <div className="vault-card-top">
+                      <div className="vault-card-icon">
+                        {getFileIcon({ ext: entry.originalExt, name: entry.originalName, type: 'file' })}
+                        <span className="vault-card-lock-badge" title="Encrypted">
+                          <MdLock size={10} />
+                        </span>
+                      </div>
+                      {entry.fileExists ? (
+                        <span className="vault-status-pill status-secure">
+                          <MdSecurity size={11} /> Secured
+                        </span>
+                      ) : (
+                        <span className="vault-status-pill status-missing">
+                          <MdWarningAmber size={11} /> Missing
+                        </span>
+                      )}
                     </div>
-                    {entry.fileExists ? (
-                      <span className="flm-card-status-badge status-encrypted">
-                        <MdSecurity size={12} /> Secured
-                      </span>
-                    ) : (
-                      <span className="flm-card-status-badge status-missing">
-                        ⚠️ Missing
-                      </span>
-                    )}
-                  </div>
 
-                  <div className="flm-card-info">
-                    <div className="flm-card-name" title={entry.originalName}>
-                      {entry.originalName}
+                    <div className="vault-card-info">
+                      <div className="vault-card-title" title={entry.originalName}>
+                        {entry.originalName}
+                      </div>
+                      <div className="vault-card-meta">
+                        <span>{formatFileSize(entry.originalSize)}</span>
+                        <span className="meta-dot">•</span>
+                        <span>{formatDate(entry.lockedAt)}</span>
+                      </div>
                     </div>
-                    <div className="flm-card-meta">
-                      {formatFileSize(entry.originalSize)} · {formatDate(entry.lockedAt)}
+
+                    <div className="vault-card-actions">
+                      <button
+                        className="vault-card-btn"
+                        onClick={() => handleAccessFile(fileId, entry)}
+                        disabled={!entry.fileExists}
+                        title="Open file"
+                      >
+                        <MdOutlineVisibility size={15} />
+                      </button>
+                      <button
+                        className="vault-card-btn"
+                        onClick={() => handleUnlockFile(fileId, entry)}
+                        disabled={!entry.fileExists}
+                        title="Unlock file"
+                      >
+                        <MdLockOpen size={15} />
+                      </button>
+                      <button
+                        className="vault-card-btn"
+                        onClick={() => handleChangePassword(fileId, entry)}
+                        disabled={!entry.fileExists}
+                        title="Change password"
+                      >
+                        <MdVpnKey size={15} />
+                      </button>
+                      <button
+                        className="vault-card-btn"
+                        onClick={() => handleRenameLockedFile(fileId, entry)}
+                        disabled={!entry.fileExists}
+                        title="Rename file"
+                      >
+                        <MdEdit size={15} />
+                      </button>
+                      <button
+                        className="vault-card-btn btn-danger"
+                        onClick={() => handleDeleteLockedFile(fileId, entry)}
+                        disabled={!entry.fileExists}
+                        title="Delete file"
+                      >
+                        <MdDelete size={15} />
+                      </button>
                     </div>
                   </div>
-
-                  <div className="flm-card-actions">
-                    <button
-                      className="flm-card-btn flm-card-btn-open"
-                      onClick={() => handleAccessFile(fileId, entry)}
-                      disabled={!entry.fileExists}
-                      title="Open file"
-                    >
-                      <MdOutlineVisibility />
-                    </button>
-                    <button
-                      className="flm-card-btn flm-card-btn-unlock"
-                      onClick={() => handleUnlockFile(fileId, entry)}
-                      disabled={!entry.fileExists}
-                      title="Unlock file"
-                    >
-                      <MdLockOpen />
-                    </button>
-                    <button
-                      className="flm-card-btn flm-card-btn-password"
-                      onClick={() => handleChangePassword(fileId, entry)}
-                      disabled={!entry.fileExists}
-                      title="Change password"
-                    >
-                      <MdVpnKey />
-                    </button>
-                    <button
-                      className="flm-card-btn flm-card-btn-rename"
-                      onClick={() => handleRenameLockedFile(fileId, entry)}
-                      disabled={!entry.fileExists}
-                      title="Rename locked file"
-                    >
-                      <MdEdit />
-                    </button>
-                    <button
-                      className="flm-card-btn flm-card-btn-delete"
-                      onClick={() => handleDeleteLockedFile(fileId, entry)}
-                      disabled={!entry.fileExists}
-                      title="Delete locked file"
-                    >
-                      <MdDelete />
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* List View */}
-          {filteredFiles.length > 0 && viewMode === 'list' && (
-            <div className="flm-list">
-              <div className="flm-list-header">
-                <span className="flm-list-col flm-list-col-name">Name</span>
-                <span className="flm-list-col flm-list-col-size">Size</span>
-                <span className="flm-list-col flm-list-col-type">Type</span>
-                <span className="flm-list-col flm-list-col-date">Locked</span>
-                <span className="flm-list-col flm-list-col-actions">Actions</span>
+                ))}
               </div>
-              {filteredFiles.map(([fileId, entry]) => (
-                <div key={fileId} className={`flm-list-row ${!entry.fileExists ? 'missing' : ''}`}>
-                  <span className="flm-list-col flm-list-col-name">
-                    <span className="flm-list-icon">{getFileIcon(entry.originalExt)}</span>
-                    <span className="flm-list-filename" title={entry.originalPath}>
-                      {entry.originalName}
-                    </span>
-                    {!entry.fileExists && <span className="flm-list-missing-badge">Missing</span>}
-                  </span>
-                  <span className="flm-list-col flm-list-col-size">
-                    {formatFileSize(entry.originalSize)}
-                  </span>
-                  <span className="flm-list-col flm-list-col-type">
-                    {entry.originalExt || '—'}
-                  </span>
-                  <span className="flm-list-col flm-list-col-date">
-                    {formatDate(entry.lockedAt)}
-                  </span>
-                  <span className="flm-list-col flm-list-col-actions">
-                    <button
-                      className="flm-card-btn flm-card-btn-open"
-                      onClick={() => handleAccessFile(fileId, entry)}
-                      disabled={!entry.fileExists}
-                      title="Open"
-                    >
-                      <MdOutlineVisibility />
-                    </button>
-                    <button
-                      className="flm-card-btn flm-card-btn-unlock"
-                      onClick={() => handleUnlockFile(fileId, entry)}
-                      disabled={!entry.fileExists}
-                      title="Unlock"
-                    >
-                      <MdLockOpen />
-                    </button>
-                    <button
-                      className="flm-card-btn flm-card-btn-password"
-                      onClick={() => handleChangePassword(fileId, entry)}
-                      disabled={!entry.fileExists}
-                      title="Change password"
-                    >
-                      <MdVpnKey />
-                    </button>
-                    <button
-                      className="flm-card-btn flm-card-btn-rename"
-                      onClick={() => handleRenameLockedFile(fileId, entry)}
-                      disabled={!entry.fileExists}
-                      title="Rename"
-                    >
-                      <MdEdit />
-                    </button>
-                    <button
-                      className="flm-card-btn flm-card-btn-delete"
-                      onClick={() => handleDeleteLockedFile(fileId, entry)}
-                      disabled={!entry.fileExists}
-                      title="Delete"
-                    >
-                      <MdDelete />
-                    </button>
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
-        </>
-      )}
-
-      {/* History Tab */}
-      {activeTab === 'history' && (
-        <div className="flm-history">
-          <div className="flm-history-wrapper">
-            {/* Stats Overview Bar */}
-            <div className="flm-history-stats">
-              <div className="flm-stat-card">
-                <div className="flm-stat-icon flm-stat-total"><MdHistory size={18} /></div>
-                <div className="flm-stat-info">
-                  <span className="flm-stat-value">{historyStats.total}</span>
-                  <span className="flm-stat-label">Total Events</span>
-                </div>
-              </div>
-              <div className="flm-stat-card">
-                <div className="flm-stat-icon flm-stat-locked"><MdLock size={18} /></div>
-                <div className="flm-stat-info">
-                  <span className="flm-stat-value">{historyStats.currentlyLocked}</span>
-                  <span className="flm-stat-label">Currently Secured</span>
-                </div>
-              </div>
-              <div className="flm-stat-card">
-                <div className="flm-stat-icon flm-stat-unlocked"><MdLockOpen size={18} /></div>
-                <div className="flm-stat-info">
-                  <span className="flm-stat-value">{historyStats.unlocked}</span>
-                  <span className="flm-stat-label">Unlocked</span>
-                </div>
-              </div>
-              <div className="flm-stat-card">
-                <div className="flm-stat-icon flm-stat-accessed"><MdOutlineVisibility size={18} /></div>
-                <div className="flm-stat-info">
-                  <span className="flm-stat-value">{historyStats.accessed}</span>
-                  <span className="flm-stat-label">Accessed</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Toolbar for History */}
-            {history.length > 0 && (
-              <div className="flm-history-toolbar">
-                <div className="flm-search-wrapper">
-                  <MdSearch className="flm-search-icon" />
-                  <input
-                    className="flm-search-input"
-                    type="text"
-                    placeholder="Search history by file name or path…"
-                    value={historySearch}
-                    onChange={(e) => setHistorySearch(e.target.value)}
-                  />
-                  {historySearch && (
-                    <button className="flm-search-clear" onClick={() => setHistorySearch('')}>✕</button>
-                  )}
-                </div>
-
-                <div className="flm-history-filter-group">
-                  <MdFilterList className="flm-filter-icon" />
-                  <select
-                    className="flm-history-select"
-                    value={historyFilter}
-                    onChange={(e) => setHistoryFilter(e.target.value)}
-                  >
-                    <option value="all">All Actions</option>
-                    <option value="locked">Locked</option>
-                    <option value="unlocked">Unlocked</option>
-                    <option value="accessed">Accessed</option>
-                    <option value="password_changed">Password Changed</option>
-                  </select>
-                </div>
+            ) : (
+              /* List / Table View (matching File Explorer Details) */
+              <div className="vault-table-container">
+                <table className="vault-table">
+                  <thead>
+                    <tr>
+                      <th className="col-name">Name</th>
+                      <th className="col-path">Original Location</th>
+                      <th className="col-size">Size</th>
+                      <th className="col-status">Status</th>
+                      <th className="col-date">Locked</th>
+                      <th className="col-actions">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredFiles.map(([fileId, entry]) => (
+                      <tr key={fileId} className={`vault-table-row ${!entry.fileExists ? 'is-missing' : ''}`}>
+                        <td className="col-name">
+                          <div className="vault-table-file-cell">
+                            <span className="vault-table-icon">
+                              {getFileIcon({ ext: entry.originalExt, name: entry.originalName, type: 'file' })}
+                            </span>
+                            <span className="vault-table-filename" title={entry.originalName}>
+                              {entry.originalName}
+                            </span>
+                          </div>
+                        </td>
+                        <td className="col-path">
+                          <span className="vault-table-path-text" title={entry.originalPath}>
+                            {entry.originalPath || '—'}
+                          </span>
+                        </td>
+                        <td className="col-size">{formatFileSize(entry.originalSize)}</td>
+                        <td className="col-status">
+                          {entry.fileExists ? (
+                            <span className="vault-status-pill status-secure">
+                              <MdSecurity size={11} /> Secured
+                            </span>
+                          ) : (
+                            <span className="vault-status-pill status-missing">
+                              <MdWarningAmber size={11} /> Missing
+                            </span>
+                          )}
+                        </td>
+                        <td className="col-date">{formatDate(entry.lockedAt)}</td>
+                        <td className="col-actions">
+                          <div className="vault-row-actions">
+                            <button
+                              className="vault-row-btn"
+                              onClick={() => handleAccessFile(fileId, entry)}
+                              disabled={!entry.fileExists}
+                              title="Open file"
+                            >
+                              <MdOutlineVisibility size={14} />
+                            </button>
+                            <button
+                              className="vault-row-btn"
+                              onClick={() => handleUnlockFile(fileId, entry)}
+                              disabled={!entry.fileExists}
+                              title="Unlock file"
+                            >
+                              <MdLockOpen size={14} />
+                            </button>
+                            <button
+                              className="vault-row-btn"
+                              onClick={() => handleChangePassword(fileId, entry)}
+                              disabled={!entry.fileExists}
+                              title="Change password"
+                            >
+                              <MdVpnKey size={14} />
+                            </button>
+                            <button
+                              className="vault-row-btn"
+                              onClick={() => handleRenameLockedFile(fileId, entry)}
+                              disabled={!entry.fileExists}
+                              title="Rename file"
+                            >
+                              <MdEdit size={14} />
+                            </button>
+                            <button
+                              className="vault-row-btn btn-danger"
+                              onClick={() => handleDeleteLockedFile(fileId, entry)}
+                              disabled={!entry.fileExists}
+                              title="Delete file"
+                            >
+                              <MdDelete size={14} />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             )}
+          </>
+        )}
 
-            {/* Empty State */}
-            {filteredHistory.length === 0 && (
-              <div className="flm-empty">
-                <MdHistory className="flm-empty-icon" />
-                <h3 className="flm-empty-title">
-                  {history.length === 0 ? 'No history yet' : 'No matching activities'}
+        {/* ── Activity History Tab ───────────────────────────────────── */}
+        {activeTab === 'history' && (
+          <div className="vault-history-wrapper">
+            {/* Minimalist Summary Metric Strip */}
+            <div className="vault-stats-strip">
+              <div className="vault-stat-item">
+                <span className="stat-num">{historyStats.total}</span>
+                <span className="stat-lbl">Total Events</span>
+              </div>
+              <div className="vault-stat-item">
+                <span className="stat-num color-emerald">{historyStats.currentlyLocked}</span>
+                <span className="stat-lbl">Secured Files</span>
+              </div>
+              <div className="vault-stat-item">
+                <span className="stat-num color-blue">{historyStats.unlocked}</span>
+                <span className="stat-lbl">Unlocked</span>
+              </div>
+              <div className="vault-stat-item">
+                <span className="stat-num color-purple">{historyStats.accessed}</span>
+                <span className="stat-lbl">Accessed</span>
+              </div>
+            </div>
+
+            {filteredHistory.length === 0 ? (
+              <div className="vault-empty-state">
+                <div className="empty-icon-wrap">
+                  <MdHistory size={36} />
+                </div>
+                <h3 className="empty-title">
+                  {history.length === 0 ? 'No activity records yet' : 'No matching activities'}
                 </h3>
-                <p className="flm-empty-desc">
+                <p className="empty-desc">
                   {history.length === 0
-                    ? 'Lock or unlock files to see activity records here.'
+                    ? 'Security events like lock, unlock, and password changes will be logged here.'
                     : 'Try clearing your search query or filter.'}
                 </p>
                 {(historySearch || historyFilter !== 'all') && (
                   <button
-                    className="flm-btn-lock-new flm-empty-btn"
+                    className="vault-btn-primary empty-action-btn"
                     onClick={() => { setHistorySearch(''); setHistoryFilter('all'); }}
                   >
                     Reset Filters
                   </button>
                 )}
               </div>
-            )}
-
-            {/* History Cards List */}
-            {filteredHistory.length > 0 && (
-              <div className="flm-history-list">
+            ) : (
+              <div className="vault-timeline">
                 {filteredHistory.map((item, idx) => {
                   const badge = getActionBadge(item.action);
                   const fileName = item.originalPath?.split(/[\\/]/).pop() || 'Unknown file';
                   return (
-                    <div key={idx} className="flm-history-card">
+                    <div key={idx} className="vault-timeline-card">
                       <div
-                        className="flm-history-badge"
-                        style={{
-                          color: badge.color,
-                          backgroundColor: badge.bgColor,
-                          borderColor: badge.borderColor,
-                        }}
+                        className="timeline-badge"
+                        style={{ color: badge.color, backgroundColor: badge.bgColor }}
                       >
                         {badge.icon}
-                        <span>{badge.label}</span>
+                        <span className="timeline-badge-text">{badge.label}</span>
                       </div>
 
-                      <div className="flm-history-details">
-                        <div className="flm-history-filename" title={fileName}>
+                      <div className="timeline-info">
+                        <div className="timeline-filename" title={fileName}>
                           {fileName}
                         </div>
-                        <div className="flm-history-filepath" title={item.originalPath}>
+                        <div className="timeline-filepath" title={item.originalPath}>
                           {item.originalPath}
                         </div>
                       </div>
 
-                      <div className="flm-history-meta">
-                        <div className="flm-history-time" title={item.timestamp ? new Date(item.timestamp).toLocaleString() : ''}>
-                          <MdAccessTime size={13} style={{ marginRight: '4px' }} />
+                      <div className="timeline-meta">
+                        <span className="timeline-timestamp">
+                          <MdAccessTime size={13} style={{ marginRight: 4 }} />
                           {formatDate(item.timestamp)}
-                        </div>
-
+                        </span>
                         {item.originalPath && (
                           <button
-                            className="flm-history-copy-btn"
+                            className="timeline-copy-btn"
                             onClick={() => handleCopyPath(item.originalPath, idx)}
-                            title="Copy file path"
+                            title="Copy path"
                           >
-                            {copiedIndex === idx ? <MdCheck size={14} color="#10b981" /> : <MdContentCopy size={14} />}
+                            {copiedIndex === idx ? <MdCheck size={14} color="var(--color-primary)" /> : <MdContentCopy size={14} />}
                           </button>
                         )}
                       </div>
@@ -686,8 +658,8 @@ function FileLockManager() {
               </div>
             )}
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
       {/* Lock Modal */}
       <FileLockModal

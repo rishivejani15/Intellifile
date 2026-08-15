@@ -295,12 +295,14 @@ function ExplorerNavbar({
               ⚡ Install & Restart
             </button>
           )}
-          <div className={`index-status ${indexing ? 'running' : (indexMessage && indexMessage.toLowerCase().includes('failed') ? 'error' : 'done')}`} title={indexDetail || indexMessage}>
+          <div className={`index-status ${indexing || indexPhase === 'reindexing' ? 'running' : (indexMessage && indexMessage.toLowerCase().includes('failed') ? 'error' : 'done')}`} title={indexDetail || indexMessage}>
             <span className="index-dot" />
             <span className="index-text">
-              {indexing ? `Indexing${indexPhase ? ` (${indexPhase})` : ''}` : (indexMessage || 'Checking index...')}
+              {indexPhase === 'reindexing'
+                ? `⚡ Upgrading search engine: ${indexPct ?? 0}% indexed...`
+                : (indexing ? `Indexing${indexPhase ? ` (${indexPhase})` : ''}` : (indexMessage || 'Checking index...'))}
             </span>
-            {indexing && typeof indexPct === 'number' && (
+            {indexPhase !== 'reindexing' && indexing && typeof indexPct === 'number' && (
               <span className="index-pct">{indexPct}%</span>
             )}
           </div>

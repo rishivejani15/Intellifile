@@ -1,4 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
+import {
+  MdLock, MdLockOpen, MdOutlineVisibility, MdVpnKey, MdEdit, MdDelete
+} from 'react-icons/md';
 import './FileLockModal.css';
 
 function FileLockModal({ visible, mode, file, onClose, onSuccess }) {
@@ -149,7 +152,7 @@ function FileLockModal({ visible, mode, file, onClose, onSuccess }) {
       );
 
       if (result.success) {
-        try { window.dispatchEvent(new CustomEvent('vault-updated')); } catch (_) {}
+        try { window.dispatchEvent(new CustomEvent('vault-updated')); } catch (_) { }
         if (result.recoveryKey) {
           setCreatedRecoveryKey(result.recoveryKey);
           setViewMode('recoveryKeyCreated');
@@ -187,7 +190,7 @@ function FileLockModal({ visible, mode, file, onClose, onSuccess }) {
 
       if (result.success) {
         setSuccess(true);
-        try { window.dispatchEvent(new CustomEvent('vault-updated')); } catch (_) {}
+        try { window.dispatchEvent(new CustomEvent('vault-updated')); } catch (_) { }
         setTimeout(() => {
           onSuccess?.({ action: 'unlocked', restoredPath: result.restoredPath, filePath: file.path });
           onClose();
@@ -219,7 +222,7 @@ function FileLockModal({ visible, mode, file, onClose, onSuccess }) {
 
       if (result.success) {
         setSuccess(true);
-        try { window.dispatchEvent(new CustomEvent('vault-updated')); } catch (_) {}
+        try { window.dispatchEvent(new CustomEvent('vault-updated')); } catch (_) { }
         setTimeout(() => {
           onSuccess?.({ action: 'accessed', fileId: file.fileId || file.id });
           onClose();
@@ -253,7 +256,7 @@ function FileLockModal({ visible, mode, file, onClose, onSuccess }) {
 
         if (result.success) {
           setSuccess(true);
-          try { window.dispatchEvent(new CustomEvent('vault-updated')); } catch (_) {}
+          try { window.dispatchEvent(new CustomEvent('vault-updated')); } catch (_) { }
           setTimeout(() => {
             onSuccess?.({ action: 'unlocked', restoredPath: result.restoredPath });
             onClose();
@@ -282,7 +285,7 @@ function FileLockModal({ visible, mode, file, onClose, onSuccess }) {
 
         if (result.success) {
           setSuccess(true);
-          try { window.dispatchEvent(new CustomEvent('vault-updated')); } catch (_) {}
+          try { window.dispatchEvent(new CustomEvent('vault-updated')); } catch (_) { }
           setTimeout(() => {
             onSuccess?.({ action: 'unlocked', restoredPath: result.restoredPath });
             onClose();
@@ -344,7 +347,7 @@ function FileLockModal({ visible, mode, file, onClose, onSuccess }) {
       const result = await window.intellifile.fileLock.resetFilePassword(targetFileId, payload);
 
       if (result.success) {
-        try { window.dispatchEvent(new CustomEvent('vault-updated')); } catch (_) {}
+        try { window.dispatchEvent(new CustomEvent('vault-updated')); } catch (_) { }
         if (result.newRecoveryKey) {
           setCreatedRecoveryKey(result.newRecoveryKey);
           setViewMode('recoveryKeyCreated');
@@ -396,7 +399,7 @@ function FileLockModal({ visible, mode, file, onClose, onSuccess }) {
 
       if (result.success) {
         setSuccess(true);
-        try { window.dispatchEvent(new CustomEvent('vault-updated')); } catch (_) {}
+        try { window.dispatchEvent(new CustomEvent('vault-updated')); } catch (_) { }
         setTimeout(() => {
           onSuccess?.({ action: 'password_changed', fileId: targetFileId });
           onClose();
@@ -434,7 +437,7 @@ function FileLockModal({ visible, mode, file, onClose, onSuccess }) {
 
       if (result.success) {
         setSuccess(true);
-        try { window.dispatchEvent(new CustomEvent('vault-updated')); } catch (_) {}
+        try { window.dispatchEvent(new CustomEvent('vault-updated')); } catch (_) { }
         setTimeout(() => {
           onSuccess?.({ action: 'renamed', newPath: result.newPath, fileId: targetFileId });
           onClose();
@@ -467,7 +470,7 @@ function FileLockModal({ visible, mode, file, onClose, onSuccess }) {
 
       if (result.success) {
         setSuccess(true);
-        try { window.dispatchEvent(new CustomEvent('vault-updated')); } catch (_) {}
+        try { window.dispatchEvent(new CustomEvent('vault-updated')); } catch (_) { }
         setTimeout(() => {
           onSuccess?.({ action: 'deleted', fileId: targetFileId });
           onClose();
@@ -503,8 +506,8 @@ function FileLockModal({ visible, mode, file, onClose, onSuccess }) {
     }
   };
 
-  const strength = (mode === 'lock' || viewMode === 'resetPassword') ? getPasswordStrength(password || newPassword) : 
-                   mode === 'changePassword' ? getPasswordStrength(newPassword) : null;
+  const strength = (mode === 'lock' || viewMode === 'resetPassword') ? getPasswordStrength(password || newPassword) :
+    mode === 'changePassword' ? getPasswordStrength(newPassword) : null;
 
   const getTitle = () => {
     if (viewMode === 'recoveryKeyCreated') return 'Master Recovery Key';
@@ -962,12 +965,12 @@ function FileLockModal({ visible, mode, file, onClose, onSuccess }) {
                     disabled={loading}
                   >
                     {loading && <span className="file-lock-spinner" />}
-                    {mode === 'lock' && (loading ? 'Encrypting…' : '🔒 Lock File')}
-                    {mode === 'unlock' && (loading ? 'Decrypting…' : '🔓 Unlock File')}
-                    {mode === 'access' && (loading ? 'Opening…' : '👁️ Open File')}
-                    {mode === 'changePassword' && (loading ? 'Updating…' : '🔑 Change Password')}
-                    {mode === 'renameLocked' && (loading ? 'Renaming…' : '✏️ Rename File')}
-                    {mode === 'deleteLocked' && (loading ? 'Deleting…' : '🗑️ Delete File')}
+                    {mode === 'lock' && (loading ? 'Encrypting…' : <><MdLock style={{ marginRight: 6 }} /> Lock File</>)}
+                    {mode === 'unlock' && (loading ? 'Decrypting…' : <><MdLockOpen style={{ marginRight: 6 }} /> Unlock File</>)}
+                    {mode === 'access' && (loading ? 'Opening…' : <><MdOutlineVisibility style={{ marginRight: 6 }} /> Open File</>)}
+                    {mode === 'changePassword' && (loading ? 'Updating…' : <><MdVpnKey style={{ marginRight: 6 }} /> Change Password</>)}
+                    {mode === 'renameLocked' && (loading ? 'Renaming…' : <><MdEdit style={{ marginRight: 6 }} /> Rename File</>)}
+                    {mode === 'deleteLocked' && (loading ? 'Deleting…' : <><MdDelete style={{ marginRight: 6 }} /> Delete File</>)}
                   </button>
                 </>
               )}

@@ -79,10 +79,24 @@ export const useKeyboardShortcuts = ({
           setSelectedItem(displayItems[0]);
         }
         e.preventDefault();
-      } else if (e.key === 'Enter' && selectedItem && !renamingItem) {
-        handleOpen?.(selectedItem);
-        e.preventDefault();
-      } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Home' || e.key === 'End') {
+      } else if (e.key === 'Enter' && !renamingItem) {
+        if (selectedItems && selectedItems.length > 1) {
+          const files = selectedItems.filter(i => i.type === 'file');
+          if (files.length > 0) {
+            files.forEach(file => handleOpen?.(file));
+          } else {
+            const itemToOpen = selectedItem || selectedItems[0];
+            if (itemToOpen) handleOpen?.(itemToOpen);
+          }
+          e.preventDefault();
+        } else {
+          const itemToOpen = selectedItem || (selectedItems && selectedItems.length === 1 ? selectedItems[0] : null);
+          if (itemToOpen) {
+            handleOpen?.(itemToOpen);
+            e.preventDefault();
+          }
+        }
+      } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'Home' || e.key === 'End') {
         if (!displayItems || displayItems.length === 0) return;
         const currentIdx = displayItems.findIndex(i => i.path === selectedItem?.path);
         let nextIdx = 0;
@@ -91,9 +105,9 @@ export const useKeyboardShortcuts = ({
           nextIdx = 0;
         } else if (e.key === 'End') {
           nextIdx = displayItems.length - 1;
-        } else if (e.key === 'ArrowDown') {
+        } else if (e.key === 'ArrowDown' || e.key === 'ArrowRight') {
           nextIdx = currentIdx < 0 ? 0 : Math.min(displayItems.length - 1, currentIdx + 1);
-        } else if (e.key === 'ArrowUp') {
+        } else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
           nextIdx = currentIdx < 0 ? 0 : Math.max(0, currentIdx - 1);
         }
 

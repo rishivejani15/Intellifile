@@ -473,9 +473,9 @@ while True:
 
         elif action == "recreate_embeddings":
             try:
-                from core.db import get_connection
-                from indexing.update_faiss import update_faiss
-                from core.faiss_manager import invalidate_cache, load_index
+                from indexing.migration_manager import upgrade_model_embeddings
+
+                target_version = request.get("target_version", "v2.0.0")
 
                 def _progress(phase, detail="", pct=None):
                     payload = {"_id": req_id, "type": "progress", "phase": phase, "detail": detail}
@@ -483,21 +483,10 @@ while True:
                         payload["pct"] = pct
                     print(json.dumps(payload), flush=True)
 
-                conn = get_connection()
-                cur = conn.cursor()
-                cur.execute("SELECT id FROM chunks")
-                chunk_ids = [row[0] for row in cur.fetchall()]
-                conn.close()
-
-                if not chunk_ids:
-                    print(json.dumps({"_id": req_id, "success": True, "message": "No chunks found to recreate embeddings."}), flush=True)
-                else:
-                    update_faiss(chunk_ids, progress_cb=_progress)
-                    invalidate_cache()
-                    load_index(force_reload=True)
-                    print(json.dumps({"_id": req_id, "success": True, "message": f"Successfully re-created embeddings for {len(chunk_ids)} chunks."}), flush=True)
+                res = upgrade_model_embeddings(target_version=target_version, progress_cb=_progress)
+                print(json.dumps({"_id": req_id, **res}), flush=True)
             except Exception as e:
-                print(json.dumps({"_id": req_id, "error": f"Re-creating embeddings failed: {e}"}), flush=True)
+                print(json.dumps({"_id": req_id, "error": f"Model migration failed: {e}"}), flush=True)
 
         elif action == "reset_index_all":
             try:

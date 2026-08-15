@@ -1,4 +1,5 @@
 import React, { useMemo, useState, useEffect } from 'react';
+import { MdFolderOpen } from 'react-icons/md';
 import { getFileIcon, formatFileSize, formatDate } from '../utils/fileUtils';
 import './FileExplorer/FileExplorer.css';
 
@@ -106,7 +107,7 @@ function FileList({
           onEmptySpaceContextMenu?.(e);
         }}
       >
-        📁 This folder is empty
+        <MdFolderOpen size={20} style={{ marginRight: 8, verticalAlign: 'middle', opacity: 0.7 }} /> This folder is empty
       </div>
     );
   }

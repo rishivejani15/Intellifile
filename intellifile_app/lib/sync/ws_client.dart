@@ -59,11 +59,38 @@ class WsClient {
     _setState(WsConnectionState.connecting);
 
     try {
-      String target = _address!;
-      if (!target.contains(':')) {
-        target = '$target:8765';
+      String raw = _address!.trim();
+      raw = raw.replaceAll(RegExp(r'#.*$'), '').replaceAll(RegExp(r'/+$'), '');
+
+      String host = raw;
+      int port = 8765;
+
+      if (raw.startsWith('http://') || raw.startsWith('https://') || raw.startsWith('ws://') || raw.startsWith('wss://')) {
+        final parsed = Uri.tryParse(raw);
+        if (parsed != null && parsed.host.isNotEmpty) {
+          host = parsed.host;
+          port = parsed.hasPort ? parsed.port : 8765;
+        }
+      } else {
+        if (raw.contains(':')) {
+          final parts = raw.split(':');
+          host = parts[0];
+          port = int.tryParse(parts[1]) ?? 8765;
+        } else {
+          host = raw;
+          port = 8765;
+        }
       }
-      final uri = Uri.parse('ws://$target/sync${_deviceId != null ? '?device_id=$_deviceId' : ''}');
+
+      final queryParams = _deviceId != null ? {'device_id': _deviceId!} : null;
+      final uri = Uri(
+        scheme: 'ws',
+        host: host,
+        port: port,
+        path: '/sync',
+        queryParameters: queryParams,
+      );
+
       debugPrint('[ws] Connecting to $uri ...');
 
       _channel = IOWebSocketChannel.connect(

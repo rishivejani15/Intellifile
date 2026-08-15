@@ -43,7 +43,7 @@ export default function Search() {
     return () => clearInterval(interval);
   }, []);
 
- // ── Indexing status ────────────────────────
+  // ── Indexing status ────────────────────────
   useEffect(() => {
     const unsubscribeProgress = onIndexProgress((payload) => {
       if (!payload || payload.type !== 'progress') return;
@@ -64,7 +64,7 @@ export default function Search() {
       }
     });
 
-      const unsubscribeComplete = onIndexComplete((payload) => {
+    const unsubscribeComplete = onIndexComplete((payload) => {
       setIndexing(false);
       setIndexPhase('');
       setIndexDetail('');
@@ -72,10 +72,10 @@ export default function Search() {
       if (payload && payload.error) {
         setIndexMessage(`Indexing failed: ${payload.error}`);
       } else {
-         setIndexMessage('Index updated');
+        setIndexMessage('Index updated');
       }
     });
-     return () => {
+    return () => {
       unsubscribeProgress();
       unsubscribeComplete();
     };
@@ -104,7 +104,7 @@ export default function Search() {
       window.electron.shell.openPath(filePath);
     }
   }, []);
- // ── Format Unix timestamp ─────────────────
+  // ── Format Unix timestamp ─────────────────
   const formatDate = (timestamp) => {
     if (!timestamp) return null;
     const d = new Date(timestamp * 1000);
@@ -137,8 +137,8 @@ export default function Search() {
           <span className="index-text">
             {indexing ? `Indexing${indexPhase ? ` (${indexPhase})` : ''}` : (indexMessage || 'Checking index...')}
           </span>
-     
-      {indexing && typeof indexPct === 'number' && (
+
+          {indexing && typeof indexPct === 'number' && (
             <span className="index-pct">{indexPct}%</span>
           )}
         </div>

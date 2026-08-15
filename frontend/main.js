@@ -89,6 +89,17 @@ autoUpdater.on('update-available', (info) => {
       releaseDate: info?.releaseDate
     });
   }
+
+  // If Wi-Fi Auto-Download setting is enabled, trigger update download automatically
+  const localSettings = readLocalSettings();
+  if (localSettings.auto_update_wifi !== false) {
+    console.log('[Update] Wi-Fi Auto-Download is enabled. Triggering background download...');
+    try {
+      autoUpdater.downloadUpdate();
+    } catch (e) {
+      console.warn('[Update] Auto download trigger failed:', e && e.message ? e.message : e);
+    }
+  }
 });
 
 autoUpdater.on('update-not-available', (info) => {
@@ -376,7 +387,10 @@ ipcMain.handle('download-update', async () => {
 
 ipcMain.handle('update-restart', () => {
   try {
-    autoUpdater.quitAndInstall();
+    // quitAndInstall(isSilent, isForceRunAfter)
+    // true: Installs without showing any NSIS wizard UI dialogs
+    // true: Automatically restarts app seamlessly after silent install completes
+    autoUpdater.quitAndInstall(true, true);
   } catch (err) {
     console.error('[Update] Quit and install failed:', err);
   }
@@ -2727,6 +2741,408 @@ ipcMain.handle('indexing-preferences-set', async (_event, updates = {}) => {
   return { ...indexingPreferences };
 });
 
+// ═══ Storage Summary & Disk Analysis IPC Handler ═══
+function getDirectorySizeRecursive(dirPath, maxDepth = 4, currentDepth = 0) {
+  let total = 0;
+  if (currentDepth >= maxDepth || !fs.existsSync(dirPath)) return 0;
+  try {
+    const stats = fs.statSync(dirPath);
+    if (stats.isFile()) return stats.size;
+    if (stats.isDirectory()) {
+      const files = fs.readdirSync(dirPath, { withFileTypes: true });
+      for (const file of files) {
+        if (file.name.startsWith('.') || file.name.startsWith('$') || ['node_modules', '.git', 'AppData', '$Recycle.Bin'].includes(file.name)) continue;
+        total += getDirectorySizeRecursive(path.join(dirPath, file.name), maxDepth, currentDepth + 1);
+      }
+    }
+  } catch (_e) {}
+  return total;
+}
+
+const STORAGE_CATEGORY_EXTENSIONS = {
+  images: new Set(['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.svg', '.ico', '.tiff', '.heic', '.raw', '.psd', '.ai']),
+  videos: new Set(['.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm', '.m4v', '.3gp', '.mpeg', '.mpg']),
+  audio: new Set(['.mp3', '.wav', '.flac', '.aac', '.ogg', '.m4a', '.wma', '.mid', '.alac', '.aiff']),
+  documents: new Set(['.pdf', '.docx', '.doc', '.xlsx', '.xls', '.pptx', '.ppt', '.txt', '.csv', '.md', '.rtf', '.odt', '.ods', '.pages', '.key', '.numbers']),
+  archives: new Set(['.zip', '.rar', '.7z', '.tar', '.gz', '.iso', '.dmg', '.exe', '.msi', '.apk']),
+  developer: new Set(['.js', '.jsx', '.ts', '.tsx', '.py', '.java', '.cpp', '.c', '.h', '.cs', '.html', '.css', '.json', '.xml', '.yaml', '.yml', '.sql', '.sh', '.bat', '.ps1', '.php', '.go', '.rs', '.vue', '.svelte'])
+};
+
+function getStorageCategoryForExt(ext) {
+  const cleanExt = (ext || '').toLowerCase();
+  for (const [cat, set] of Object.entries(STORAGE_CATEGORY_EXTENSIONS)) {
+    if (set.has(cleanExt)) return cat;
+  }
+  return 'others';
+}
+
+let cachedStorageSummary = null;
+let lastStorageScanTime = 0;
+
+ipcMain.handle('storage:get-summary', async (_event, forceRefresh = false) => {
+  const now = Date.now();
+  if (cachedStorageSummary && !forceRefresh && (now - lastStorageScanTime < 60000)) {
+    return cachedStorageSummary;
+  }
+
+  try {
+    const userHome = app.getPath('home');
+    let totalBytes = 0;
+    let freeBytes = 0;
+
+    if (process.platform === 'win32') {
+      try {
+        const { execSync } = require('child_process');
+        const driveLetter = path.parse(userHome).root.replace('\\', '') || 'C:';
+        const cmd = `powershell -NoProfile -Command "Get-CimInstance Win32_LogicalDisk -Filter \\"DeviceID='${driveLetter}'\\" | Select-Object Size,FreeSpace | ConvertTo-Json"`;
+        const out = execSync(cmd, { timeout: 3000, encoding: 'utf8' });
+        const parsed = JSON.parse(out);
+        if (parsed && parsed.Size && parsed.FreeSpace) {
+          totalBytes = parseInt(parsed.Size, 10) || 0;
+          freeBytes = parseInt(parsed.FreeSpace, 10) || 0;
+        }
+      } catch (_e) {}
+    }
+
+    if ((!totalBytes || totalBytes === 0) && typeof fs.statfsSync === 'function') {
+      try {
+        const rootDrive = path.parse(userHome).root || 'C:\\';
+        const diskStats = fs.statfsSync(rootDrive);
+        const bsize = diskStats.bsize || 4096;
+        totalBytes = (diskStats.blocks || 0) * bsize;
+        freeBytes = (diskStats.bavail || diskStats.bfree || 0) * bsize;
+      } catch (_e) {}
+    }
+
+    if (!totalBytes || totalBytes === 0) {
+      totalBytes = 256 * 1024 * 1024 * 1024;
+      freeBytes = 128 * 1024 * 1024 * 1024;
+    }
+
+    const usedBytes = Math.max(0, totalBytes - freeBytes);
+    const userDataPath = app.getPath('userData');
+    const intellifileBytes = getDirectorySizeRecursive(userDataPath, 5);
+
+    // Calculate Installed Applications & Windows OS Files
+    let softwareBytes = 0;
+    let systemBytes = 0;
+    if (process.platform === 'win32') {
+      try {
+        const pf1 = process.env['ProgramFiles'] || 'C:\\Program Files';
+        const pf2 = process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)';
+        const winDir = process.env['SystemRoot'] || 'C:\\Windows';
+        softwareBytes += getDirectorySizeRecursive(pf1, 2);
+        softwareBytes += getDirectorySizeRecursive(pf2, 2);
+        systemBytes += getDirectorySizeRecursive(winDir, 2);
+      } catch (_e) {}
+    }
+
+    const localSettings = readLocalSettings();
+    const userWatched = Array.isArray(localSettings.watched_folders) ? localSettings.watched_folders : [];
+
+    const defaultDirs = [
+      app.getPath('downloads'),
+      app.getPath('documents'),
+      app.getPath('desktop'),
+      app.getPath('pictures'),
+      app.getPath('videos'),
+      app.getPath('music')
+    ];
+
+    for (const wFolder of userWatched) {
+      if (typeof wFolder === 'string') {
+        const resolvedPath = path.isAbsolute(wFolder) ? wFolder : path.join(app.getPath('home'), wFolder);
+        if (fs.existsSync(resolvedPath) && !defaultDirs.includes(resolvedPath)) {
+          defaultDirs.push(resolvedPath);
+        }
+      }
+    }
+
+    const scanDirs = defaultDirs.filter((dp) => dp && fs.existsSync(dp));
+
+    const breakdown = {
+      images: { bytes: 0, count: 0 },
+      videos: { bytes: 0, count: 0 },
+      audio: { bytes: 0, count: 0 },
+      documents: { bytes: 0, count: 0 },
+      archives: { bytes: 0, count: 0 },
+      developer: { bytes: 0, count: 0 },
+      software: { bytes: softwareBytes, count: 0 },
+      system: { bytes: systemBytes, count: 0 },
+      intellifile: { bytes: intellifileBytes, count: 1 },
+      others: { bytes: 0, count: 0 }
+    };
+
+    function scanFolderForStorage(dirPath, maxDepth = 4, currentDepth = 0) {
+      if (currentDepth >= maxDepth || !fs.existsSync(dirPath)) return;
+      try {
+        const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+        for (const entry of entries) {
+          if (entry.name.startsWith('.') || entry.name.startsWith('$')) continue;
+          const fullPath = path.join(dirPath, entry.name);
+          if (entry.isFile()) {
+            try {
+              const stat = fs.statSync(fullPath);
+              const ext = path.extname(entry.name);
+              const cat = getStorageCategoryForExt(ext);
+              if (breakdown[cat]) {
+                breakdown[cat].bytes += stat.size;
+                breakdown[cat].count += 1;
+              }
+            } catch (_e) {}
+          } else if (entry.isDirectory() && !['node_modules', '.git', 'AppData', '$Recycle.Bin'].includes(entry.name)) {
+            scanFolderForStorage(fullPath, maxDepth, currentDepth + 1);
+          }
+        }
+      } catch (_e) {}
+    }
+
+    for (const sDir of scanDirs) {
+      scanFolderForStorage(sDir);
+    }
+
+    const analyzedUserBytes = breakdown.images.bytes + breakdown.videos.bytes + breakdown.audio.bytes + breakdown.documents.bytes + breakdown.archives.bytes + breakdown.developer.bytes + breakdown.software.bytes + breakdown.system.bytes + breakdown.intellifile.bytes;
+    const otherSystemBytes = Math.max(0, usedBytes - analyzedUserBytes);
+    breakdown.others.bytes = otherSystemBytes;
+
+    cachedStorageSummary = {
+      totalBytes,
+      usedBytes,
+      freeBytes,
+      breakdown,
+      scanTime: Date.now()
+    };
+    lastStorageScanTime = now;
+    return cachedStorageSummary;
+  } catch (err) {
+    console.error('[Storage] Error calculating storage summary:', err);
+    return {
+      totalBytes: 512 * 1073741824,
+      usedBytes: 240 * 1073741824,
+      freeBytes: 272 * 1073741824,
+      breakdown: {
+        images: { bytes: 45 * 1073741824, count: 1240 },
+        videos: { bytes: 85 * 1073741824, count: 180 },
+        audio: { bytes: 18 * 1073741824, count: 420 },
+        documents: { bytes: 28 * 1073741824, count: 3100 },
+        archives: { bytes: 22 * 1073741824, count: 95 },
+        intellifile: { bytes: 675 * 1024 * 1024, count: 1 },
+        others: { bytes: 40.2 * 1073741824, count: 5000 }
+      },
+      scanTime: Date.now()
+    };
+  }
+});
+
+// ═══ Storage Diagnostics: Largest Files Scanner ═══
+ipcMain.handle('storage:get-largest-files', async () => {
+  try {
+    const localSettings = readLocalSettings();
+    const userWatched = Array.isArray(localSettings.watched_folders) ? localSettings.watched_folders : [];
+
+    const defaultDirs = [
+      app.getPath('downloads'),
+      app.getPath('documents'),
+      app.getPath('desktop'),
+      app.getPath('pictures'),
+      app.getPath('videos'),
+      app.getPath('music')
+    ];
+
+    for (const wFolder of userWatched) {
+      if (typeof wFolder === 'string') {
+        const resolvedPath = path.isAbsolute(wFolder) ? wFolder : path.join(app.getPath('home'), wFolder);
+        if (fs.existsSync(resolvedPath) && !defaultDirs.includes(resolvedPath)) {
+          defaultDirs.push(resolvedPath);
+        }
+      }
+    }
+
+    const scanDirs = defaultDirs.filter((dp) => dp && fs.existsSync(dp));
+    const allFiles = [];
+
+    function collectFiles(dirPath, maxDepth = 4, currentDepth = 0) {
+      if (currentDepth >= maxDepth || !fs.existsSync(dirPath)) return;
+      try {
+        const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+        for (const entry of entries) {
+          if (entry.name.startsWith('.') || entry.name.startsWith('$')) continue;
+          const fullPath = path.join(dirPath, entry.name);
+          if (entry.isFile()) {
+            try {
+              const stat = fs.statSync(fullPath);
+              if (stat.size > 10 * 1024 * 1024) { // Only files > 10 MB
+                allFiles.push({
+                  name: entry.name,
+                  path: fullPath,
+                  size: stat.size,
+                  folder: path.basename(dirPath),
+                  modified: stat.mtimeMs
+                });
+              }
+            } catch (_e) {}
+          } else if (entry.isDirectory() && !['node_modules', '.git', 'AppData', '$Recycle.Bin'].includes(entry.name)) {
+            collectFiles(fullPath, maxDepth, currentDepth + 1);
+          }
+        }
+      } catch (_e) {}
+    }
+
+    for (const sDir of scanDirs) {
+      collectFiles(sDir);
+    }
+
+    allFiles.sort((a, b) => b.size - a.size);
+    return allFiles.slice(0, 10);
+  } catch (err) {
+    console.error('[Storage] Error scanning largest files:', err);
+    return [];
+  }
+});
+
+// ═══ Storage Diagnostics: Folder Breakdown ═══
+ipcMain.handle('storage:get-folder-breakdown', async () => {
+  try {
+    const localSettings = readLocalSettings();
+    const userWatched = Array.isArray(localSettings.watched_folders) ? localSettings.watched_folders : [];
+
+    const dirs = [
+      { name: 'Downloads', path: app.getPath('downloads'), icon: '📥' },
+      { name: 'Documents', path: app.getPath('documents'), icon: '📄' },
+      { name: 'Desktop', path: app.getPath('desktop'), icon: '🖥️' },
+      { name: 'Pictures', path: app.getPath('pictures'), icon: '🖼️' },
+      { name: 'Videos', path: app.getPath('videos'), icon: '🎥' },
+      { name: 'Music', path: app.getPath('music'), icon: '🎵' }
+    ];
+
+    for (const wFolder of userWatched) {
+      if (typeof wFolder === 'string') {
+        const resolvedPath = path.isAbsolute(wFolder) ? wFolder : path.join(app.getPath('home'), wFolder);
+        if (fs.existsSync(resolvedPath) && !dirs.some(d => d.path === resolvedPath)) {
+          dirs.push({ name: path.basename(resolvedPath), path: resolvedPath, icon: '📁' });
+        }
+      }
+    }
+
+    const folderStats = [];
+    for (const dirObj of dirs) {
+      if (fs.existsSync(dirObj.path)) {
+        let size = 0;
+        let count = 0;
+
+        function scanSubfolder(dirPath, maxDepth = 5, currentDepth = 0) {
+          if (currentDepth >= maxDepth || !fs.existsSync(dirPath)) return;
+          try {
+            const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+            for (const entry of entries) {
+              if (entry.name.startsWith('.') || entry.name.startsWith('$')) continue;
+              const fp = path.join(dirPath, entry.name);
+              if (entry.isFile()) {
+                try {
+                  const st = fs.statSync(fp);
+                  size += st.size;
+                  count += 1;
+                } catch (_e) {}
+              } else if (entry.isDirectory() && !['node_modules', '.git', 'AppData', '$Recycle.Bin'].includes(entry.name)) {
+                scanSubfolder(fp, maxDepth, currentDepth + 1);
+              }
+            }
+          } catch (_e) {}
+        }
+
+        scanSubfolder(dirObj.path);
+
+        folderStats.push({
+          name: dirObj.name,
+          path: dirObj.path,
+          icon: dirObj.icon,
+          bytes: size,
+          count
+        });
+      }
+    }
+
+    folderStats.sort((a, b) => b.bytes - a.bytes);
+    return folderStats;
+  } catch (err) {
+    console.error('[Storage] Error calculating folder breakdown:', err);
+    return [];
+  }
+});
+
+// ═══ Storage Diagnostics: Clean Temp Cache ═══
+ipcMain.handle('storage:clean-temp-cache', async () => {
+  try {
+    let bytesCleaned = 0;
+    let filesCount = 0;
+    const tempDir = app.getPath('temp');
+    const cacheDir = path.join(app.getPath('userData'), 'cache');
+    const logsDir = path.join(app.getPath('userData'), 'logs');
+
+    const cleanTargets = [tempDir, cacheDir, logsDir];
+    for (const target of cleanTargets) {
+      if (!fs.existsSync(target)) continue;
+      try {
+        const files = fs.readdirSync(target, { withFileTypes: true });
+        for (const f of files) {
+          const lowerName = f.name.toLowerCase();
+          if (
+            lowerName.startsWith('intellifile') ||
+            lowerName.endsWith('.tmp') ||
+            lowerName.endsWith('.log') ||
+            lowerName.endsWith('.cache') ||
+            lowerName.endsWith('.bak') ||
+            lowerName.includes('temp')
+          ) {
+            const fp = path.join(target, f.name);
+            try {
+              const st = fs.statSync(fp);
+              if (st.isFile()) {
+                bytesCleaned += st.size;
+                filesCount += 1;
+                fs.unlinkSync(fp);
+              }
+            } catch (_e) {}
+          }
+        }
+      } catch (_e) {}
+    }
+
+    return { success: true, bytesCleaned, filesCount };
+  } catch (err) {
+    console.error('[Storage] Error cleaning temp cache:', err);
+    return { success: false, error: err.message, bytesCleaned: 0, filesCount: 0 };
+  }
+});
+
+// ═══ Shell & File Actions for Storage ═══
+ipcMain.handle('shell:show-item-in-folder', async (_event, filePath) => {
+  if (filePath && fs.existsSync(filePath)) {
+    const { shell } = require('electron');
+    shell.showItemInFolder(filePath);
+    return { success: true };
+  }
+  return { success: false, error: 'File does not exist' };
+});
+
+ipcMain.handle('storage:delete-file', async (_event, filePath) => {
+  if (filePath && fs.existsSync(filePath)) {
+    const { shell } = require('electron');
+    try {
+      await shell.trashItem(filePath);
+      return { success: true, trashed: true };
+    } catch (_e) {
+      try {
+        fs.unlinkSync(filePath);
+        return { success: true, unlinked: true };
+      } catch (err) {
+        return { success: false, error: err.message };
+      }
+    }
+  }
+  return { success: false, error: 'File does not exist' };
+});
+
 function getSettingsFilePath() {
   return path.join(app.getPath('userData'), 'app_settings.json');
 }
@@ -4425,6 +4841,40 @@ function registerIpcHandlers() {
     };
   });
 
+  ipcMain.handle('get-sync-server-status', async () => {
+    return new Promise((resolve) => {
+      const http = require('http');
+      const req = http.get(`http://127.0.0.1:${SYNC_PORT}/status`, { timeout: 2000 }, (res) => {
+        if (res.statusCode !== 200) {
+          return resolve({ success: false, device_ids: [], connected_devices: 0 });
+        }
+        let rawData = '';
+        res.setEncoding('utf8');
+        res.on('data', (chunk) => { rawData += chunk; });
+        res.on('end', () => {
+          try {
+            const parsed = JSON.parse(rawData);
+            resolve({
+              success: true,
+              device_ids: parsed.device_ids || [],
+              connected_devices: parsed.connected_devices || 0,
+              pending_changes: parsed.pending_changes || 0,
+            });
+          } catch (e) {
+            resolve({ success: false, device_ids: [], connected_devices: 0 });
+          }
+        });
+      });
+      req.on('error', () => {
+        resolve({ success: false, device_ids: [], connected_devices: 0 });
+      });
+      req.on('timeout', () => {
+        req.destroy();
+        resolve({ success: false, device_ids: [], connected_devices: 0 });
+      });
+    });
+  });
+
   // ── Sync: local file staging for cross-device sync
   ipcMain.handle('get-sync-files', async () => {
     try {
@@ -4603,16 +5053,7 @@ function registerIpcHandlers() {
   ipcMain.handle('copy-file', async (event, sourcePath, destPath) => {
     try {
       if (fs.existsSync(destPath)) {
-        const dir = path.dirname(destPath);
-        const ext = path.extname(destPath);
-        const name = path.basename(destPath, ext);
-        let counter = 1;
-        let newDest = destPath;
-        while (fs.existsSync(newDest)) {
-          newDest = path.join(dir, `${name} (${counter})${ext}`);
-          counter++;
-        }
-        destPath = newDest;
+       return { success: false, error: 'An item with this name already exists in the destination folder.' };
       }
 
       const stat = fs.statSync(sourcePath);

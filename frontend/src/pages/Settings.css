@@ -6,6 +6,8 @@
 /* ─── Page Container ─── */
 .settings-page {
   height: 100%;
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -69,6 +71,8 @@
   flex: 1;
   display: flex;
   overflow: hidden;
+  min-height: 0;
+  min-width: 0;
   gap: 0;
 }
 
@@ -81,6 +85,7 @@
   padding: var(--sp-3) var(--sp-2);
   overflow-y: auto;
   flex-shrink: 0;
+  min-height: 0;
 }
 
 .settings-nav-list {
@@ -158,6 +163,10 @@
 .settings-content {
   flex: 1;
   overflow-y: auto;
+  overflow-x: hidden;
+  min-height: 0;
+  min-width: 0;
+  max-height: 100%;
   padding: var(--sp-5) var(--sp-6);
   display: flex;
   flex-direction: column;
@@ -172,7 +181,8 @@
   -webkit-backdrop-filter: blur(12px);
   border: 1px solid var(--bo);
   border-radius: var(--rd-lg);
-  overflow: hidden;
+  overflow: visible;
+  flex-shrink: 0;
   transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
 }
 
@@ -870,10 +880,397 @@
 .settings-tour-banner small { margin-top: 2px; color: var(--t-secondary); font-size: var(--text-xs); }
 .settings-tour-arrow { margin-left: auto; color: var(--color-primary); font-size: 28px; line-height: 1; }
 
-.nav-action-item {
-  color: var(--color-primary) !important;
-  font-weight: 600;
+
+/* ─── Mobile-Style Storage Manager Styles ─── */
+.storage-overview-card {
+  padding: 1.25rem;
+  background: var(--s-hover);
+  border: 1px solid var(--bo-light);
+  border-radius: var(--rd-lg);
+  margin-bottom: 1.25rem;
+  backdrop-filter: blur(8px);
 }
-.nav-action-item:hover {
-  background: var(--c-brand-soft) !important;
+
+.storage-overview-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.storage-capacity-title {
+  font-size: var(--text-base);
+  font-weight: 700;
+  color: var(--t-primary);
+}
+
+.storage-capacity-subtitle {
+  font-size: var(--text-xs);
+  color: var(--t-muted);
+  margin-top: 2px;
+}
+
+.storage-capacity-badge {
+  padding: 0.25rem 0.65rem;
+  background: var(--c-brand-soft);
+  color: var(--color-primary);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  border-radius: var(--rd-full);
+  border: 1px solid var(--color-primary);
+}
+
+.storage-stacked-bar {
+  height: 14px;
+  width: 100%;
+  background: var(--bo-light);
+  border-radius: var(--rd-full);
+  display: flex;
+  overflow: hidden;
+  margin-bottom: 1rem;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.15);
+}
+
+.storage-bar-segment {
+  height: 100%;
+  transition: width 0.4s ease;
+  position: relative;
+}
+
+.storage-bar-segment:hover {
+  filter: brightness(1.15);
+}
+
+.storage-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1.25rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--bo-light);
+}
+
+.storage-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: var(--text-xs);
+  color: var(--t-primary);
+  font-weight: 500;
+}
+
+.storage-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.storage-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 0.85rem;
+  margin-bottom: 1rem;
+}
+
+.storage-card {
+  padding: 0.9rem;
+  background: var(--s-hover);
+  border: 1px solid var(--bo-light);
+  border-radius: var(--rd-md);
+  transition: transform var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.storage-card:hover {
+  border-color: var(--bo);
+  transform: translateY(-1px);
+}
+
+.storage-card-header {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  margin-bottom: 0.65rem;
+}
+
+.storage-card-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--rd-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.1rem;
+  flex-shrink: 0;
+}
+
+.storage-card-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.storage-card-name {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--t-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.storage-card-count {
+  font-size: var(--text-xs);
+  color: var(--t-muted);
+}
+
+.storage-card-size {
+  font-size: var(--text-sm);
+  font-weight: 700;
+  color: var(--t-primary);
+  flex-shrink: 0;
+}
+
+.storage-card-progress-track {
+  height: 6px;
+  background: var(--bo-light);
+  border-radius: var(--rd-full);
+  overflow: hidden;
+  margin-bottom: 0.35rem;
+}
+
+.storage-card-progress-fill {
+  height: 100%;
+  border-radius: var(--rd-full);
+  transition: width 0.4s ease;
+}
+
+.storage-card-meta {
+  display: flex;
+  justify-content: space-between;
+  font-size: var(--text-xs);
+  color: var(--t-muted);
+}
+
+.storage-maintenance-card {
+  padding: 1.1rem;
+  background: var(--s-hover);
+  border: 1px solid var(--bo-light);
+  border-radius: var(--rd-lg);
+}
+
+.storage-maintenance-stats {
+  display: flex;
+  gap: 1.5rem;
+  margin-top: 0.85rem;
+  padding-top: 0.85rem;
+  border-top: 1px solid var(--bo-light);
+}
+
+.storage-m-item {
+  display: flex;
+  flex-direction: column;
+}
+
+.storage-m-val {
+  font-size: var(--text-base);
+  font-weight: 700;
+  color: var(--t-primary);
+}
+
+.storage-m-lbl {
+  font-size: var(--text-xs);
+  color: var(--t-muted);
+}
+
+/* ─── Diagnostic Storage Hogs & Folder Map ─── */
+.storage-hogs-card {
+  padding: 1.1rem;
+  background: var(--s-hover);
+  border: 1px solid var(--bo-light);
+  border-radius: var(--rd-lg);
+}
+
+.storage-hogs-header {
+  margin-bottom: 0.85rem;
+}
+
+.storage-hogs-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.storage-hog-item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.6rem 0.75rem;
+  background: var(--s-card);
+  border: 1px solid var(--bo-light);
+  border-radius: var(--rd-md);
+  transition: border-color var(--transition-fast);
+}
+
+.storage-hog-item:hover {
+  border-color: var(--color-primary);
+}
+
+.storage-hog-badge {
+  font-size: var(--text-xs);
+  font-weight: 800;
+  color: var(--color-primary);
+  background: var(--c-brand-soft);
+  padding: 0.15rem 0.45rem;
+  border-radius: var(--rd-sm);
+  flex-shrink: 0;
+}
+
+.storage-hog-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.storage-hog-name {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--t-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.storage-hog-path {
+  font-size: var(--text-xs);
+  color: var(--t-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.storage-hog-size {
+  font-size: var(--text-sm);
+  font-weight: 700;
+  color: var(--t-primary);
+  flex-shrink: 0;
+  margin-right: 0.5rem;
+}
+
+.storage-hog-actions {
+  display: flex;
+  gap: 0.35rem;
+  flex-shrink: 0;
+}
+
+.storage-hogs-empty {
+  padding: 1.5rem;
+  text-align: center;
+  color: var(--t-muted);
+  font-size: var(--text-sm);
+}
+
+/* Folder Storage Map */
+.storage-folder-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.storage-folder-item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.5rem 0.75rem;
+  background: var(--s-card);
+  border-radius: var(--rd-md);
+  border: 1px solid var(--bo-light);
+}
+
+.storage-folder-icon {
+  font-size: 1.2rem;
+  flex-shrink: 0;
+}
+
+.storage-folder-info {
+  width: 140px;
+  flex-shrink: 0;
+}
+
+.storage-folder-name {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--t-primary);
+}
+
+.storage-folder-count {
+  font-size: var(--text-xs);
+  color: var(--t-muted);
+}
+
+.storage-folder-bar-track {
+  flex: 1;
+  height: 8px;
+  background: var(--bo-light);
+  border-radius: var(--rd-full);
+  overflow: hidden;
+}
+
+.storage-folder-bar-fill {
+  height: 100%;
+  background: var(--color-primary);
+  border-radius: var(--rd-full);
+  transition: width 0.4s ease;
+}
+
+.storage-folder-size {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  font-size: var(--text-sm);
+  flex-shrink: 0;
+  width: 90px;
+}
+
+/* Space Recovery Clean Banner */
+.storage-clean-banner {
+  margin-top: 0.85rem;
+  padding: 0.65rem 0.9rem;
+  background: var(--c-success-soft);
+  border: 1px solid color-mix(in srgb, var(--c-success) 35%, transparent);
+  border-radius: var(--rd-md);
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: var(--text-sm);
+  color: var(--t-primary);
+  animation: fadeIn var(--dur-200) var(--ease-default);
+}
+
+.storage-clean-icon {
+  font-size: 1.1rem;
+  flex-shrink: 0;
+}
+
+.storage-clean-text {
+  flex: 1;
+  color: var(--t-primary);
+}
+
+.storage-clean-text strong {
+  color: var(--c-success);
+  font-weight: 700;
+}
+
+.storage-clean-dismiss {
+  background: transparent;
+  border: none;
+  color: var(--t-muted);
+  font-size: 1rem;
+  cursor: pointer;
+  padding: 0.2rem 0.4rem;
+  border-radius: var(--rd-sm);
+  transition: color var(--transition-fast), background var(--transition-fast);
+}
+
+.storage-clean-dismiss:hover {
+  color: var(--t-primary);
+  background: var(--s-hover);
 }

@@ -9,6 +9,7 @@ import logging
 import threading
 import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 try:
@@ -44,6 +45,14 @@ logging.basicConfig(
 log = logging.getLogger("intellifil")
 
 app = FastAPI(title="IntelliFile Local Sync Server")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 # Connected clients: list of (WebSocket, device_id) tuples
 connected_clients: list[tuple[WebSocket, str]] = []
 _event_loop: asyncio.AbstractEventLoop | None = None

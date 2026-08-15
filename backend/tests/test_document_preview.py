@@ -3,6 +3,7 @@ import sys
 import tempfile
 import unittest
 import zipfile
+from io import BytesIO
 from unittest.mock import patch
 
 
@@ -11,6 +12,15 @@ if BACKEND_DIR not in sys.path:
     sys.path.insert(0, BACKEND_DIR)
 
 from core.document_preview import DocumentPreviewError, build_document_preview
+
+
+def sample_png_bytes():
+    from PIL import Image
+
+    buffer = BytesIO()
+    image = Image.new("RGB", (16, 16), color="red")
+    image.save(buffer, format="PNG")
+    return buffer.getvalue()
 
 
 class DocumentPreviewTests(unittest.TestCase):
@@ -55,6 +65,28 @@ class DocumentPreviewTests(unittest.TestCase):
         self.assertIn("Quarterly report", result["content"])
         self.assertIn("Revenue | 42", result["content"])
 
+    def test_docx_preview_keeps_images_in_document_flow(self):
+        from docx import Document
+
+        file_path = self.path("inline-image.docx")
+        image_path = self.path("sample.png")
+        with open(image_path, "wb") as output:
+            output.write(sample_png_bytes())
+
+        document = Document()
+        document.add_paragraph("Before image")
+        document.add_picture(image_path)
+        document.add_paragraph("After image")
+        document.save(file_path)
+
+        result = build_document_preview(file_path)
+        block_types = [block["type"] for block in result["blocks"]]
+
+        self.assertEqual(block_types, ["text", "image", "text"])
+        self.assertEqual(result["blocks"][0]["content"], "Before image")
+        self.assertEqual(result["blocks"][2]["content"], "After image")
+        self.assertTrue(result["blocks"][1]["data_url"].startswith("data:image/png;base64,"))
+
     def test_xlsx_preview_is_bounded_for_large_dimensions(self):
         from openpyxl import Workbook
 
@@ -91,6 +123,31 @@ class DocumentPreviewTests(unittest.TestCase):
         self.assertIn("Slide 1", result["content"])
         self.assertIn("Launch plan", result["content"])
         self.assertIn("Owner | Team", result["content"])
+
+    def test_pptx_preview_keeps_picture_near_slide_content(self):
+        from pptx import Presentation
+        from pptx.util import Inches
+
+        file_path = self.path("inline-slide-image.pptx")
+        image_path = self.path("slide.png")
+        with open(image_path, "wb") as output:
+            output.write(sample_png_bytes())
+
+        presentation = Presentation()
+        slide = presentation.slides.add_slide(presentation.slide_layouts[5])
+        slide.shapes.title.text = "Before image"
+        slide.shapes.add_picture(image_path, Inches(1), Inches(2), Inches(2), Inches(2))
+        textbox = slide.shapes.add_textbox(Inches(1), Inches(4.5), Inches(3), Inches(1))
+        textbox.text = "After image"
+        presentation.save(file_path)
+
+        result = build_document_preview(file_path)
+        block_types = [block["type"] for block in result["blocks"]]
+
+        self.assertEqual(block_types, ["text", "image", "text"])
+        self.assertIn("Before image", result["blocks"][0]["content"])
+        self.assertEqual(result["blocks"][2]["content"], "After image")
+        self.assertTrue(result["blocks"][1]["data_url"].startswith("data:image/png;base64,"))
 
     def test_rejects_corrupted_office_document(self):
         file_path = self.path("corrupted.docx")
@@ -129,6 +186,7 @@ class DocumentPreviewTests(unittest.TestCase):
 
         self.assertEqual(len(result["content"]), 20_000)
         self.assertTrue(result["truncated"])
+        self.assertEqual(result["blocks"][-1]["type"], "notice")
 
     def test_rejects_unsupported_extension(self):
         file_path = self.path("sample.txt")

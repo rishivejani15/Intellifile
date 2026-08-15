@@ -21,6 +21,7 @@ export function useKeyboardShortcuts({
   onBack,
   onForward,
   onUp,
+  onOpen,
   onClearSelection,
   handleRefresh,
   handleUndo,
@@ -71,6 +72,23 @@ export function useKeyboardShortcuts({
       } else if (isCtrl && key === 'a') {
         onSelectAll?.();
         e.preventDefault();
+      } else if (e.key === 'Enter' && !renamingItem) {
+        if (selectedItems && selectedItems.length > 1) {
+          const files = selectedItems.filter(i => i.type === 'file');
+          if (files.length > 0) {
+            files.forEach(file => onOpen?.(file));
+          } else {
+            const itemToOpen = selectedItem || selectedItems[0];
+            if (itemToOpen) onOpen?.(itemToOpen);
+          }
+          e.preventDefault();
+        } else {
+          const itemToOpen = selectedItem || (selectedItems && selectedItems.length === 1 ? selectedItems[0] : null);
+          if (itemToOpen) {
+            onOpen?.(itemToOpen);
+            e.preventDefault();
+          }
+        }
       } else if (e.key === 'Backspace' || (e.altKey && e.key === 'ArrowLeft')) {
         onBack?.();
         e.preventDefault();
@@ -94,7 +112,7 @@ export function useKeyboardShortcuts({
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedItem, selectedItems, clipboard, renamingItem, currentPath, historyIndex, displayItems, onCopy, onCut, onPaste, onDelete, onRename, onCreateFolder, onSelectAll, onBack, onForward, onUp, onClearSelection, handleRefresh, handleUndo, handleRedo, onCharacterType, setShowContextMenu]);
+  }, [selectedItem, selectedItems, clipboard, renamingItem, currentPath, historyIndex, displayItems, onCopy, onCut, onPaste, onDelete, onRename, onCreateFolder, onSelectAll, onBack, onForward, onUp, onOpen, onClearSelection, handleRefresh, handleUndo, handleRedo, onCharacterType, setShowContextMenu]);
 }
 
 export default useKeyboardShortcuts;

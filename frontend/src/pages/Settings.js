@@ -2,6 +2,38 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import './Settings.css';
 import confirmApp from '../utils/confirm';
+import { FaPalette } from 'react-icons/fa';
+import {
+  FiFolder,
+  FiSearch,
+  FiCpu,
+  FiHardDrive,
+  FiRefreshCw,
+  FiLock,
+  FiCompass,
+  FiInfo,
+  FiImage,
+  FiFilm,
+  FiMusic,
+  FiFileText,
+  FiPackage,
+  FiCode,
+  FiGrid,
+  FiLayers,
+  FiDatabase,
+  FiAlertTriangle,
+  FiTrash2,
+  FiCheckCircle,
+  FiXCircle,
+  FiDownload,
+  FiPower,
+  FiFolderPlus,
+  FiZap,
+  FiTool,
+  FiBarChart2,
+  FiAlertCircle,
+  FiCheck
+} from 'react-icons/fi';
 
 // Lightweight toast helper
 const toast = (title, options = {}) => {
@@ -22,18 +54,28 @@ const formatRelativeTime = (timestamp) => {
   return new Date(timestamp * 1000).toLocaleString();
 };
 
+const formatBytes = (bytes, decimals = 1) => {
+  if (!bytes || bytes === 0) return '0 B';
+  const k = 1024;
+  const dm = decimals < 0 ? 0 : decimals;
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`;
+};
+
 const SECTIONS = [
-  { id: 'appearance', label: 'Appearance', icon: '🎨' },
-  { id: 'file-management', label: 'File Management', icon: '🗂️' },
-  { id: 'search-indexing', label: 'Search & Indexing', icon: '🔍' },
-  { id: 'ai-model', label: 'AI Model', icon: '🤖' },
-  { id: 'updates', label: 'Updates', icon: '🔄' },
-  { id: 'privacy', label: 'Privacy', icon: '🔒' },
-  { id: 'take-tour', label: 'Take a Tour', icon: '✦', isAction: true },
-  { id: 'about', label: 'About', icon: 'ℹ️' },
+  { id: 'appearance', label: 'Appearance', icon: <FaPalette /> },
+  { id: 'file-management', label: 'File Management', icon: <FiFolder /> },
+  { id: 'search-indexing', label: 'Search & Indexing', icon: <FiSearch /> },
+  { id: 'ai-model', label: 'AI Model', icon: <FiCpu /> },
+  { id: 'storage', label: 'Storage', icon: <FiHardDrive /> },
+  { id: 'updates', label: 'Updates', icon: <FiRefreshCw /> },
+  { id: 'privacy', label: 'Privacy', icon: <FiLock /> },
+  { id: 'take-tour', label: 'Take a Tour', icon: <FiCompass />, isAction: true },
+  { id: 'about', label: 'About', icon: <FiInfo /> },
 ];
 
-export default function Settings({ theme, onThemeChange, onStartTour }) {
+export default function Settings({ theme, onThemeChange, onStartTour, initialTab }) {
   const [loading, setLoading] = useState(true);
   const [initialSettings, setInitialSettings] = useState({});
   const [, setSaving] = useState(false);
@@ -46,9 +88,16 @@ export default function Settings({ theme, onThemeChange, onStartTour }) {
   const [aiModelPath, setAiModelPath] = useState('');
   const [telemetryEnabled, setTelemetryEnabled] = useState(false);
   const [autoUpdateWiFi, setAutoUpdateWiFi] = useState(false);
+  const [autoModelUpgrade, setAutoModelUpgrade] = useState(true);
 
   const [searchTerm, setSearchTerm] = useState('');
-  const [activeTab, setActiveTab] = useState('appearance');
+  const [activeTab, setActiveTab] = useState(initialTab || 'appearance');
+
+  useEffect(() => {
+    if (initialTab) {
+      setActiveTab(initialTab);
+    }
+  }, [initialTab]);
 
   // Update System States
   const [currentVersion, setCurrentVersion] = useState('1.0.2');
@@ -59,6 +108,105 @@ export default function Settings({ theme, onThemeChange, onStartTour }) {
 
   // Analytics State
   const [analyticsSummary, setAnalyticsSummary] = useState({ counts: {}, recent: [] });
+
+  // Storage Analysis State
+  const [storageLoading, setStorageLoading] = useState(false);
+  const [storageSummary, setStorageSummary] = useState(null);
+  const [largestFiles, setLargestFiles] = useState([]);
+  const [folderBreakdown, setFolderBreakdown] = useState([]);
+  const [cleaningCache, setCleaningCache] = useState(false);
+  const [cleanResult, setCleanResult] = useState(null);
+
+  const loadStorageSummary = async (forceRefresh = false) => {
+    setStorageLoading(true);
+    try {
+      const getStorageFn = window.electron?.getStorageSummary || ipc?.getStorageSummary;
+      if (getStorageFn) {
+        const res = await getStorageFn(forceRefresh);
+        if (res) setStorageSummary(res);
+      }
+      loadDiagnosticData();
+    } catch (err) {
+      console.warn('[Settings] Failed to load storage summary:', err);
+    } finally {
+      setStorageLoading(false);
+    }
+  };
+
+  const loadDiagnosticData = async () => {
+    try {
+      const getLargestFn = window.electron?.getLargestFiles || ipc?.getLargestFiles;
+      if (getLargestFn) {
+        const files = await getLargestFn();
+        if (files) setLargestFiles(files);
+      }
+
+      const getFoldersFn = window.electron?.getFolderBreakdown || ipc?.getFolderBreakdown;
+      if (getFoldersFn) {
+        const folders = await getFoldersFn();
+        if (folders) setFolderBreakdown(folders);
+      }
+    } catch (e) {
+      console.warn('[Settings] Failed to load diagnostic data:', e);
+    }
+  };
+
+  const handleShowInFolder = (filePath, e) => {
+    if (e) e.preventDefault();
+    window.dispatchEvent(new CustomEvent('intellifile-reveal-file', { detail: { filePath } }));
+  };
+
+  const handleDeleteStorageFile = async (fileObj) => {
+    const msg = `Are you sure you want to move "${fileObj.name}" (${formatBytes(fileObj.size)}) to your Recycle Bin?`;
+    const ok = await confirmApp(msg);
+    if (!ok) return;
+
+    try {
+      const delFn = window.electron?.deleteStorageFile || ipc?.deleteStorageFile;
+      if (delFn) {
+        const res = await delFn(fileObj.path);
+        if (res?.success) {
+          toast(`Moved "${fileObj.name}" to Recycle Bin`, { type: 'success' });
+          setLargestFiles(prev => prev.filter(f => f.path !== fileObj.path));
+          loadStorageSummary(true);
+        } else {
+          toast(res?.error || 'Failed to delete file', { type: 'error' });
+        }
+      }
+    } catch (e) {
+      toast(e.message || 'Failed to delete file', { type: 'error' });
+    }
+  };
+
+  const handleCleanCache = async () => {
+    setCleaningCache(true);
+    setCleanResult(null);
+    try {
+      const cleanFn = window.electron?.cleanTempCache || ipc?.cleanTempCache;
+      if (cleanFn) {
+        const res = await cleanFn();
+        const bytes = res?.bytesCleaned || 0;
+        const count = res?.filesCount || 0;
+        const resultObj = {
+          success: res?.success,
+          bytesCleaned: bytes,
+          filesCount: count,
+          timestamp: Date.now()
+        };
+        setCleanResult(resultObj);
+        if (res?.success) {
+          toast(bytes > 0 ? `Cleaned ${formatBytes(bytes)} (${count} files)!` : 'Temporary cache clean!', { type: 'success' });
+          loadStorageSummary(true);
+        } else {
+          toast('No temporary cache files to clean', { type: 'info' });
+        }
+      }
+    } catch (e) {
+      toast(e.message || 'Failed to clean cache', { type: 'error' });
+    } finally {
+      setCleaningCache(false);
+    }
+  };
 
   // Indexing Operations State
   const [rescanLoading, setRescanLoading] = useState(false);
@@ -135,7 +283,7 @@ export default function Settings({ theme, onThemeChange, onStartTour }) {
   // Load settings
   const loadSettings = async () => {
     try {
-      const [enabled, folders, root, idx, model, telemetry, autoWi, dbTheme] = await Promise.all([
+      const [enabled, folders, root, idx, model, telemetry, autoWi, autoModel, dbTheme] = await Promise.all([
         ipc?.getSetting?.('auto_sort_enabled'),
         ipc?.getSetting?.('watched_folders'),
         ipc?.getSetting?.('sort_root'),
@@ -143,6 +291,7 @@ export default function Settings({ theme, onThemeChange, onStartTour }) {
         ipc?.getSetting?.('ai_model_path'),
         ipc?.getSetting?.('telemetry_enabled'),
         ipc?.getSetting?.('auto_update_wifi'),
+        ipc?.getSetting?.('auto_model_upgrade'),
         ipc?.getSetting?.('theme'),
       ]);
 
@@ -163,6 +312,7 @@ export default function Settings({ theme, onThemeChange, onStartTour }) {
         ai_model_path: model?.value || '',
         telemetry_enabled: parseBool(telemetry, false),
         auto_update_wifi: parseBool(autoWi, false),
+        auto_model_upgrade: parseBool(autoModel, true),
         theme: dbTheme?.value || theme || 'system',
       };
 
@@ -174,6 +324,7 @@ export default function Settings({ theme, onThemeChange, onStartTour }) {
       setAiModelPath(values.ai_model_path);
       setTelemetryEnabled(values.telemetry_enabled);
       setAutoUpdateWiFi(values.auto_update_wifi);
+      setAutoModelUpgrade(values.auto_model_upgrade);
     } catch (e) {
       console.warn('Failed to load settings', e);
     } finally {
@@ -204,6 +355,7 @@ export default function Settings({ theme, onThemeChange, onStartTour }) {
         case 'ai_model_path': setAiModelPath(String(value)); break;
         case 'telemetry_enabled': setTelemetryEnabled(!!value); break;
         case 'auto_update_wifi': setAutoUpdateWiFi(!!value); break;
+        case 'auto_model_upgrade': setAutoModelUpgrade(!!value); break;
         default: break;
       }
       setInitialSettings(prev => ({ ...prev, [key]: value }));
@@ -313,7 +465,7 @@ export default function Settings({ theme, onThemeChange, onStartTour }) {
       'ai-model': ['ai', 'model', 'llm', 'path', 'download'],
       updates: ['update', 'version', 'download', 'wifi'],
       privacy: ['privacy', 'telemetry', 'data', 'analytics'],
-      'take-tour': ['tour', 'guide', 'tutorial', 'onboarding', 'take a tour'],
+      'take-tour': ['tour', 'guided tour', 'guide', 'tutorial', 'onboarding', 'take a tour'],
       about: ['about', 'version', 'help', 'reset'],
     };
     const sec = SECTIONS.find(s => s.id === sectionId);
@@ -326,6 +478,7 @@ export default function Settings({ theme, onThemeChange, onStartTour }) {
   useEffect(() => {
     loadSettings();
     loadRecent();
+    loadStorageSummary();
     const unsub = ipc?.onAutoSortNotification?.(() => loadRecent());
     return () => { if (typeof unsub === 'function') unsub(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -583,7 +736,7 @@ export default function Settings({ theme, onThemeChange, onStartTour }) {
               <div className="settings-panel-header">
                 <div>
                   <div className="settings-panel-title">
-                    <span className="panel-icon">🎨</span> Appearance
+                    <span className="panel-icon"><FaPalette /></span> Appearance
                   </div>
                   <div className="settings-panel-subtitle">Customize how IntelliFile looks</div>
                 </div>
@@ -597,7 +750,7 @@ export default function Settings({ theme, onThemeChange, onStartTour }) {
                     <div className="theme-preview theme-preview-light" />
                     <div className="theme-card-label">
                       <span>Light</span>
-                      <span className="theme-card-check">{theme === 'light' ? '✓' : ''}</span>
+                      <span className="theme-card-check">{theme === 'light' ? <FiCheck /> : ''}</span>
                     </div>
                   </label>
                   {/* Dark */}
@@ -606,7 +759,7 @@ export default function Settings({ theme, onThemeChange, onStartTour }) {
                     <div className="theme-preview theme-preview-dark" />
                     <div className="theme-card-label">
                       <span>Dark</span>
-                      <span className="theme-card-check">{theme === 'dark' ? '✓' : ''}</span>
+                      <span className="theme-card-check">{theme === 'dark' ? <FiCheck /> : ''}</span>
                     </div>
                   </label>
                   {/* System */}
@@ -615,7 +768,7 @@ export default function Settings({ theme, onThemeChange, onStartTour }) {
                     <div className="theme-preview theme-preview-system" />
                     <div className="theme-card-label">
                       <span>System</span>
-                      <span className="theme-card-check">{theme === 'system' ? '✓' : ''}</span>
+                      <span className="theme-card-check">{theme === 'system' ? <FiCheck /> : ''}</span>
                     </div>
                   </label>
                 </div>
@@ -631,7 +784,7 @@ export default function Settings({ theme, onThemeChange, onStartTour }) {
                 <div className="settings-panel-header">
                   <div>
                     <div className="settings-panel-title">
-                      <span className="panel-icon">🗂️</span> Automatic File Sorting
+                      <span className="panel-icon"><FiFolder /></span> Automatic File Sorting
                     </div>
                     <div className="settings-panel-subtitle">Automatically categorize new files added to watched folders</div>
                   </div>
@@ -761,7 +914,7 @@ export default function Settings({ theme, onThemeChange, onStartTour }) {
               <div className="settings-panel-header">
                 <div>
                   <div className="settings-panel-title">
-                    <span className="panel-icon">🔍</span> Search & Indexing
+                    <span className="panel-icon"><FiSearch /></span> Search & Indexing
                   </div>
                   <div className="settings-panel-subtitle">Control background file indexing for fast semantic search</div>
                 </div>
@@ -779,8 +932,8 @@ export default function Settings({ theme, onThemeChange, onStartTour }) {
                 </div>
 
                 <div style={{ marginTop: '1.5rem', paddingTop: '1.25rem', borderTop: '1px solid var(--bo-light)', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                  <div style={{ fontSize: 'var(--text-sm)', fontWeight: '700', color: 'var(--t-primary)' }}>
-                    🛠️ Indexing Operations
+                  <div style={{ fontSize: 'var(--text-sm)', fontWeight: '700', color: 'var(--t-primary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <FiTool /> Indexing Operations
                   </div>
 
                   {/* Option 1: Re-scan System */}
@@ -833,7 +986,7 @@ export default function Settings({ theme, onThemeChange, onStartTour }) {
                   {indexingProgress && (
                     <div style={{ marginTop: '0.5rem', padding: '0.85rem 1rem', background: 'var(--c-brand-soft, rgba(37, 99, 235, 0.08))', borderRadius: 'var(--rd-md)', border: '1px solid var(--color-primary)' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.45rem', fontSize: 'var(--text-xs)', fontWeight: '700', color: 'var(--color-primary)' }}>
-                        <span>⚡ {indexingProgress.phase ? String(indexingProgress.phase).toUpperCase() : 'INDEXING'}: {indexingProgress.detail || 'Processing indexing task…'}</span>
+                        <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><FiZap /> {indexingProgress.phase ? String(indexingProgress.phase).toUpperCase() : 'INDEXING'}: {indexingProgress.detail || 'Processing indexing task…'}</span>
                         <span>{indexingProgress.pct ?? 0}%</span>
                       </div>
                       <div style={{ height: '8px', background: 'rgba(0, 0, 0, 0.15)', borderRadius: '4px', overflow: 'hidden' }}>
@@ -852,7 +1005,7 @@ export default function Settings({ theme, onThemeChange, onStartTour }) {
               <div className="settings-panel-header">
                 <div>
                   <div className="settings-panel-title">
-                    <span className="panel-icon">🤖</span> AI Model Settings
+                    <span className="panel-icon"><FiCpu /></span> AI Model Settings
                   </div>
                   <div className="settings-panel-subtitle">Configure local LLM & embedding model parameters</div>
                 </div>
@@ -870,6 +1023,18 @@ export default function Settings({ theme, onThemeChange, onStartTour }) {
                     <button className="settings-button secondary" onClick={handleBrowseModel}>Browse</button>
                   </div>
                 </label>
+
+                {/* Auto Model Upgrade Toggle */}
+                <div className="settings-toggle-row" onClick={() => persistSetting('auto_model_upgrade', !autoModelUpgrade)} style={{ marginTop: '1rem' }}>
+                  <div className="settings-toggle-info">
+                    <div className="settings-toggle-label">Automatically Upgrade Search Models</div>
+                    <div className="settings-toggle-desc">Background dual-database migration keeps searches active while building new vector embeddings</div>
+                  </div>
+                  <label className="switch" onClick={(e) => e.stopPropagation()}>
+                    <input type="checkbox" checked={autoModelUpgrade} onChange={() => persistSetting('auto_model_upgrade', !autoModelUpgrade)} />
+                    <span className="slider"></span>
+                  </label>
+                </div>
 
                 {/* Model Download & Manage Button */}
                 <div style={{ marginTop: '1.25rem', paddingTop: '1.25rem', borderTop: '1px solid var(--bo-light)', display: 'flex', gap: '0.75rem', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -896,7 +1061,7 @@ export default function Settings({ theme, onThemeChange, onStartTour }) {
               <div className="settings-panel-header">
                 <div>
                   <div className="settings-panel-title">
-                    <span className="panel-icon">🔄</span> Application Updates
+                    <span className="panel-icon"><FiRefreshCw /></span> Application Updates
                   </div>
                   <div className="settings-panel-subtitle">Keep IntelliFile up to date with the latest features</div>
                 </div>
@@ -933,7 +1098,7 @@ export default function Settings({ theme, onThemeChange, onStartTour }) {
                 {updateStatus === 'checking' && (
                   <div className="update-status-container" style={{ marginBottom: '16px', background: 'var(--c-info-soft)', border: '1px solid rgba(56, 189, 248, 0.3)' }}>
                     <span className="update-status" style={{ color: 'var(--c-info)', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <span style={{ display: 'inline-block', animation: 'spin 1s linear infinite' }}>🔄</span>
+                      <FiRefreshCw className="spin" style={{ fontSize: '1.1rem' }} />
                       Checking for updates…
                     </span>
                   </div>
@@ -941,19 +1106,19 @@ export default function Settings({ theme, onThemeChange, onStartTour }) {
 
                 {updateStatus === 'latest' && (
                   <div className="update-status-container" style={{ marginBottom: '16px', background: 'var(--c-success-soft)', border: '1px solid rgba(16, 185, 129, 0.3)' }}>
-                    <span className="update-status" style={{ color: 'var(--c-success)' }}>
-                      ✓ You are running the latest version of IntelliFile (v{currentVersion})
+                    <span className="update-status" style={{ color: 'var(--c-success)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <FiCheckCircle style={{ fontSize: '1.1rem' }} /> You are running the latest version of IntelliFile (v{currentVersion})
                     </span>
                   </div>
                 )}
 
                 {updateStatus === 'available' && (
                   <div className="update-status-container" style={{ marginBottom: '16px', background: 'var(--c-brand-soft)', border: '1px solid var(--color-primary)' }}>
-                    <span className="update-status" style={{ color: 'var(--color-primary)', fontWeight: '700' }}>
-                      🎉 Version v{latestVersion} is available!
+                    <span className="update-status" style={{ color: 'var(--color-primary)', fontWeight: '700', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <FiDownload style={{ fontSize: '1.1rem' }} /> Version v{latestVersion} is available!
                     </span>
-                    <button className="settings-button primary" onClick={handleDownloadUpdate}>
-                      Download Update (v{latestVersion})
+                    <button className="settings-button primary" onClick={handleDownloadUpdate} style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                      <FiDownload /> Download Update (v{latestVersion})
                     </button>
                   </div>
                 )}
@@ -961,7 +1126,7 @@ export default function Settings({ theme, onThemeChange, onStartTour }) {
                 {updateStatus === 'downloading' && (
                   <div className="update-status-container" style={{ marginBottom: '16px', flexDirection: 'column', alignItems: 'stretch', gap: '8px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 'var(--text-sm)', fontWeight: '600', color: 'var(--t-primary)' }}>
-                      <span>Downloading update v{latestVersion}…</span>
+                      <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}><FiDownload className="spin" /> Downloading update v{latestVersion}…</span>
                       <span>{downloadProgress}%</span>
                     </div>
                     <div style={{ height: '8px', background: 'var(--bo-light)', borderRadius: '4px', overflow: 'hidden' }}>
@@ -972,22 +1137,22 @@ export default function Settings({ theme, onThemeChange, onStartTour }) {
 
                 {updateStatus === 'downloaded' && (
                   <div className="update-status-container" style={{ marginBottom: '16px', background: 'var(--c-success-soft)', border: '1px solid var(--c-success)' }}>
-                    <span className="update-status" style={{ color: 'var(--c-success)', fontWeight: '700' }}>
-                      ⚡ Update v{latestVersion || 'new'} downloaded and ready to install!
+                    <span className="update-status" style={{ color: 'var(--c-success)', fontWeight: '700', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <FiZap style={{ fontSize: '1.1rem' }} /> Update v{latestVersion || 'new'} downloaded and ready to install!
                     </span>
-                    <button className="settings-button primary" onClick={handleRestartAndInstall}>
-                      Install & Restart Now
+                    <button className="settings-button primary" onClick={handleRestartAndInstall} style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                      <FiPower /> Install & Restart Now
                     </button>
                   </div>
                 )}
 
                 {updateStatus === 'error' && (
                   <div className="update-status-container" style={{ marginBottom: '16px', background: 'var(--c-error-soft)', border: '1px solid var(--c-error)' }}>
-                    <span className="update-status" style={{ color: 'var(--c-error)' }}>
-                      ❌ {updateError || 'Could not check for updates'}
+                    <span className="update-status" style={{ color: 'var(--c-error)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <FiXCircle style={{ fontSize: '1.1rem' }} /> {updateError || 'Could not check for updates'}
                     </span>
-                    <button className="settings-button secondary" onClick={handleCheckForUpdates}>
-                      Retry
+                    <button className="settings-button secondary" onClick={handleCheckForUpdates} style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                      <FiRefreshCw /> Retry
                     </button>
                   </div>
                 )}
@@ -1007,13 +1172,323 @@ export default function Settings({ theme, onThemeChange, onStartTour }) {
             </section>
           )}
 
+          {/* ═══ STORAGE ═══ */}
+          {activeTab === 'storage' && matchesSection('storage') && (
+            <section className="settings-panel">
+              <div className="settings-panel-header">
+                <div>
+                  <div className="settings-panel-title">
+                    <span className="panel-icon"><FiHardDrive /></span> Storage & Disk Usage
+                  </div>
+                  <div className="settings-panel-subtitle">Analyze drive capacity, top space hogs, and clean temporary cache</div>
+                </div>
+                <div className="section-actions">
+                  <button
+                    className="settings-button secondary"
+                    onClick={() => loadStorageSummary(true)}
+                    disabled={storageLoading}
+                    style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+                  >
+                    <FiRefreshCw className={storageLoading ? 'spin' : ''} /> Refresh Storage
+                  </button>
+                </div>
+              </div>
+
+              <div className="settings-panel-content">
+                {!storageSummary && storageLoading && (
+                  <div className="update-status-container" style={{ marginBottom: '16px', background: 'var(--c-info-soft)', border: '1px solid rgba(56, 189, 248, 0.3)' }}>
+                    <span className="update-status" style={{ color: 'var(--c-info)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <FiRefreshCw className="spin" />
+                      Calculating live disk storage capacity and scanning user folders...
+                    </span>
+                  </div>
+                )}
+
+                {(() => {
+                  if (!storageSummary && storageLoading) return null;
+
+                  const total = storageSummary?.totalBytes || 0;
+                  const used = storageSummary?.usedBytes || 0;
+                  const free = storageSummary?.freeBytes || 0;
+                  const usedPct = total > 0 ? Math.min(100, Math.round((used / total) * 100)) : 0;
+                  const freePct = 100 - usedPct;
+
+                  const breakdown = storageSummary?.breakdown || {
+                    images: { bytes: 0, count: 0 },
+                    videos: { bytes: 0, count: 0 },
+                    audio: { bytes: 0, count: 0 },
+                    documents: { bytes: 0, count: 0 },
+                    archives: { bytes: 0, count: 0 },
+                    developer: { bytes: 0, count: 0 },
+                    software: { bytes: 0, count: 0 },
+                    system: { bytes: 0, count: 0 },
+                    intellifile: { bytes: 0, count: 0 },
+                    others: { bytes: 0, count: 0 }
+                  };
+
+                  const categories = [
+                    { key: 'images', label: 'Images', icon: <FiImage />, color: '#f97316', data: breakdown.images },
+                    { key: 'videos', label: 'Videos', icon: <FiFilm />, color: '#8b5cf6', data: breakdown.videos },
+                    { key: 'audio', label: 'Audio', icon: <FiMusic />, color: '#10b981', data: breakdown.audio },
+                    { key: 'documents', label: 'Documents', icon: <FiFileText />, color: '#3b82f6', data: breakdown.documents },
+                    { key: 'archives', label: 'Archives & Zip', icon: <FiPackage />, color: '#f59e0b', data: breakdown.archives },
+                    { key: 'developer', label: 'Code & Dev Projects', icon: <FiCode />, color: '#ec4899', data: breakdown.developer },
+                    { key: 'software', label: 'Installed Software & Apps', icon: <FiGrid />, color: '#06b6d4', data: breakdown.software },
+                    { key: 'system', label: 'Windows OS & Drivers', icon: <FiLayers />, color: '#6366f1', data: breakdown.system },
+                    { key: 'intellifile', label: 'IntelliFile AI Data', icon: <FiDatabase />, color: 'var(--color-primary)', data: breakdown.intellifile },
+                    { key: 'others', label: 'Other Caches & Data', icon: <FiFolder />, color: '#64748b', data: breakdown.others }
+                  ];
+
+                  return (
+                    <>
+                      {/* Top Capacity Bar Card */}
+                      <div className="storage-overview-card">
+                        <div className="storage-overview-header">
+                          <div>
+                            <div className="storage-capacity-title">System Drive Storage</div>
+                            <div className="storage-capacity-subtitle">
+                              <strong>{formatBytes(used)}</strong> used of <strong>{formatBytes(total)}</strong> ({formatBytes(free)} free, {freePct}% available)
+                            </div>
+                          </div>
+                          <div className="storage-capacity-badge">
+                            {usedPct}% Used
+                          </div>
+                        </div>
+
+                        {/* Mobile-Style Multi-Color Stacked Bar */}
+                        <div className="storage-stacked-bar">
+                          {categories.map((cat) => {
+                            const catBytes = cat.data?.bytes || 0;
+                            if (catBytes <= 0) return null;
+                            const pct = total > 0 ? (catBytes / total) * 100 : 0;
+                            return (
+                              <div
+                                key={cat.key}
+                                className="storage-bar-segment"
+                                style={{ width: `${Math.max(0.5, pct)}%`, minWidth: '6px', background: cat.color }}
+                                title={`${cat.label}: ${formatBytes(catBytes)} (${pct < 0.1 ? '<0.1' : pct.toFixed(1)}%)`}
+                              />
+                            );
+                          })}
+                        </div>
+
+                        {/* Legend */}
+                        <div className="storage-legend">
+                          {categories.map((cat) => (
+                            <div key={cat.key} className="storage-legend-item">
+                              <span className="storage-dot" style={{ background: cat.color }} />
+                              <span className="storage-legend-label">{cat.label}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Category Breakdown Grid */}
+                      <div className="storage-grid">
+                        {categories.map((cat) => {
+                          const catBytes = cat.data?.bytes || 0;
+                          const catCount = cat.data?.count || 0;
+                          const pctOfUsed = used > 0 ? ((catBytes / used) * 100).toFixed(1) : 0;
+
+                          return (
+                            <div key={cat.key} className="storage-card">
+                              <div className="storage-card-header">
+                                <div className="storage-card-icon" style={{ background: `${cat.color}20`, color: cat.color }}>
+                                  {cat.icon}
+                                </div>
+                                <div className="storage-card-info">
+                                  <div className="storage-card-name">{cat.label}</div>
+                                  <div className="storage-card-count">{catCount > 0 ? `${catCount.toLocaleString()} files` : 'System Data'}</div>
+                                </div>
+                                <div className="storage-card-size">
+                                  {formatBytes(catBytes)}
+                                </div>
+                              </div>
+                              <div className="storage-card-progress-track">
+                                <div className="storage-card-progress-fill" style={{ width: `${Math.min(100, Math.max(1, pctOfUsed))}%`, background: cat.color }} />
+                              </div>
+                              <div className="storage-card-meta">
+                                <span>{pctOfUsed}% of used space</span>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      {/* IntelliFile App Storage Footprint Section */}
+                      <div className="storage-maintenance-card" style={{ marginTop: '1.25rem' }}>
+                        <div className="storage-maintenance-header">
+                          <div className="settings-toggle-label" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <FiDatabase style={{ color: 'var(--color-primary)' }} /> IntelliFile Offline AI Data & Search Index
+                          </div>
+                          <div className="settings-toggle-desc">
+                            Local SQLite Database, FAISS vector embeddings, search index, and cached AI model weights stored offline.
+                          </div>
+                        </div>
+
+                        <div className="storage-maintenance-stats">
+                          <div className="storage-m-item">
+                            <span className="storage-m-val">{formatBytes(breakdown.intellifile?.bytes || 0)}</span>
+                            <span className="storage-m-lbl">Total Local Footprint</span>
+                          </div>
+                          <div className="storage-m-item">
+                            <span className="storage-m-val">100% Offline</span>
+                            <span className="storage-m-lbl">Privacy & Security</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Top Storage Hogs Scanner Card */}
+                      <div className="storage-hogs-card" style={{ marginTop: '1.25rem' }}>
+                        <div className="storage-hogs-header">
+                          <div>
+                            <div className="storage-capacity-title" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <FiAlertTriangle style={{ color: '#ef4444' }} /> Top 10 Storage Hogs
+                            </div>
+                            <div className="storage-capacity-subtitle">
+                              Largest multi-gigabyte files detected across your watched folders
+                            </div>
+                          </div>
+                        </div>
+
+                        {largestFiles.length === 0 ? (
+                          <div className="storage-hogs-empty" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
+                            <FiCheckCircle style={{ color: 'var(--c-success)' }} /> No large space hogs detected!
+                          </div>
+                        ) : (
+                          <div className="storage-hogs-list">
+                            {largestFiles.map((file, idx) => (
+                              <div key={file.path || idx} className="storage-hog-item">
+                                <div className="storage-hog-badge">#{idx + 1}</div>
+                                <div className="storage-hog-info">
+                                  <div className="storage-hog-name" title={file.path}>{file.name}</div>
+                                  <div className="storage-hog-path">{file.folder} • {file.path}</div>
+                                </div>
+                                <div className="storage-hog-size">{formatBytes(file.size)}</div>
+                                <div className="storage-hog-actions">
+                                  <button
+                                    className="settings-button secondary text-only"
+                                    onClick={(e) => handleShowInFolder(file.path, e)}
+                                    title="Open in IntelliFile Explorer"
+                                    style={{ padding: '4px 8px', fontSize: '12px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                                  >
+                                    <FiFolder /> Reveal
+                                  </button>
+                                  <button
+                                    className="settings-button danger text-only"
+                                    onClick={() => handleDeleteStorageFile(file)}
+                                    title="Move file to Trash"
+                                    style={{ padding: '4px 8px', fontSize: '12px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                                  >
+                                    <FiTrash2 /> Trash
+                                  </button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Folder-Level Storage Breakdown */}
+                      {folderBreakdown.length > 0 && (
+                        <div className="storage-hogs-card" style={{ marginTop: '1.25rem' }}>
+                          <div className="storage-hogs-header">
+                            <div>
+                              <div className="storage-capacity-title" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <FiFolderPlus style={{ color: 'var(--color-primary)' }} /> Folder Storage Map
+                              </div>
+                              <div className="storage-capacity-subtitle">
+                                Drive usage ranked by system user directory
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="storage-folder-list">
+                            {folderBreakdown.map((f) => {
+                              const fPct = used > 0 ? ((f.bytes / used) * 100).toFixed(1) : 0;
+                              return (
+                                <div key={f.path} className="storage-folder-item" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                  <div className="storage-folder-icon" style={{ color: 'var(--color-primary)', display: 'flex', alignItems: 'center' }}>
+                                    <FiFolder />
+                                  </div>
+                                  <div className="storage-folder-info" style={{ flex: 1 }}>
+                                    <div className="storage-folder-name">{f.name}</div>
+                                    <div className="storage-folder-count">{f.count.toLocaleString()} files</div>
+                                  </div>
+                                  <div className="storage-folder-bar-track" style={{ flex: 1 }}>
+                                    <div className="storage-folder-bar-fill" style={{ width: `${Math.min(100, Math.max(1, fPct))}%` }} />
+                                  </div>
+                                  <div className="storage-folder-size" style={{ minWidth: '90px', textAlign: 'right' }}>
+                                    <strong>{formatBytes(f.bytes)}</strong>
+                                    <span style={{ fontSize: 'var(--text-xs)', color: 'var(--t-muted)', marginLeft: '4px' }}>({fPct}%)</span>
+                                  </div>
+                                  <button
+                                    className="settings-button secondary text-only"
+                                    onClick={(e) => handleShowInFolder(f.path, e)}
+                                    title="Open Folder in IntelliFile Explorer"
+                                    style={{ padding: '4px 8px', fontSize: '12px', display: 'inline-flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}
+                                  >
+                                    <FiFolder /> Open
+                                  </button>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Smart Space Recovery & Cache Cleaner Section */}
+                      <div className="storage-maintenance-card" style={{ marginTop: '1.25rem' }}>
+                        <div className="storage-maintenance-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <div>
+                            <div className="settings-toggle-label" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <FiZap style={{ color: '#f59e0b' }} /> Smart Space Recovery & Temp Cleaner
+                            </div>
+                            <div className="settings-toggle-desc">
+                              Safely clean temporary system logs, thumbnail caches, and leftover installation files.
+                            </div>
+                          </div>
+                          <button
+                            className="settings-button primary"
+                            onClick={handleCleanCache}
+                            disabled={cleaningCache}
+                            style={{ flexShrink: 0, display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                          >
+                            <FiTrash2 /> {cleaningCache ? 'Cleaning…' : 'Clean Temp Files'}
+                          </button>
+                        </div>
+
+                        {cleanResult && (
+                          <div className="storage-clean-banner">
+                            <FiCheckCircle className="storage-clean-icon" style={{ color: 'var(--c-success)' }} />
+                            <span className="storage-clean-text">
+                              Space Recovery Complete: Freed <strong>{formatBytes(cleanResult.bytesCleaned)}</strong> across {cleanResult.filesCount || 0} temporary items!
+                            </span>
+                            <button
+                              type="button"
+                              className="storage-clean-dismiss"
+                              onClick={() => setCleanResult(null)}
+                              title="Dismiss notification"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </>
+                  );
+                })()}
+              </div>
+            </section>
+          )}
+
           {/* ═══ PRIVACY ═══ */}
           {activeTab === 'privacy' && matchesSection('privacy') && (
             <section className="settings-panel">
               <div className="settings-panel-header">
                 <div>
                   <div className="settings-panel-title">
-                    <span className="panel-icon">🔒</span> Privacy & Offline Diagnostics
+                    <span className="panel-icon"><FiLock /></span> Privacy & Offline Diagnostics
                   </div>
                   <div className="settings-panel-subtitle">Control local usage logging and privacy settings</div>
                 </div>
@@ -1034,8 +1509,8 @@ export default function Settings({ theme, onThemeChange, onStartTour }) {
                 {telemetryEnabled && (
                   <div style={{ marginTop: '1.25rem', paddingTop: '1.25rem', borderTop: '1px solid var(--bo-light)' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
-                      <span style={{ fontSize: 'var(--text-sm)', fontWeight: '700', color: 'var(--t-primary)' }}>
-                        📊 Local Analytics Summary (Stored Offline in SQLite)
+                      <span style={{ fontSize: 'var(--text-sm)', fontWeight: '700', color: 'var(--t-primary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <FiBarChart2 /> Local Analytics Summary (Stored Offline in SQLite)
                       </span>
                       <button
                         className="settings-button secondary"
@@ -1089,20 +1564,12 @@ export default function Settings({ theme, onThemeChange, onStartTour }) {
           {/* ═══ ABOUT ═══ */}
           {activeTab === 'about' && matchesSection('about') && (
             <>
-              <button className="settings-tour-banner" type="button" onClick={onStartTour} style={{ marginBottom: '16px' }}>
-                <span className="settings-tour-icon">✦</span>
-                <span>
-                  <strong>Take a tour</strong>
-                  <small>See how IntelliFile search, sync, vault, and version history work.</small>
-                </span>
-                <span className="settings-tour-arrow">›</span>
-              </button>
 
               <section className="settings-panel">
                 <div className="settings-panel-header">
                   <div>
                     <div className="settings-panel-title">
-                      <span className="panel-icon">ℹ️</span> About IntelliFile
+                      <span className="panel-icon"><FiInfo /></span> About IntelliFile
                     </div>
                   </div>
                 </div>
@@ -1168,7 +1635,7 @@ export default function Settings({ theme, onThemeChange, onStartTour }) {
           {/* Unsaved changes bar */}
           {isDirty && (
             <div className="settings-apply-bar">
-              <div className="settings-apply-text">⚠ You have unsaved changes</div>
+              <div className="settings-apply-text" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><FiAlertCircle /> You have unsaved changes</div>
               <div className="settings-apply-actions">
                 <button className="settings-button secondary" onClick={() => { loadSettings(); }}>Discard</button>
                 <button className="settings-button primary" onClick={applyAllSettings}>Apply All</button>

@@ -202,7 +202,7 @@ const VersionTimeline = ({ filePath }) => {
     '.exe', '.dll', '.sys', '.msi', '.com', '.scr',                                      // executables/system
     '.lnk', '.url', '.shortcut',                                                          // shortcuts
     '.mp4', '.mp3', '.avi', '.mkv', '.mov', '.wav', '.flac', '.aac',                     // media
-    '.zip', '.rar', '.7z', '.tar', '.gz',                                                 // archives
+    '.zip', '.rar', '.7z', '.tar', '.gz', '.pak', '.bin', '.backup',                    // archives and application data
     '.ppt', '.pptm',                                                                       // presentations (not .pptx)
   ]);
   const getExt = (p) => {
@@ -225,6 +225,7 @@ const VersionTimeline = ({ filePath }) => {
     '.mp3': '🎵', '.wav': '🎵', '.flac': '🎵', '.aac': '🎵',
     // Archives
     '.zip': '🗜️', '.rar': '🗜️', '.7z': '🗜️', '.tar': '🗜️', '.gz': '🗜️',
+    '.pak': '📦', '.bin': '📦', '.backup': '💾',
     // Presentations
     '.ppt': '📊', '.pptm': '📊',
   };
@@ -239,6 +240,7 @@ const VersionTimeline = ({ filePath }) => {
     '.mp3': 'MP3 Audio', '.wav': 'WAV Audio', '.flac': 'FLAC Audio', '.aac': 'AAC Audio',
     '.zip': 'ZIP Archive', '.rar': 'RAR Archive', '.7z': '7-Zip Archive',
     '.tar': 'TAR Archive', '.gz': 'GZip Archive',
+    '.pak': 'Package File', '.bin': 'Binary File', '.backup': 'Backup File',
     '.ppt': 'PowerPoint', '.pptm': 'PowerPoint Macro',
   };
 

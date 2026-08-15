@@ -59,7 +59,7 @@ export const getParentPath = (filePath) => {
  */
 export const sortItems = (items, sortBy, sortDirection = 'asc') => {
   if (!items) return [];
-  
+
   return [...items].sort((a, b) => {
     if (a.type === 'folder' && b.type !== 'folder') return -1;
     if (a.type !== 'folder' && b.type === 'folder') return 1;
@@ -94,13 +94,13 @@ export const sortItems = (items, sortBy, sortDirection = 'asc') => {
  */
 export const groupItems = (items, groupBy) => {
   if (!items) return [];
-  
+
   if (groupBy === 'none') {
     return [{ key: 'All items', items }];
   }
 
   const groups = new Map();
-  
+
   items.forEach(item => {
     let key = 'Other';
     if (groupBy === 'type') {
@@ -108,7 +108,7 @@ export const groupItems = (items, groupBy) => {
     } else if (groupBy === 'date') {
       key = formatDate(item.modified);
     }
-    
+
     if (!groups.has(key)) {
       groups.set(key, []);
     }
@@ -134,7 +134,7 @@ export const groupItems = (items, groupBy) => {
  */
 export const updateBreadcrumb = (dirPath) => {
   if (!dirPath) return [];
-  
+
   const parts = dirPath.split('\\').filter(p => p);
   return parts.map((part, idx) => ({
     name: part,

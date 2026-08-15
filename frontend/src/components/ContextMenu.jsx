@@ -76,7 +76,7 @@ function ContextMenu({
     setMenuPosition({ x: nextX, y: nextY });
   }, [visible, position]);
 
-  
+
   useEffect(() => {
     if (!visible) return;
 
@@ -222,7 +222,7 @@ function ContextMenu({
       </>
     );
   }
-if (!selectedItem) return null;
+  if (!selectedItem) return null;
   const isZipFile = selectedItem?.type === 'file' && selectedItem?.ext?.toLowerCase() === '.zip';
 
   // File/folder context menu

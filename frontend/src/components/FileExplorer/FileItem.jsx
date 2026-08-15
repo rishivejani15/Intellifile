@@ -22,7 +22,7 @@ function FileItem({
 }) {
   const inputRef = useRef(null);
   const isRenaming = renamingItem?.path === item.path;
-  const isFileSelected = 
+  const isFileSelected =
     selectedFiles?.base?.path === item.path ||
     selectedFiles?.ours?.path === item.path ||
     selectedFiles?.theirs?.path === item.path ||
@@ -76,8 +76,8 @@ function FileItem({
                   {item.type === 'folder' ? 'Folder' : item.type === 'drive' ? 'Drive' : item.ext}
                 </span>
                 <span className="file-size">
-                  {item.type === 'drive' 
-                    ? `${Math.round(item.size / (1024 ** 3))} GB` 
+                  {item.type === 'drive'
+                    ? `${Math.round(item.size / (1024 ** 3))} GB`
                     : formatFileSize(item.size)}
                 </span>
                 <span className="file-date">{formatDate(item.modified)}</span>
@@ -85,10 +85,10 @@ function FileItem({
             )}
             {viewMode !== 'details' && (
               <div className="file-meta">
-                {item.type === 'folder' 
-                  ? 'Folder' 
-                  : item.type === 'drive' 
-                    ? `${Math.round(item.size / (1024 ** 3))} GB total` 
+                {item.type === 'folder'
+                  ? 'Folder'
+                  : item.type === 'drive'
+                    ? `${Math.round(item.size / (1024 ** 3))} GB total`
                     : formatFileSize(item.size)}
               </div>
             )}
@@ -99,4 +99,4 @@ function FileItem({
   );
 }
 
-export default  FileItem;
+export default FileItem;
