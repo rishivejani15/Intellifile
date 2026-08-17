@@ -39,6 +39,29 @@ function App() {
   };
   const [showOnboardingTour, setShowOnboardingTour] = useState(false);
 
+  const startOnboardingTour = () => {
+    setActiveTab('explorer');
+    setShowOnboardingTour(true);
+    window.dispatchEvent(new CustomEvent('intellifile-tour-start'));
+  };
+
+  const closeOnboardingTour = () => {
+    try { localStorage.setItem(TOUR_COMPLETED_KEY, 'true'); } catch (_) {}
+    setShowOnboardingTour(false);
+  };
+
+  // Synchronize native Windows titlebar overlay buttons colors with current theme
+  useEffect(() => {
+    const isDark = theme === 'dark' || (theme === 'system' && window.matchMedia?.('(prefers-color-scheme: dark)').matches);
+    if (window.intellifile?.setTitleBarOverlay) {
+      window.intellifile.setTitleBarOverlay({
+        color: isDark ? '#09090b' : '#f8fafc',
+        symbolColor: isDark ? '#e8ece9' : '#0f172a',
+        height: 38
+      });
+    }
+  }, [theme]);
+
   useEffect(() => {
     console.log('App mounted, ipcRenderer available:', !!ipcRenderer);
     
@@ -115,14 +138,36 @@ function App() {
 
   useEffect(() => {
     async function fetchDrives() {
-      if (ipcRenderer) {
-        const result = await ipcRenderer.invoke('get-drives-info');
-        if (result.success) {
-          setDrives(result.drives);
+      try {
+        if (window.intellifile?.getDrivesInfo) {
+          const result = await window.intellifile.getDrivesInfo();
+          if (result?.success && Array.isArray(result.drives)) {
+            setDrives(result.drives);
+          }
+        } else if (ipcRenderer) {
+          const result = await ipcRenderer.invoke('get-drives-info');
+          if (result?.success && Array.isArray(result.drives)) {
+            setDrives(result.drives);
+          }
         }
-      }
+      } catch (_) {}
     }
+
     fetchDrives();
+
+    // Listen to real-time drive changes from main process (USB pendrive inserted/removed)
+    const unsub = window.intellifile?.onDrivesChanged?.((newDrives) => {
+      if (Array.isArray(newDrives)) {
+        setDrives(newDrives);
+      }
+    });
+
+    window.addEventListener('focus', fetchDrives);
+
+    return () => {
+      if (typeof unsub === 'function') unsub();
+      window.removeEventListener('focus', fetchDrives);
+    };
   }, []);
 
   const handleFileSelect = (file) => {
@@ -201,22 +246,12 @@ function App() {
     }
   }, [setupComplete]);
 
-  const startOnboardingTour = () => {
-    setActiveTab('explorer');
-    setShowOnboardingTour(true);
-  };
-
-  const closeOnboardingTour = () => {
-    try { localStorage.setItem(TOUR_COMPLETED_KEY, 'true'); } catch (_) {}
-    setShowOnboardingTour(false);
-  };
-
   return (
     <div className="App">
       <header className="App-header">
         <div className="header-left">
-          <img src={process.env.PUBLIC_URL + '/intellifile_logo.png'} alt="IntelliFile Logo" className="app-logo" />
-          <h1 className="app-title">IntelliFile</h1>
+          <img src={process.env.PUBLIC_URL + '/intellifile_logo.png'} alt="IntelliFile" className="app-logo" />
+          <span className="app-title">IntelliFile</span>
         </div>
         <div className="tab-nav" data-tour="app-navigation">
           <button

@@ -360,60 +360,67 @@ body {
 }
 
 /* ───────────────────────────────────────────────────────
-   Header - Glassmorphic Bar
+   Header - Native Windows Titlebar Ribbon with Tabs
    ─────────────────────────────────────────────────────── */
 .App-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 0 var(--sp-5);
-  height: 60px;
-  min-height: 60px;
+  justify-content: flex-start;
+  padding: 0 140px 0 var(--sp-2); /* 140px reserved for native Windows titlebar buttons */
+  height: 38px;
+  min-height: 38px;
   background: var(--s-glass);
   backdrop-filter: blur(20px) saturate(1.2);
   -webkit-backdrop-filter: blur(20px) saturate(1.2);
   border-bottom: 1px solid var(--bo-light);
-  gap: var(--sp-4);
+  gap: var(--sp-2);
   box-shadow: var(--sh-sm);
   z-index: var(--z-sticky-top);
+  -webkit-app-region: drag;
+  user-select: none;
 }
 
 .header-left {
   display: flex;
   align-items: center;
-  gap: var(--sp-3);
+  gap: var(--sp-2);
   flex-shrink: 0;
+  -webkit-app-region: drag;
+  padding-right: 4px;
 }
 
 .app-logo {
-  width: 36px;
-  height: 36px;
+  width: 18px;
+  height: 18px;
   object-fit: contain;
   flex-shrink: 0;
-  filter: drop-shadow(0 2px 6px var(--c-brand-glow));
+  filter: drop-shadow(0 2px 4px var(--c-brand-glow));
+  pointer-events: none;
 }
 
 .app-title {
-  font-size: var(--text-lg);
-  font-weight: 800;
+  font-size: 12.5px;
+  font-weight: 700;
   color: var(--t-primary);
-  margin: 0;
-  letter-spacing: -0.5px;
+  letter-spacing: -0.2px;
   white-space: nowrap;
+  pointer-events: none;
+  padding-right: 6px;
 }
 
 /* ───────────────────────────────────────────────────────
-   Tab Navigation - Modern Segmented
+   Tab Navigation - Native Ribbon Segmented Tabs
    ─────────────────────────────────────────────────────── */
 .tab-nav {
   display: flex;
-  gap: var(--sp-2);
+  gap: 4px;
   height: 100%;
   flex: 1;
   align-items: center;
-  padding: var(--sp-2) 0;
+  padding: 0 4px;
   overflow-x: auto;
   overflow-y: hidden;
+  -webkit-app-region: no-drag;
 }
 
 .tab-nav::-webkit-scrollbar {
@@ -425,15 +432,20 @@ body {
   background: transparent;
   border: none;
   color: var(--t-secondary);
-  padding: var(--sp-2) var(--sp-4);
-  font-size: var(--text-sm);
+  padding: 3px 13px;
+  font-size: 12.5px;
   font-weight: 600;
   cursor: pointer;
-  border-radius: var(--rd-md);
+  border-radius: var(--rd-sm);
   white-space: nowrap;
-  transition: all var(--dur-200) var(--ease-default);
+  transition: all var(--dur-150) var(--ease-default);
   letter-spacing: 0.2px;
   overflow: hidden;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  -webkit-app-region: no-drag;
 }
 
 .tab-btn::before {
@@ -443,8 +455,8 @@ body {
   background: var(--c-brand-soft);
   border-radius: inherit;
   opacity: 0;
-  transform: scale(0.9);
-  transition: all var(--dur-200) var(--ease-spring-sm);
+  transform: scale(0.92);
+  transition: all var(--dur-150) var(--ease-spring-sm);
 }
 
 .tab-btn:hover {
@@ -464,6 +476,44 @@ body {
 
 .tab-btn.active::before {
   opacity: 1;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  height: 100%;
+  gap: var(--sp-2);
+  flex-shrink: 0;
+  -webkit-app-region: no-drag;
+}
+
+.update-nav-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 9px;
+  font-size: 11.5px;
+  font-weight: 600;
+  border-radius: var(--rd-full);
+  border: 1px solid var(--color-primary);
+  background: var(--c-brand-soft);
+  color: var(--color-primary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  height: 26px;
+  -webkit-app-region: no-drag;
+}
+
+.update-nav-btn:hover {
+  background: var(--color-primary);
+  color: #fff;
+}
+
+.update-version-chip {
+  font-size: 9.5px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.1);
 }
 
 /* ───────────────────────────────────────────────────────

@@ -8,8 +8,9 @@ import {
 import { MdFolder, MdClose, MdSearch, MdContentCopy } from 'react-icons/md';
 import './SyncManager.css';
 import '../FileLockManager.css';
-import { showErrorToast } from '../../utils/toast';
+import { showErrorToast, showToast } from '../../utils/toast';
 import { getFileIcon } from '../../utils/fileUtils';
+import VaultFilePicker from '../VaultFilePicker';
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -96,6 +97,7 @@ const SyncManager = () => {
   const [localAddress, setLocalAddress] = useState('');
   const [localAddressError, setLocalAddressError] = useState('');
   const [connectedDevices, setConnectedDevices] = useState([]);
+  const [showFilePicker, setShowFilePicker] = useState(false);
   const isConnected = ['synced', 'syncing', 'waiting', 'reconnecting', 'connected_p2p', 'connected_relay'].includes(syncStatus.status);
 
   const qrValue = localAddress
@@ -275,17 +277,36 @@ const SyncManager = () => {
 
   // ── Handlers ─────────────────────────────────────────────────────────
 
-  const handleAddFiles = async () => {
-    if (!window.intellifile?.selectFilesForSync) return;
+  const handleAddFiles = () => {
+    setShowFilePicker(true);
+  };
+
+  const handleFilePickerSelect = async (filePath) => {
+    setShowFilePicker(false);
+    if (!filePath) return;
     try {
       setLoading(true);
-      const res = await window.intellifile.selectFilesForSync();
-      if (res.success && res.added > 0) await loadFiles();
+      if (window.intellifile?.addFilesToSync) {
+        const res = await window.intellifile.addFilesToSync([filePath]);
+        if (res?.success && res.added > 0) {
+          showToast('File added to Sync folder', { type: 'success' });
+          await loadFiles();
+        } else if (res?.errors?.length > 0) {
+          showErrorToast('Could not add file to sync', res.errors[0]?.error || 'Failed to add file.');
+        }
+      } else if (window.intellifile?.selectFilesForSync) {
+        const res = await window.intellifile.selectFilesForSync();
+        if (res.success && res.added > 0) await loadFiles();
+      }
     } catch (e) {
-      showErrorToast('Could not add files.', e?.message || 'The file picker or copy operation failed.', 'Try again and check folder permissions.');
+      showErrorToast('Could not add file.', e?.message || 'The file could not be added to the sync folder.');
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleFilePickerCancel = () => {
+    setShowFilePicker(false);
   };
 
   const handleDeleteFile = async (fileName) => {
@@ -987,6 +1008,14 @@ const SyncManager = () => {
           </div>
         )}
       </div>
+
+      {/* In-app File Picker Modal (reused VaultFilePicker) */}
+      {showFilePicker && (
+        <VaultFilePicker
+          onSelect={handleFilePickerSelect}
+          onCancel={handleFilePickerCancel}
+        />
+      )}
     </div>
   );
 };

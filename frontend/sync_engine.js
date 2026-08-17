@@ -101,20 +101,15 @@ function getAllBlockChecksums(syncFolder) {
 /** Build a Merkle tree for syncFolder: { relPath: md5, __root__: rootHash } */
 function buildMerkleTree(syncFolder) {
   const tree = {};
-  console.log(`[MerkleTree] Trying to build tree for folder: ${syncFolder}`);
   if (!fs.existsSync(syncFolder)) {
-    console.log(`[MerkleTree] Folder DOES NOT EXIST: ${syncFolder}`);
     tree['__root__'] = md5(Buffer.from(''));
     return tree;
   }
-  let fileCount = 0;
   walkDir(syncFolder, (abs) => {
-    fileCount++;
     const rel = path.relative(syncFolder, abs).replace(/\\/g, '/');
     if (rel.startsWith('.') || rel.endsWith('.tmp')) return;
     tree[rel] = md5File(abs);
   });
-  console.log(`[MerkleTree] Found ${fileCount} files in ${syncFolder}`);
   const entries = Object.entries(tree).sort((a, b) => a[0].localeCompare(b[0]));
   const combined = entries.map(([k, v]) => `${k}:${v}`).join('');
   tree['__root__'] = md5(Buffer.from(combined));
@@ -485,6 +480,56 @@ class SyncEngine extends EventEmitter {
     }
   }
 
+  _closePeerConnection() {
+    if (this._pc) {
+      const pc = this._pc;
+      const dc = this._dc;
+      this._pc = null;
+      this._dc = null;
+
+      try {
+        if (dc) {
+          dc.onopen = null;
+          dc.onclose = null;
+          dc.onerror = null;
+          dc.onmessage = null;
+          try { dc.close(); } catch (_) {}
+        }
+      } catch (_) {}
+
+      try {
+        pc.onicecandidate = null;
+        pc.ondatachannel = null;
+        pc.onconnectionstatechange = null;
+        pc.oniceconnectionstatechange = null;
+        pc.onsignalingstatechange = null;
+      } catch (_) {}
+
+      // Defer native C++ .close() so the current C++ callback unwinds safely
+      setTimeout(() => {
+        try { pc.close(); } catch (_) {}
+      }, 100);
+    }
+  }
+
+  _cleanup() {
+    this._stopWatcher();
+    if (this._reconnectTimer) {
+      clearTimeout(this._reconnectTimer);
+      this._reconnectTimer = null;
+    }
+    this._closePeerConnection();
+    if (this._ws) {
+      try {
+        this._ws.removeAllListeners();
+        this._ws.close();
+      } catch (_) {}
+      this._ws = null;
+    }
+    this._usingRelay = false;
+    this._iceRestartFailures = 0;
+  }
+
   disconnect() {
     this._shouldReconnect = false; // Disable auto-reconnect on manual disconnect
     this._connParams = null;
@@ -708,10 +753,8 @@ class SyncEngine extends EventEmitter {
       this._usingRelay = true;
       this._log('🔄 Falling back to WebSocket relay mode');
       this._emit('status', { status: 'connected_relay', message: 'Connected (Relay Fallback)' });
-      // Close the failed peer connection to free resources
-      try { this._pc?.close(); } catch (_) { }
-      this._pc = null;
-      this._dc = null;
+      // Safely close the failed peer connection without crashing node-webrtc C++ runtime
+      this._closePeerConnection();
     } else {
       // Attempt ICE restart with exponential backoff
       const delay = 1000 * Math.pow(2, this._iceRestartFailures - 1);
@@ -1252,6 +1295,24 @@ class SyncEngine extends EventEmitter {
     }
   }
 
+  _getStatFingerprint() {
+    try {
+      if (!fs.existsSync(this.syncFolder)) return '';
+      const stats = [];
+      walkDir(this.syncFolder, (abs) => {
+        const rel = path.relative(this.syncFolder, abs).replace(/\\/g, '/');
+        if (rel.startsWith('.') || rel.endsWith('.tmp')) return;
+        try {
+          const s = fs.statSync(abs);
+          stats.push(`${rel}:${s.mtimeMs}:${s.size}`);
+        } catch (_) {}
+      });
+      return stats.sort().join('|');
+    } catch (_) {
+      return '';
+    }
+  }
+
   _checkLocalChanges() {
     // Check both WS relay and DataChannel availability
     const wsOpen = this._ws && this._ws.readyState === WebSocket.OPEN;
@@ -1260,6 +1321,13 @@ class SyncEngine extends EventEmitter {
     if (this._processingSync) return;
 
     try {
+      const currentFingerprint = this._getStatFingerprint();
+      if (this._lastStatFingerprint && this._lastStatFingerprint === currentFingerprint) {
+        // No files added, modified, or removed — skip expensive tree rebuilding
+        return;
+      }
+      this._lastStatFingerprint = currentFingerprint;
+
       const currentTree = buildMerkleTree(this.syncFolder);
 
       const expired = new Set();

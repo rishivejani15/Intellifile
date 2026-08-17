@@ -7,6 +7,7 @@ import { useKeyboardShortcuts } from '../../hooks/useKeyboardShortcuts';
 import { sortItems } from './utils/fileUtils';
 import ExplorerSidebar from '../ExplorerSidebar';
 import ExplorerNavbar from '../ExplorerNavbar';
+import ExplorerHome from './components/ExplorerHome';
 import PreviewPanel from '../PreviewPanel';
 import FileList from '../FileList';
 import ContextMenu from '../ContextMenu';
@@ -20,6 +21,7 @@ import VersionTimeline from '../Versioning/VersionTimeline';
 import { smartCleanupVersions } from '../../services/versionService';
 import { showErrorToast, showToast } from '../../utils/toast';
 import FileLockModal from '../FileLockModal';
+import { trackRecentFile } from '../../utils/recentTracker';
 import './FileExplorer.css';
 
 
@@ -107,8 +109,6 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
   const [showContextMenu, setShowContextMenu] = useState(false);
   const [isEmptySpaceContext, setIsEmptySpaceContext] = useState(false);
   const [contextMenuPos, setContextMenuPos] = useState({ x: 0, y: 0 });
-  // Flag indicating whether we have loaded cached directory data
-  const [cacheLoaded, setCacheLoaded] = useState(false);
 
   // File Lock modal state
   const [showLockModal, setShowLockModal] = useState(false);
@@ -253,7 +253,31 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
 
     window.addEventListener('intellifile-reveal-file', handleRevealFile);
     return () => window.removeEventListener('intellifile-reveal-file', handleRevealFile);
-  }, [ipcRenderer]);
+  }, []);
+
+  // Update This PC view immediately when USB pendrives are connected/disconnected
+  useEffect(() => {
+    const unsub = window.intellifile?.onDrivesChanged?.((drives) => {
+      if (currentPath === 'This PC' && Array.isArray(drives)) {
+        const driveItems = drives.map(drive => ({
+          name: drive.description || drive.name,
+          path: drive.device || drive.path,
+          type: 'drive',
+          ext: '',
+          editable: false,
+          size: drive.size,
+          available: drive.available,
+          isRemovable: drive.isRemovable || drive.isUSB,
+          isUSB: drive.isUSB,
+          modified: Date.now()
+        }));
+        setItems(driveItems);
+      }
+    });
+    return () => {
+      if (typeof unsub === 'function') unsub();
+    };
+  }, [currentPath]);
 
   // Stable refs for callbacks used inside the watch effect.
   // This prevents the effect from re-running (and recreating the chokidar
@@ -446,6 +470,85 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
   const loadDirectory = useCallback(async (dirPath, options = {}) => {
     loadDirectoryRef.current = loadDirectory;
     const { soft = false, trackHistory = true, tabId = null, selectFile = null, suppressLoading = false } = options;
+
+    // Handle 'Home' special virtual path
+    const isHome = !dirPath || String(dirPath).toLowerCase() === 'home';
+    if (isHome) {
+      const pathChanged = currentPath !== 'Home';
+      setCurrentPath('Home');
+      setAddressPath('Home');
+      updateBreadcrumb('Home');
+      setItems([]);
+      setSelectedItem(null);
+      setSelectedItems([]);
+      setLoading(false);
+      setSearchQuery('');
+      setSemanticResults(null);
+      try {
+        localStorage.setItem('lastDirectoryCache', JSON.stringify({ path: 'Home', items: [] }));
+      } catch (_) {}
+      if (trackHistory && pathChanged) {
+        updateHistory('Home', tabId);
+      }
+      if (pathChanged) {
+        updateActiveTab('Home', tabId);
+      }
+      return { success: true, items: [] };
+    }
+
+    // Handle 'This PC' special virtual path
+    const isThisPC = dirPath === 'This PC' || String(dirPath).toLowerCase() === 'this pc';
+    if (isThisPC) {
+      const pathChanged = currentPath !== 'This PC';
+      setCurrentPath('This PC');
+      setAddressPath('This PC');
+      updateBreadcrumb('This PC');
+      setSelectedItem(null);
+      setSelectedItems([]);
+      setSearchQuery('');
+      setSemanticResults(null);
+      setLoading(true);
+      
+      try {
+        let drivesRes = null;
+        if (window.intellifile?.getDrivesInfo) {
+          drivesRes = await window.intellifile.getDrivesInfo();
+        } else if (ipcRenderer) {
+          drivesRes = await ipcRenderer.invoke('get-drives-info');
+        }
+        
+        const rawDrives = (drivesRes?.success && Array.isArray(drivesRes.drives)) ? drivesRes.drives : [];
+        const driveItems = rawDrives.map(drive => ({
+          name: drive.description || drive.name || drive.label || drive.device,
+          path: drive.device || drive.path,
+          type: drive.isPortable ? 'portable' : 'drive',
+          ext: '',
+          editable: false,
+          size: drive.size || 0,
+          available: drive.available || 0,
+          isPortable: Boolean(drive.isPortable),
+          isRemovable: Boolean(drive.isRemovable || drive.isUSB),
+          isUSB: Boolean(drive.isUSB),
+          isSystem: Boolean(drive.isSystem),
+          modified: Date.now()
+        }));
+        setItems(driveItems);
+      } catch (err) {
+        console.error('Failed to load drives:', err);
+        setItems([]);
+      } finally {
+        setLoading(false);
+      }
+      
+      if (trackHistory && pathChanged) {
+        updateHistory('This PC', tabId);
+      }
+      if (pathChanged) {
+        updateActiveTab('This PC', tabId);
+      }
+      return { success: true, items: [] };
+    }
+
     const normalizedPath = (dirPath || '').replace(/[\\/]+$/, '');
     const loadKey = `${normalizedPath}::${soft ? 'soft' : 'full'}::${suppressLoading ? 'suppress' : 'show'}`;
     const inFlight = directoryLoadInFlightRef.current.get(loadKey);
@@ -547,9 +650,8 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
               // ignore
             }
           })();
-          const actualPath = loadedItems && loadedItems.length > 0 ?
-            loadedItems[0].path.substring(0, loadedItems[0].path.lastIndexOf('\\')) :
-            dirPath;
+          const isThisPC = dirPath === 'This PC' || String(dirPath).toLowerCase() === 'this pc';
+          const actualPath = isThisPC ? 'This PC' : (result?.path || dirPath);
 
           if (actualPath) {
             const pathChanged = !currentPath || actualPath !== currentPath;
@@ -647,8 +749,6 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
 
   // Initialize with startup path, saved path or Documents folder
   useEffect(() => {
-    // If we already loaded the directory from cache (and refreshed it silently), skip the explicit startup load to avoid flashing the spinner.
-    if (cacheLoaded) return;
     if (initialLoadRef.current) return;
     initialLoadRef.current = true;
 
@@ -663,39 +763,24 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
       }
 
       if (startupPathData && startupPathData.path) {
-        console.log('[FileExplorer] Opening startup path:', startupPathData);
         loadDirectory(startupPathData.path, {
           trackHistory: true,
           selectFile: startupPathData.selectFile,
           fromExplorer: !!startupPathData.fromExplorer
         });
-      } else if (currentPath) {
+        return;
+      }
+
+      if (currentPath) {
         loadDirectory(currentPath, { trackHistory: false });
       } else {
-        loadDirectory(null);
+        loadDirectory('Home', { trackHistory: false });
       }
     };
 
     init();
-  }, [currentPath, loadDirectory, cacheLoaded]);
-
-  // Load cached directory (if any) after loadDirectory is defined
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem('lastDirectoryCache');
-      if (raw) {
-        const { path, items: cachedItems } = JSON.parse(raw);
-        if (path) {
-          setCurrentPath(path);
-          setItems(cachedItems || []);
-          updateBreadcrumb(path);
-          setCacheLoaded(true);
-          loadDirectory(path, { suppressLoading: true, trackHistory: false });
-        }
-      }
-    } catch (_) { }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loadDirectory]);
+  }, []);
 
   // Ensure breadcrumb is set on first load when currentPath is known but breadcrumb is empty
   useEffect(() => {
@@ -747,17 +832,14 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
   }, [loadDirectory]);
 
   // Watch the active directory and apply incremental updates.
-  // CRITICAL: This effect must depend ONLY on currentPath.
-  // Previously it depended on [currentPath, applyDirectoryChange, loadDirectory]
-  // which caused the chokidar watcher to be destroyed and recreated every time
-  // selectedItem, searchQuery, or other state changed (because those change the
-  // identity of applyDirectoryChange/loadDirectory). On Windows with usePolling,
-  // a new watcher fires 'add' for EVERY existing file in the directory, which
-  // triggered N × index_file calls blocking the Python engine for minutes.
   useEffect(() => {
     if (!ipcRenderer || !currentPath) return undefined;
 
     const normalizedCurrent = currentPath.toLowerCase().replace(/[\\/]+$/, '');
+    if (normalizedCurrent === 'home' || normalizedCurrent === 'this pc' || /^[a-z]:$/.test(normalizedCurrent) || normalizedCurrent.startsWith('::{') || !currentPath.includes('\\')) {
+      return undefined;
+    }
+
     const previousWatched = watchedDirectoryRef.current;
 
     if (previousWatched && previousWatched !== normalizedCurrent) {
@@ -811,6 +893,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
   // File operation handlers
   const openFileWithDefaultApp = async (filePath) => {
     try {
+      trackRecentFile(filePath);
       const result = await window.electron.ipcRenderer.invoke('open-file', filePath);
       if (result.isLocked) {
         // File is locked — show unlock/access modal
@@ -919,28 +1002,46 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
   };
 
   const handleFolderClick = (item) => {
-    if (item.type === 'folder' || item.type === 'drive') {
+    if (!item) return;
+    if (item.type === 'folder' || item.type === 'drive' || item.type === 'portable' || item.isPortable) {
       setShowPreview(false);
       loadDirectory(item.path);
     } else if (item.type === 'file') {
+      trackRecentFile(item.path, item);
       openFileWithDefaultApp(item.path);
     }
   };
 
   const handleOpen = (item) => {
     if (!item) return;
-    if (item.type === 'folder' || item.type === 'drive') {
+    if (item.type === 'folder' || item.type === 'drive' || item.type === 'portable' || item.isPortable) {
       setShowPreview(false);
       loadDirectory(item.path);
     } else if (item.type === 'file') {
+      trackRecentFile(item.path, item);
       openFileWithDefaultApp(item.path);
     }
   };
+
+  const handleTabSelect = useCallback((tab) => {
+    const targetPath = handleSelectTab(tab);
+    loadDirectory(targetPath, { trackHistory: false });
+  }, [handleSelectTab, loadDirectory]);
+
+  const handleTabClose = useCallback((tabId) => {
+    handleCloseTab(tabId, (nextPath) => {
+      loadDirectory(nextPath, { trackHistory: false });
+    });
+  }, [handleCloseTab, loadDirectory]);
 
   const handleItemClick = (item, idx, e) => {
     if (renamingItem) return;
     const isCtrl = e.ctrlKey || e.metaKey;
     const isShift = e.shiftKey;
+
+    if (item.type === 'file') {
+      trackRecentFile(item.path, item);
+    }
 
     // Clear text selection when shift-clicking to avoid browser text highlight
     if (isShift) {
@@ -983,20 +1084,11 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
   };
 
   useEffect(() => {
-    // When searching, skip this effect — handleSearchResultClick manages setShowPreview directly
-    if (semanticResults !== null) return;
-
-    // When not searching: Only auto-open preview in 'list' and 'details' view modes
-    if (selectedItem && selectedItem.type === 'file') {
-      if (viewMode === 'list' || viewMode === 'details') {
-        setShowPreview(true);
-      } else {
-        setShowPreview(false);
-      }
-    } else if (!selectedItem || selectedItem.type !== 'file') {
+    // When view mode is switched to icons, close preview if active
+    if (viewMode === 'icons' && semanticResults === null) {
       setShowPreview(false);
     }
-  }, [selectedItem, viewMode, semanticResults]);
+  }, [viewMode, semanticResults]);
 
   const handleCharacterType = useCallback((char) => {
     if (renamingItem || !displayItems || displayItems.length === 0) return;
@@ -1292,22 +1384,45 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
     }
   };
 
-  const handlePinToFavorites = () => {
-    if (selectedItem?.type !== 'folder') return;
+  const handlePinToFavorites = (targetFolder) => {
+    const folder = targetFolder || selectedItem || (currentPath && String(currentPath).toLowerCase() !== 'home' ? { path: currentPath, name: currentPath.split(/[\\/]/).pop(), type: 'folder' } : null);
+    if (!folder || !folder.path) return;
 
-    const isPinned = window.__intellifile_isFavorite?.(selectedItem.path);
-    if (isPinned && window.__intellifile_removeFavorite) {
-      window.__intellifile_removeFavorite(selectedItem.path);
-      return;
-    }
+    try {
+      const raw = localStorage.getItem('intellifile-favorites');
+      const favs = raw ? JSON.parse(raw) : [];
+      const norm = folder.path.toLowerCase().replace(/[\\/]+$/, '');
+      const existingIdx = favs.findIndex(f => (f.path || '').toLowerCase().replace(/[\\/]+$/, '') === norm);
 
-    if (!isPinned && window.__intellifile_addFavorite) {
-      window.__intellifile_addFavorite(selectedItem.path, selectedItem.name);
+      let updated;
+      if (existingIdx >= 0) {
+        updated = favs.filter((_, idx) => idx !== existingIdx);
+        showToast(`Unpinned ${folder.name || 'folder'} from Quick access`, { type: 'info' });
+      } else {
+        const folderName = folder.name || folder.path.split(/[\\/]/).pop();
+        updated = [...favs, { path: folder.path, name: folderName }];
+        showToast(`Pinned ${folderName} to Quick access`, { type: 'success' });
+      }
+
+      localStorage.setItem('intellifile-favorites', JSON.stringify(updated));
+      window.dispatchEvent(new StorageEvent('storage', { key: 'intellifile-favorites', newValue: JSON.stringify(updated) }));
+    } catch (err) {
+      console.error('Error toggling pin to favorites:', err);
     }
   };
 
-  const isSelectedFolderPinned = selectedItem?.type === 'folder' &&
-    !!window.__intellifile_isFavorite?.(selectedItem.path);
+  const isSelectedFolderPinned = (() => {
+    const folder = selectedItem || (currentPath && String(currentPath).toLowerCase() !== 'home' ? { path: currentPath } : null);
+    if (!folder || !folder.path) return false;
+    try {
+      const raw = localStorage.getItem('intellifile-favorites');
+      const favs = raw ? JSON.parse(raw) : [];
+      const norm = folder.path.toLowerCase().replace(/[\\/]+$/, '');
+      return favs.some(f => (f.path || '').toLowerCase().replace(/[\\/]+$/, '') === norm);
+    } catch {
+      return false;
+    }
+  })();
 
   const handleRefresh = () => {
     // Normal refresh without closing preview
@@ -1328,11 +1443,16 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
     setShowProperties(true);
   };
 
-  const handleOpenPreview = () => {
+  const handleTogglePreview = () => {
     if (!selectedItem || selectedItem.type !== 'file') return;
-    setPreviewClosing(false);
-    setShowVersioning(false);
-    setShowPreview(true);
+    if (showPreview && !showVersioning) {
+      setShowPreview(false);
+      setPreviewClosing(false);
+    } else {
+      setPreviewClosing(false);
+      setShowVersioning(false);
+      setShowPreview(true);
+    }
   };
 
   // Preview close handling
@@ -1357,18 +1477,49 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
     }
   };
 
+  // When the onboarding tour starts, navigate away from Home to a real folder (like Documents/Desktop)
+  // so that search, file listing, toolbar actions, and version history are displayed with real items.
+  useEffect(() => {
+    const handleTourStart = async () => {
+      try {
+        const rootsRes = await ipcRenderer?.invoke('get-system-roots');
+        const special = rootsRes?.data?.specialFolders || [];
+        const targetFolder = special.find(f => f.id === 'documents' && f.path)
+          || special.find(f => f.id === 'desktop' && f.path)
+          || special.find(f => f.id === 'downloads' && f.path)
+          || special.find(f => f.path && !f.virtual);
+
+        if (targetFolder?.path) {
+          if (loadDirectoryRef.current) {
+            loadDirectoryRef.current(targetFolder.path, { trackHistory: true });
+          }
+        }
+      } catch (err) {
+        console.error('[Tour] Error navigating away from Home for tour:', err);
+      }
+    };
+
+    window.addEventListener('intellifile-tour-start', handleTourStart);
+    return () => window.removeEventListener('intellifile-tour-start', handleTourStart);
+  }, []);
+
   // The guided tour opens a real, versionable file so users can see the
   // Version History timeline rather than only reading about it.
   useEffect(() => {
     const openTourVersionHistory = () => {
-      const extensionPriority = ['.docx', '.xlsx', '.xls', '.txt', '.md', '.csv', '.rtf', '.pdf'];
-      const file = displayItems
+      const extensionPriority = ['.docx', '.xlsx', '.xls', '.txt', '.md', '.csv', '.rtf', '.pdf', '.js', '.py', '.json'];
+      let file = displayItems
         .filter((item) => item.type === 'file' && canVersionItem(item))
         .sort((a, b) => {
           const aRank = extensionPriority.indexOf((a.ext || '').toLowerCase());
           const bRank = extensionPriority.indexOf((b.ext || '').toLowerCase());
           return (aRank === -1 ? extensionPriority.length : aRank) - (bRank === -1 ? extensionPriority.length : bRank);
         })[0];
+
+      if (!file && displayItems.length > 0) {
+        file = displayItems.find((item) => item.type === 'file');
+      }
+
       if (!file) return;
       setSelectedItem(file);
       setSelectedItems([file]);
@@ -1698,11 +1849,13 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
     setSemanticLoading(true);
 
     try {
-      // Race the actual search against a timeout so the UI never
-      // locks indefinitely (the core symptom of the freeze bug from
-      // the user's perspective).
+      // If in Home directory (!currentPath or currentPath === 'Home'), search ALL OVER THE COMPUTER (rootFolder = null).
+      // Otherwise, if in a specific directory (e.g. C:\Users\...\Documents), search ONLY inside that specific directory!
+      const isHome = !currentPath || String(currentPath).toLowerCase() === 'home';
+      const searchRoot = isHome ? null : currentPath;
+
       const SEARCH_TIMEOUT_MS = 8000;
-      const searchPromise = searchFiles(query, null);
+      const searchPromise = searchFiles(query, searchRoot);
       const timeoutPromise = new Promise((_, reject) =>
         setTimeout(() => reject(new Error('search_timeout')), SEARCH_TIMEOUT_MS)
       );
@@ -1712,7 +1865,17 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
       // If a newer search was fired while we were awaiting, discard
       if (thisSearchId !== searchIdRef.current) return;
 
-      setSemanticResults(results || []);
+      // Filter by folder if not home and searchRoot is specified
+      let filteredResults = results || [];
+      if (!isHome && searchRoot) {
+        const normRoot = searchRoot.toLowerCase().replace(/[\\/]+$/, '');
+        filteredResults = filteredResults.filter(r => {
+          const rPath = (r.path || '').toLowerCase();
+          return rPath.startsWith(normRoot + '\\') || rPath.startsWith(normRoot + '/');
+        });
+      }
+
+      setSemanticResults(filteredResults);
     } catch (err) {
       // Discard stale results
       if (thisSearchId !== searchIdRef.current) return;
@@ -1818,16 +1981,6 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
     }
   };
 
-  // Tab handlers
-  const handleTabSelect = (tab) => {
-    handleSelectTab(tab);
-    if (tab.path) loadDirectory(tab.path, { tabId: tab.id });
-  };
-
-  const handleTabClose = (tabId) => {
-    handleCloseTab(tabId);
-  };
-
   // Quick Access Sidebar - Width resizing and collapse/expand state
   const [showSidebar, setShowSidebar] = useState(() => {
     try { return localStorage.getItem('intellifile-show-sidebar') !== 'false'; } catch { return true; }
@@ -1884,7 +2037,12 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
           display: showSidebar ? 'flex' : 'none'
         }}
       >
-        <ExplorerSidebar drives={drives} onNavigate={loadDirectory} currentPath={currentPath} />
+        <ExplorerSidebar
+          drives={drives}
+          onNavigate={loadDirectory}
+          currentPath={currentPath}
+          onContextMenu={handleContextMenu}
+        />
       </div>
       {showSidebar && (
         <div
@@ -1978,49 +2136,64 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
 
             {semanticResults === null && (
               <>
-                {showRecentChooser && recentChooserFiles.length > 0 && (
-                  <div className="recent-chooser">
-                    <div className="recent-chooser-title">Select the file you intended to open:</div>
-                    <div className="recent-chooser-list">
-                      {recentChooserFiles.map(f => (
-                        <div key={f.path} className="recent-chooser-item">
-                          <div className="recent-chooser-name">{f.name}</div>
-                          <div className="recent-chooser-actions">
-                            <button onClick={() => handleRecentChooserSelect(f)}>Select</button>
-                            <button onClick={() => openFileWithDefaultApp(f.path)}>Open</button>
-                          </div>
+                {!currentPath || String(currentPath).toLowerCase() === 'home' ? (
+                  <ExplorerHome
+                    onNavigate={loadDirectory}
+                    onFileSelect={onFileSelect}
+                    onContextMenu={handleContextMenu}
+                    selectedItem={selectedItem}
+                    setSelectedItem={setSelectedItem}
+                    selectedItems={selectedItems}
+                    setSelectedItems={setSelectedItems}
+                    searchQuery={searchQuery}
+                  />
+                ) : (
+                  <>
+                    {showRecentChooser && recentChooserFiles.length > 0 && (
+                      <div className="recent-chooser">
+                        <div className="recent-chooser-title">Select the file you intended to open:</div>
+                        <div className="recent-chooser-list">
+                          {recentChooserFiles.map(f => (
+                            <div key={f.path} className="recent-chooser-item">
+                              <div className="recent-chooser-name">{f.name}</div>
+                              <div className="recent-chooser-actions">
+                                <button onClick={() => handleRecentChooserSelect(f)}>Select</button>
+                                <button onClick={() => openFileWithDefaultApp(f.path)}>Open</button>
+                              </div>
+                            </div>
+                          ))}
                         </div>
-                      ))}
-                    </div>
-                  </div>
+                      </div>
+                    )}
+                    <FileList
+                      items={displayItems}
+                      viewMode={viewMode}
+                      groupBy={groupBy}
+                      loading={loading}
+                      renamingItem={renamingItem}
+                      renameValue={renameValue}
+                      selectedItems={selectedItems}
+                      selectedFiles={selectedFiles}
+                      clipboard={clipboard}
+                      isCutItem={isCutItem}
+                      inputRef={inputRef}
+                      tempHighlightedPath={tempHighlightedPath}
+                      onItemClick={handleItemClick}
+                      onItemDoubleClick={handleFolderClick}
+                      onContextMenu={handleContextMenu}
+                      onEmptySpaceContextMenu={handleEmptySpaceContextMenu}
+                      onDragStart={handleDragStart}
+                      onDragOver={handleDragOver}
+                      onDropOnItem={handleDropOnItem}
+                      onRenameValueChange={setRenameValue}
+                      onRenameBlur={handleRename}
+                      onRenameKeyDown={(e) => {
+                        if (e.key === 'Enter') handleRename();
+                        if (e.key === 'Escape') setRenamingItem(null);
+                      }}
+                    />
+                  </>
                 )}
-                <FileList
-                  items={displayItems}
-                  viewMode={viewMode}
-                  groupBy={groupBy}
-                  loading={loading}
-                  renamingItem={renamingItem}
-                  renameValue={renameValue}
-                  selectedItems={selectedItems}
-                  selectedFiles={selectedFiles}
-                  clipboard={clipboard}
-                  isCutItem={isCutItem}
-                  inputRef={inputRef}
-                  tempHighlightedPath={tempHighlightedPath}
-                  onItemClick={handleItemClick}
-                  onItemDoubleClick={handleFolderClick}
-                  onContextMenu={handleContextMenu}
-                  onEmptySpaceContextMenu={handleEmptySpaceContextMenu}
-                  onDragStart={handleDragStart}
-                  onDragOver={handleDragOver}
-                  onDropOnItem={handleDropOnItem}
-                  onRenameValueChange={setRenameValue}
-                  onRenameBlur={handleRename}
-                  onRenameKeyDown={(e) => {
-                    if (e.key === 'Enter') handleRename();
-                    if (e.key === 'Escape') setRenamingItem(null);
-                  }}
-                />
               </>
             )}
 
@@ -2032,7 +2205,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
           <div className="statusbar-info">
             <span className="statusbar-pill">
               <span className="statusbar-pill-dot" />
-              {items.length} {items.length === 1 ? 'item' : 'items'}
+              {currentPath === 'Home' || !currentPath ? 'Home' : `${items.length} ${items.length === 1 ? 'item' : 'items'}`}
             </span>
             {selectedItems.length > 0 && (
               <span className="statusbar-pill statusbar-pill--active">
@@ -2069,9 +2242,9 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
               <button
                 type="button"
                 className={`statusbar-btn preview-btn ${showPreview && !showVersioning ? 'active' : ''}`}
-                onClick={handleOpenPreview}
-                title="Preview selected file"
-                aria-label="Preview selected file"
+                onClick={handleTogglePreview}
+                title={showPreview && !showVersioning ? "Close preview" : "Preview selected file"}
+                aria-label={showPreview && !showVersioning ? "Close preview" : "Preview selected file"}
               >
                 <MdOutlineVisibility className="statusbar-btn-icon" />
                 <span>Preview</span>

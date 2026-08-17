@@ -1,4 +1,5 @@
 import React, { useRef } from 'react';
+import { BsDeviceHddFill, BsUsbDriveFill } from 'react-icons/bs';
 import { getFileIcon, formatFileSize, formatDate } from '../utils/fileUtils';
 
 function FileItem({
@@ -35,6 +36,9 @@ function FileItem({
     e.dataTransfer.effectAllowed = 'copyMove';
   };
 
+  const isDrive = item.type === 'drive';
+  const isRemovable = Boolean(item.isRemovable || item.isUSB);
+
   return (
     <div
       className={`file-item ${item.type} ${isFileSelected ? 'selected' : ''} ${isRenaming ? 'renaming' : ''}`}
@@ -47,12 +51,20 @@ function FileItem({
       onDrop={(e) => onDrop(e, item)}
     >
       <div className="file-icon">
-        {getFileIcon(item)}
+        {isDrive ? (
+          isRemovable ? (
+            <BsUsbDriveFill size={viewMode === 'details' ? 18 : 36} className="drive-icon-svg usb-drive" />
+          ) : (
+            <BsDeviceHddFill size={viewMode === 'details' ? 18 : 36} className="drive-icon-svg hdd-drive" />
+          )
+        ) : (
+          getFileIcon(item)
+        )}
         {item.name?.endsWith('.intellilock') && (
           <span className="file-lock-badge" title="Locked file">🔒</span>
         )}
       </div>
-      <div className="file-info">
+      <div className={`file-info ${isDrive ? 'drive-file-info' : ''}`}>
         {isRenaming ? (
           <input
             ref={inputRef}
@@ -67,18 +79,47 @@ function FileItem({
             }}
             autoFocus
           />
+        ) : isDrive ? (
+          <>
+            <div className="file-name drive-name-title" title={item.name}>{item.name}</div>
+            {viewMode === 'details' ? (
+              <div className="file-meta-details">
+                <span className="file-type">{isRemovable ? 'USB Drive' : 'Local Disk'}</span>
+                <span className="file-size">{`${Math.round((item.available ?? item.free ?? 0) / (1024 ** 3))} GB free of ${Math.round((item.size || 0) / (1024 ** 3))} GB`}</span>
+                <span className="file-date">--</span>
+              </div>
+            ) : (
+              <div className="drive-card-body">
+                <div className="drive-storage-bar">
+                  <div
+                    className={`drive-storage-fill ${
+                      item.size > 0 && ((item.size - (item.available ?? item.free ?? 0)) / item.size) > 0.9
+                        ? 'critical'
+                        : item.size > 0 && ((item.size - (item.available ?? item.free ?? 0)) / item.size) > 0.75
+                        ? 'warning'
+                        : ''
+                    }`}
+                    style={{
+                      width: `${item.size > 0 ? Math.min(100, Math.round(((item.size - (item.available ?? item.free ?? 0)) / item.size) * 100)) : 0}%`
+                    }}
+                  />
+                </div>
+                <div className="drive-storage-text">
+                  {`${Math.round((item.available ?? item.free ?? 0) / (1024 ** 3))} GB free of ${Math.round((item.size || 0) / (1024 ** 3))} GB`}
+                </div>
+              </div>
+            )}
+          </>
         ) : (
           <>
             <div className="file-name">{item.name}</div>
             {viewMode === 'details' && (
               <div className="file-meta-details">
                 <span className="file-type">
-                  {item.type === 'folder' ? 'Folder' : item.type === 'drive' ? 'Drive' : item.ext}
+                  {item.type === 'folder' ? 'Folder' : item.ext}
                 </span>
                 <span className="file-size">
-                  {item.type === 'drive'
-                    ? `${Math.round(item.size / (1024 ** 3))} GB`
-                    : formatFileSize(item.size)}
+                  {formatFileSize(item.size)}
                 </span>
                 <span className="file-date">{formatDate(item.modified)}</span>
               </div>
@@ -87,9 +128,7 @@ function FileItem({
               <div className="file-meta">
                 {item.type === 'folder'
                   ? 'Folder'
-                  : item.type === 'drive'
-                    ? `${Math.round(item.size / (1024 ** 3))} GB total`
-                    : formatFileSize(item.size)}
+                  : formatFileSize(item.size)}
               </div>
             )}
           </>

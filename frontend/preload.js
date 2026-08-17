@@ -82,6 +82,23 @@ contextBridge.exposeInMainWorld('intellifile', {
   getSyncServerStatus: () => {
     return ipcRenderer.invoke('get-sync-server-status');
   },
+  getRecentItems: (maxCount = 50) => {
+    return ipcRenderer.invoke('get-recent-items', maxCount);
+  },
+  removeRecentItem: (itemPath) => {
+    return ipcRenderer.invoke('remove-recent-item', itemPath);
+  },
+  getQuickAccessItems: () => {
+    return ipcRenderer.invoke('get-quick-access-items');
+  },
+  getDrivesInfo: () => {
+    return ipcRenderer.invoke('get-drives-info');
+  },
+  onDrivesChanged: (callback) => {
+    const handler = (_event, drives) => callback(drives);
+    ipcRenderer.on('drives-changed', handler);
+    return () => ipcRenderer.off('drives-changed', handler);
+  },
 
   onIndexComplete: (callback) => {
     const handler = (_event, data) => callback(data);
@@ -135,6 +152,9 @@ contextBridge.exposeInMainWorld('intellifile', {
   // Sync — local file management
   getSyncFiles: () => {
     return ipcRenderer.invoke('get-sync-files');
+  },
+  addFilesToSync: (filePaths) => {
+    return ipcRenderer.invoke('add-files-to-sync', filePaths);
   },
   selectFilesForSync: () => {
     return ipcRenderer.invoke('select-files-for-sync');
@@ -344,6 +364,18 @@ contextBridge.exposeInMainWorld('intellifile', {
   // Chrome redirect handling
   setChromeRedirect: (enable) => ipcRenderer.invoke('set-chrome-redirect', enable),
   getChromeRedirect: () => ipcRenderer.invoke('get-chrome-redirect'),
+
+  // ── Native Window Controls & Title Bar Overlay ──
+  setTitleBarOverlay: (options) => ipcRenderer.invoke('set-title-bar-overlay', options),
+  minimizeWindow: () => ipcRenderer.invoke('window-minimize'),
+  maximizeWindow: () => ipcRenderer.invoke('window-maximize'),
+  closeWindow: () => ipcRenderer.invoke('window-close'),
+  isWindowMaximized: () => ipcRenderer.invoke('window-is-maximized'),
+  onWindowMaximizedChange: (callback) => {
+    const handler = (_event, isMax) => callback(isMax);
+    ipcRenderer.on('window-maximized-change', handler);
+    return () => ipcRenderer.off('window-maximized-change', handler);
+  },
 
   // ── File Lock (Vault) APIs ──
   fileLock: {

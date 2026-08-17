@@ -1557,11 +1557,12 @@ function _isTransientFile(filePath) {
 function startWatchingDirectory(directoryPath) {
   if (!directoryPath) return { success: false, error: 'Missing directory path.' };
 
-  // Don't watch Windows system folders
-  const upperPath = directoryPath.toUpperCase();
-  if (upperPath.includes('\\WINDOWS') || upperPath.includes('\\PROGRAM FILES') ||
+  // Don't watch Windows system folders, root drives, or virtual folders
+  const upperPath = directoryPath.toUpperCase().trim().replace(/[\\/]+$/, '');
+  if (upperPath === 'THIS PC' || upperPath === 'HOME' || /^[A-Z]:?$/.test(upperPath) ||
+    upperPath.includes('\\WINDOWS') || upperPath.includes('\\PROGRAM FILES') ||
     upperPath.includes('\\PROGRAMDATA') || upperPath.includes('\\SYSTEM VOLUME INFORMATION')) {
-    return { success: false, error: 'Cannot watch system folders.' };
+    return { success: false, error: 'Cannot watch system folders or root drives.' };
   }
 
   const normPath = path.resolve(directoryPath).toLowerCase();
@@ -2113,10 +2114,12 @@ function attemptStartSyncServer() {
       for (const rawLine of text.split(/\r?\n/)) {
         const line = rawLine.trim();
         if (!line) continue;
-        // Skip verbose HTTP access logs (e.g. '127.0.0.1 - GET /status 200')
+        // Skip verbose HTTP access logs (e.g. '127.0.0.1 - GET /status 200' or 'INFO: 127.0.0.1 - "GET /status..."')
+        if (/(GET|POST|PUT|DELETE|HEAD|OPTIONS|PATCH)\s+[\/\w\-]+/i.test(line)) continue;
+        if (/INFO:.*\s+(GET|POST|PUT|DELETE|HEAD|OPTIONS)\s+/i.test(line)) continue;
         if (/^\d+\.\d+\.\d+\.\d+.*\s(GET|POST|PUT|DELETE|HEAD|OPTIONS|PATCH)\s/i.test(line)) continue;
-        // Skip raw uvicorn/werkzeug request lines
         if (/^\s*(GET|POST|PUT|DELETE|HEAD|OPTIONS)\s+\//.test(line)) continue;
+        if (line.includes('/status')) continue;
         // Skip empty JSON brackets and pure numeric lines
         if (/^[{\[\]}\s]*$/.test(line) || /^\d+$/.test(line)) continue;
         originalConsoleLog('[SyncServer stdout]', line);
@@ -2130,8 +2133,11 @@ function attemptStartSyncServer() {
         const line = rawLine.trim();
         if (!line) continue;
         // Skip verbose HTTP access logs from stderr too
+        if (/(GET|POST|PUT|DELETE|HEAD|OPTIONS|PATCH)\s+[\/\w\-]+/i.test(line)) continue;
+        if (/INFO:.*\s+(GET|POST|PUT|DELETE|HEAD|OPTIONS)\s+/i.test(line)) continue;
         if (/^\d+\.\d+\.\d+\.\d+.*\s(GET|POST|PUT|DELETE|HEAD|OPTIONS|PATCH)\s/i.test(line)) continue;
         if (/^\s*(GET|POST|PUT|DELETE|HEAD|OPTIONS)\s+\//.test(line)) continue;
+        if (line.includes('/status')) continue;
         originalConsoleError('[SyncServer stderr]', line);
         appendLog('SyncServer', line, true, 'error');
       }
@@ -4332,6 +4338,10 @@ ipcMain.handle('open-file', async (event, filePath) => {
     if (result) {
       return { success: false, error: result };
     }
+    try {
+      app.addRecentDocument(filePath);
+      mainWindow?.webContents?.send('recent-files-updated', filePath);
+    } catch (_) {}
     startWatchingFile(filePath);
     return { success: true };
   } catch (err) {
@@ -4342,6 +4352,10 @@ ipcMain.handle('open-file', async (event, filePath) => {
 ipcMain.on('open-file', (event, filePath) => {
   shell.openPath(filePath).then((result) => {
     if (!result) {
+      try {
+        app.addRecentDocument(filePath);
+        mainWindow?.webContents?.send('recent-files-updated', filePath);
+      } catch (_) {}
       startWatchingFile(filePath);
     }
   }).catch(err => {
@@ -4579,9 +4593,48 @@ function registerIpcHandlers() {
     });
   });
 
-  ipcMain.handle('open-new-window', async () => {
-    createWindow();
+  // ── Native Title Bar Overlay Controls ──
+  ipcMain.handle('set-title-bar-overlay', (event, options) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (win && typeof win.setTitleBarOverlay === 'function') {
+      try {
+        win.setTitleBarOverlay(options);
+        return { success: true };
+      } catch (err) {
+        return { success: false, error: err.message };
+      }
+    }
+    return { success: false };
+  });
+
+  ipcMain.handle('window-minimize', (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (win) win.minimize();
     return true;
+  });
+
+  ipcMain.handle('window-maximize', (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (win) {
+      if (win.isMaximized()) {
+        win.unmaximize();
+      } else {
+        win.maximize();
+      }
+      return win.isMaximized();
+    }
+    return false;
+  });
+
+  ipcMain.handle('window-close', (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (win) win.close();
+    return true;
+  });
+
+  ipcMain.handle('window-is-maximized', (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    return win ? win.isMaximized() : false;
   });
 
   // Manual sync server restart — visible in the UI (Logs toolbar)
@@ -4644,23 +4697,61 @@ function registerIpcHandlers() {
         let resolvedPath = dirPath;
 
         // Handle special folder names
-        if (dirPath === 'This PC') {
+        if (dirPath === 'Home' || dirPath === 'home') {
+          return { items: [], error: null };
+        } else if (dirPath === 'This PC' || String(dirPath).toLowerCase() === 'this pc') {
           // Return list of drives for This PC view
           const drivesResult = await getDrivesInfo();
           if (drivesResult.success) {
             const driveItems = drivesResult.drives.map(drive => ({
-              name: drive.description,
-              path: drive.device,
-              type: 'drive',
+              name: drive.description || drive.name,
+              path: drive.device || drive.path,
+              type: drive.isPortable ? 'portable' : 'drive',
               ext: '',
               editable: false,
-              size: drive.size,
-              available: drive.available,
+              size: drive.size || 0,
+              available: drive.available || 0,
+              isPortable: drive.isPortable || false,
+              isRemovable: drive.isRemovable || drive.isUSB,
+              isUSB: drive.isUSB,
               modified: Date.now()
             }));
             return { items: driveItems, error: null };
           }
           return { items: [], error: 'Could not load drives' };
+        }
+
+        // Check if path belongs to a portable device (like Redmi Note 6 Pro)
+        const matchingPortable = cachedPortableDevices.find(p => p && (dirPath === p.name || dirPath.startsWith(p.name + '\\') || dirPath.startsWith(p.path)));
+        if (matchingPortable) {
+          const targetName = matchingPortable.name;
+          const subPath = dirPath === targetName ? '' : dirPath.slice(targetName.length + 1);
+          const scriptPath = path.join(__dirname, 'shell_nav.ps1');
+          
+          return new Promise((resolve) => {
+            exec(`powershell -NoProfile -ExecutionPolicy Bypass -File "${scriptPath}" -Action list-subitems -TargetName "${targetName}" -SubPath "${subPath}"`, { timeout: 8000 }, (err, stdout) => {
+              if (err || !stdout) {
+                return resolve({ items: [], error: err ? err.message : null });
+              }
+              try {
+                const parsed = JSON.parse(stdout.trim());
+                const arr = Array.isArray(parsed) ? parsed : [parsed];
+                const items = arr.filter(it => it && it.name).map(it => ({
+                  name: it.name,
+                  path: it.path,
+                  type: it.type || 'folder',
+                  ext: it.type === 'folder' ? '' : path.extname(it.name),
+                  editable: false,
+                  size: it.size || 0,
+                  isPortable: true,
+                  modified: Date.now()
+                }));
+                resolve({ items, error: null });
+              } catch (parseErr) {
+                resolve({ items: [], error: parseErr.message });
+              }
+            });
+          });
         } else if (!dirPath || dirPath === 'Documents') {
           resolvedPath = path.join(process.env.USERPROFILE, 'Documents');
         } else if (dirPath === 'Desktop') {
@@ -4678,13 +4769,10 @@ function registerIpcHandlers() {
           resolvedPath = dirPath + '\\';
         }
 
-        console.log('[list-directory] resolved path:', resolvedPath);
-
         // Use async exists check
         try {
           await fs.promises.access(resolvedPath);
         } catch {
-          console.warn('[list-directory] Path not found:', resolvedPath);
           return { items: [], error: 'Path not found' };
         }
 
@@ -4875,6 +4963,115 @@ function registerIpcHandlers() {
     });
   });
 
+  // ── Recent items for Windows 11-style Home view
+  ipcMain.handle('get-recent-items', async (_event, maxCount = 50) => {
+    try {
+      const recentDir = path.join(process.env.APPDATA || '', 'Microsoft', 'Windows', 'Recent');
+      const items = [];
+      const seenPaths = new Set();
+
+      if (fs.existsSync(recentDir)) {
+        const files = fs.readdirSync(recentDir);
+        const lnkFiles = files.filter(f => f.toLowerCase().endsWith('.lnk'));
+
+        const statList = [];
+        for (const fname of lnkFiles) {
+          try {
+            const fullLnk = path.join(recentDir, fname);
+            const stat = fs.statSync(fullLnk);
+            statList.push({ fname, fullLnk, mtime: stat.mtimeMs });
+          } catch (_) { }
+        }
+        statList.sort((a, b) => b.mtime - a.mtime);
+
+        const homeDir = process.env.USERPROFILE || '';
+        for (const { fname, fullLnk, mtime } of statList) {
+          try {
+            const resolved = shell.readShortcutLink(fullLnk);
+            if (resolved && resolved.target && fs.existsSync(resolved.target)) {
+              const targetPath = path.resolve(resolved.target);
+              const normTarget = targetPath.toLowerCase();
+              if (seenPaths.has(normTarget)) continue;
+              seenPaths.add(normTarget);
+
+              const stats = fs.statSync(targetPath);
+              const isDirectory = stats.isDirectory();
+              const name = path.basename(targetPath);
+              const parentDir = path.dirname(targetPath);
+              const ext = isDirectory ? '' : path.extname(targetPath).toLowerCase();
+
+              // Compute human-friendly relative location string (e.g. "Downloads", "Documents\Projects\Prototype")
+              let relativeLocation = parentDir;
+              if (parentDir.toLowerCase().startsWith(homeDir.toLowerCase())) {
+                relativeLocation = parentDir.slice(homeDir.length).replace(/^[\\/]+/, '');
+              }
+
+              items.push({
+                name,
+                path: targetPath,
+                location: relativeLocation || parentDir,
+                parentPath: parentDir,
+                type: isDirectory ? 'folder' : 'file',
+                size: stats.size,
+                modified: stats.mtimeMs,
+                accessed: mtime || stats.mtimeMs || Date.now(),
+                ext,
+                lnkFile: fname,
+              });
+
+              if (items.length >= maxCount) break;
+            }
+          } catch (_) { }
+        }
+      }
+
+      return { success: true, items };
+    } catch (err) {
+      console.error('[Recent] get-recent-items error:', err);
+      return { success: false, items: [], error: err.message };
+    }
+  });
+
+  ipcMain.handle('remove-recent-item', async (_event, itemPath) => {
+    try {
+      const recentDir = path.join(process.env.APPDATA || '', 'Microsoft', 'Windows', 'Recent');
+      if (fs.existsSync(recentDir)) {
+        const files = fs.readdirSync(recentDir);
+        for (const fname of files) {
+          if (!fname.toLowerCase().endsWith('.lnk')) continue;
+          const fullLnk = path.join(recentDir, fname);
+          try {
+            const resolved = shell.readShortcutLink(fullLnk);
+            if (resolved && resolved.target && path.resolve(resolved.target).toLowerCase() === path.resolve(itemPath).toLowerCase()) {
+              fs.unlinkSync(fullLnk);
+            }
+          } catch (_) { }
+        }
+      }
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('get-quick-access-items', async () => {
+    try {
+      const home = process.env.USERPROFILE || os.homedir();
+      const standard = [
+        { id: 'desktop', name: 'Desktop', path: path.join(home, 'Desktop'), subtitle: 'Stored locally', iconType: 'desktop', pinned: true },
+        { id: 'downloads', name: 'Downloads', path: path.join(home, 'Downloads'), subtitle: 'Stored locally', iconType: 'downloads', pinned: true },
+        { id: 'documents', name: 'Documents', path: path.join(home, 'Documents'), subtitle: 'Stored locally', iconType: 'documents', pinned: true },
+        { id: 'pictures', name: 'Pictures', path: path.join(home, 'Pictures'), subtitle: 'Stored locally', iconType: 'pictures', pinned: true },
+        { id: 'music', name: 'Music', path: path.join(home, 'Music'), subtitle: 'Stored locally', iconType: 'music', pinned: true },
+        { id: 'videos', name: 'Videos', path: path.join(home, 'Videos'), subtitle: 'Stored locally', iconType: 'videos', pinned: true },
+      ].filter(f => fs.existsSync(f.path));
+
+      return { success: true, items: standard };
+    } catch (err) {
+      return { success: false, items: [], error: err.message };
+    }
+  });
+
   // ── Sync: local file staging for cross-device sync
   ipcMain.handle('get-sync-files', async () => {
     try {
@@ -4885,6 +5082,46 @@ function registerIpcHandlers() {
     } catch (err) {
       console.error('[Sync] get-sync-files error:', err && err.message ? err.message : err);
       return { success: false, items: [], error: err && err.message ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle('add-files-to-sync', async (_event, filePaths) => {
+    try {
+      const paths = Array.isArray(filePaths) ? filePaths : [filePaths];
+      if (paths.length === 0) return { success: false, added: 0 };
+      const syncDir = path.join(__dirname, '..', 'sync', 'intellifil_files');
+      if (!fs.existsSync(syncDir)) fs.mkdirSync(syncDir, { recursive: true });
+      const errors = [];
+      let added = 0;
+      for (const src of paths) {
+        if (!src || !fs.existsSync(src)) continue;
+        const name = path.basename(src);
+        let dest = path.join(syncDir, name);
+        if (fs.existsSync(dest)) {
+          const ext = path.extname(name);
+          const base = path.basename(name, ext);
+          let i = 1;
+          while (fs.existsSync(dest)) {
+            dest = path.join(syncDir, `${base} (${i})${ext}`);
+            i++;
+          }
+        }
+        const linkResult = tryCreateSyncLink(src, dest);
+        if (!linkResult.ok) {
+          errors.push({ file: src, error: linkResult.error });
+          continue;
+        }
+        added++;
+      }
+
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('sync-files', walkSyncFiles(syncDir));
+      }
+
+      return { success: errors.length === 0, added, errors };
+    } catch (err) {
+      console.error('[Sync] add-files-to-sync error:', err && err.message ? err.message : err);
+      return { success: false, added: 0, error: err && err.message ? err.message : String(err) };
     }
   });
 
@@ -5718,102 +5955,186 @@ function registerIpcHandlers() {
 
 }
 
-// Separate function to get drives info (can be called internally)
-async function getDrivesInfo() {
-  return new Promise((resolve) => {
-    try {
-      // Use PowerShell to get volume labels dynamically
-      const { exec } = require('child_process');
-      exec('powershell -NoProfile -Command "Get-Volume | Where-Object {$_.DriveLetter} | Select-Object DriveLetter, FileSystemLabel, Size, SizeRemaining | ConvertTo-Json"',
-        { timeout: 5000 },
-        (error, stdout, stderr) => {
-          const drives = [];
-          const letters = 'CDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
+// Cache for drive metadata (labels, drive types)
+let cachedDriveMetadata = {};
+let lastMetadataFetch = 0;
+let lastKnownDrivesHash = '';
 
-          // Parse PowerShell output
-          let volumeInfo = {};
-          try {
-            if (stdout && stdout.trim()) {
-              const volumes = JSON.parse(stdout);
-              const volumeArray = Array.isArray(volumes) ? volumes : [volumes];
-              volumeArray.forEach(vol => {
-                if (vol.DriveLetter) {
-                  volumeInfo[vol.DriveLetter] = {
-                    label: vol.FileSystemLabel || null,
-                    size: parseInt(vol.Size) || 0,
-                    available: parseInt(vol.SizeRemaining) || 0
-                  };
-                }
-              });
-              console.log('[get-drives-info] PowerShell data:', volumeInfo);
+function refreshDriveMetadataAsync() {
+  const now = Date.now();
+  if (now - lastMetadataFetch < 4000) return;
+  lastMetadataFetch = now;
+
+  const { exec } = require('child_process');
+  exec('wmic logicaldisk get DeviceID,DriveType,VolumeName,Size,FreeSpace /format:csv', { timeout: 3500 }, (err, stdout) => {
+    if (!err && stdout) {
+      try {
+        const lines = stdout.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+        if (lines.length >= 2) {
+          const headers = lines[0].split(',');
+          const rows = lines.slice(1);
+          const newMeta = {};
+          for (const row of rows) {
+            const cols = row.split(',');
+            const map = {};
+            for (let i = 0; i < headers.length; i++) {
+              map[headers[i]] = cols[i] || '';
             }
-          } catch (parseErr) {
-            console.warn('[get-drives-info] Could not parse PowerShell output:', parseErr.message);
+            const device = (map.DeviceID || map.Device || cols[1] || '').replace(':', '').toUpperCase();
+            if (!device) continue;
+            const driveType = map.DriveType || ''; // '2' = Removable/USB, '3' = Fixed, '4' = Network, '5' = CD
+            const vol = map.VolumeName || '';
+            newMeta[device] = {
+              label: vol || null,
+              driveType: driveType,
+              isRemovable: driveType === '2' || driveType === '5',
+              isUSB: driveType === '2',
+              size: parseInt(map.Size || '0', 10) || 0,
+              available: parseInt(map.FreeSpace || '0', 10) || 0
+            };
           }
-
-          // Check each drive letter
-          for (const letter of letters) {
-            const drive = letter + ':';
-            const drivePath = drive + '\\';
-
-            // Check if drive exists
-            if (!fs.existsSync(drivePath)) continue;
-
-            try {
-              const volInfo = volumeInfo[letter];
-              let description, size, available;
-
-              if (volInfo && volInfo.size > 0) {
-                // Use PowerShell data
-                const label = volInfo.label || 'Local Disk';
-                description = volInfo.label ? `${volInfo.label} (${drive})` : `Local Disk (${drive})`;
-                size = volInfo.size;
-                available = volInfo.available;
-              } else {
-                // Fallback to fs.statfsSync
-                const stats = fs.statfsSync ? fs.statfsSync(drivePath) : null;
-                description = `Local Disk (${drive})`;
-                size = stats ? stats.blocks * stats.bsize : 0;
-                available = stats ? stats.bavail * stats.bsize : 0;
-              }
-
-              console.log(`[get-drives-info] Drive ${drive}: size=${size}, available=${available}`);
-
-              drives.push({
-                device: drive,
-                description: description,
-                name: description,
-                label: volInfo && volInfo.label ? volInfo.label : null,
-                mountpoints: [{ path: drivePath }],
-                size: size,
-                available: available,
-                isSystem: letter === 'C',
-                isRemovable: false,
-                isUSB: false,
-                isCard: false,
-                isReadOnly: false
-              });
-            } catch (err) {
-              console.warn(`[get-drives-info] Could not get stats for ${drive}:`, err.message);
-            }
-          }
-
-          console.log(`[get-drives-info] Returning ${drives.length} drives`);
-          resolve({ success: true, drives });
+          cachedDriveMetadata = newMeta;
         }
-      );
-    } catch (err) {
-      console.error('[get-drives-info] error:', err);
-      resolve({ success: false, drives: [], error: err.message });
+      } catch (_) {}
     }
   });
+}
+
+let cachedPortableDevices = [];
+let isRefreshingPortable = false;
+
+function refreshPortableDevicesAsync() {
+  if (isRefreshingPortable) return;
+  isRefreshingPortable = true;
+  const scriptPath = path.join(__dirname, 'shell_nav.ps1');
+  if (!fs.existsSync(scriptPath)) {
+    isRefreshingPortable = false;
+    return;
+  }
+  exec(`powershell -NoProfile -ExecutionPolicy Bypass -File "${scriptPath}" -Action list-devices`, { timeout: 4000 }, (err, stdout) => {
+    isRefreshingPortable = false;
+    if (err || !stdout) return;
+    try {
+      const parsed = JSON.parse(stdout.trim());
+      const arr = Array.isArray(parsed) ? parsed : [parsed];
+      cachedPortableDevices = arr.filter(d => d && d.name);
+    } catch (_) {}
+  });
+}
+
+// Separate function to get drives info (instant, non-blocking)
+async function getDrivesInfo() {
+  try {
+    refreshDriveMetadataAsync();
+    refreshPortableDevicesAsync();
+    const drives = [];
+    const letters = 'CDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
+
+    for (const letter of letters) {
+      const drive = letter + ':';
+      const drivePath = drive + '\\';
+
+      if (!fs.existsSync(drivePath)) continue;
+
+      try {
+        let size = 0;
+        let available = 0;
+        if (fs.statfsSync) {
+          try {
+            const stats = fs.statfsSync(drivePath);
+            size = stats.blocks * stats.bsize;
+            available = stats.bavail * stats.bsize;
+          } catch (_) {}
+        }
+
+        const meta = cachedDriveMetadata[letter] || {};
+        if (size === 0 && meta.size) size = meta.size;
+        if (available === 0 && meta.available) available = meta.available;
+
+        const isRemovable = meta.isRemovable || (letter !== 'C' && meta.isUSB);
+        const isUSB = meta.isUSB || meta.driveType === '2';
+        const defaultName = isUSB ? `USB Drive (${drive})` : isRemovable ? `Removable Disk (${drive})` : `Local Disk (${drive})`;
+        const description = meta.label ? `${meta.label} (${drive})` : defaultName;
+
+        drives.push({
+          device: drive,
+          description: description,
+          name: description,
+          label: meta.label || null,
+          mountpoints: [{ path: drivePath }],
+          path: drivePath,
+          type: 'drive',
+          size: size,
+          available: available,
+          free: available,
+          isSystem: letter === 'C',
+          isRemovable: isRemovable,
+          isUSB: isUSB,
+          isCard: false,
+          isReadOnly: false
+        });
+      } catch (err) {
+        console.warn(`[get-drives-info] Could not get stats for ${drive}:`, err.message);
+      }
+    }
+
+    for (const p of cachedPortableDevices) {
+      drives.push({
+        device: p.name,
+        description: p.name,
+        name: p.name,
+        label: p.name,
+        path: p.name,
+        type: 'portable',
+        isPortable: true,
+        size: 0,
+        available: 0,
+        free: 0,
+        isSystem: false,
+        isRemovable: true,
+        isUSB: true,
+        isCard: false,
+        isReadOnly: false
+      });
+    }
+
+    return { success: true, drives };
+  } catch (err) {
+    console.error('[get-drives-info] error:', err);
+    return { success: false, drives: [], error: err.message };
+  }
+}
+
+function startDriveWatcher() {
+  setInterval(async () => {
+    try {
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+      const res = await getDrivesInfo();
+      if (res && res.success) {
+        // Only trigger when drives are attached/detached or labels/total sizes change
+        const hash = res.drives.map(d => `${d.device}-${d.description}-${d.size}`).join('|');
+        if (hash !== lastKnownDrivesHash) {
+          lastKnownDrivesHash = hash;
+          mainWindow.webContents.send('drives-changed', res.drives);
+        }
+      }
+    } catch (_) {}
+  }, 2500);
 }
 
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
+    minWidth: 800,
+    minHeight: 600,
     show: false,
+    titleBarStyle: 'hidden',
+    titleBarOverlay: {
+      color: '#09090b',
+      symbolColor: '#e8ece9',
+      height: 38
+    },
     backgroundColor: '#111827',
     icon: path.join(__dirname, 'public', 'intellifile_logo.png'),
     webPreferences: {
@@ -5825,6 +6146,18 @@ function createWindow() {
 
   // Set win for version watching
   win = mainWindow;
+
+  mainWindow.on('maximize', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('window-maximized-change', true);
+    }
+  });
+
+  mainWindow.on('unmaximize', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('window-maximized-change', false);
+    }
+  });
 
   // Remove the default menu bar (Files, Windows, Exit)
   Menu.setApplicationMenu(null);
@@ -5900,9 +6233,10 @@ function createWindow() {
   // Increase max event listeners to prevent memory leak warnings during indexing
   mainWindow.webContents.setMaxListeners(100);
 
-  if (isDev) {
-    mainWindow.webContents.openDevTools();
-  }
+  // DevTools disabled from auto-opening on startup
+  // if (isDev) {
+  //   mainWindow.webContents.openDevTools();
+  // }
 
   mainWindow.on('closed', () => {
     mainWindow = null;
@@ -5917,6 +6251,7 @@ app.on('ready', () => {
   startPython();
   startSyncServer();
   ensureSyncEngine();
+  startDriveWatcher();
   if (CHAT_ENABLED) startChatBackend();
   createWindow();
 });

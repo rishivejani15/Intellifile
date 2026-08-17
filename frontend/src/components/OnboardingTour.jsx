@@ -127,6 +127,7 @@ export default function OnboardingTour({ open, onStart, onNavigate, onClose }) {
   const beginTour = () => {
     onStart?.();
     setMode('tour');
+    window.dispatchEvent(new CustomEvent('intellifile-tour-start'));
   };
   const finishTour = () => onClose();
   const nextStep = () => {

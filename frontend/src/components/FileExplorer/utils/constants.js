@@ -36,6 +36,7 @@ export const DEFAULT_FILE_ICON = '📄';
 
 // Quick access folders
 export const QUICK_ACCESS_FOLDERS = [
+  { id: 'home', name: 'Home', icon: '🏠' },
   { id: 'this-pc', name: 'This PC', icon: '💻' },
   { id: 'desktop', name: 'Desktop', icon: '🖥️' },
   { id: 'documents', name: 'Documents', icon: '📄' },

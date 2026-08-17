@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { MdCloud, MdDelete, MdDesktopMac, MdDescription, MdDownload, MdFolder, MdImage, MdMusicNote, MdVideoLibrary } from 'react-icons/md';
+import { MdHome, MdComputer, MdStorage, MdCloud, MdDelete, MdDesktopMac, MdDescription, MdDownload, MdFolder, MdImage, MdMusicNote, MdVideoLibrary, MdPhoneAndroid } from 'react-icons/md';
+import { BsWindows } from 'react-icons/bs';
 import './FileExplorer/FileExplorer.css';
 import { showErrorToast, showToast } from '../utils/toast';
 
@@ -20,6 +21,70 @@ const isPathWithin = (candidate, target) => {
   return b === a || b.startsWith(`${a}\\`);
 };
 
+const formatWindowsDriveSize = (bytes) => {
+  const gb = Number(bytes || 0) / (1024 ** 3);
+  if (gb >= 100) {
+    return `${Math.round(gb)} GB`;
+  }
+  if (gb >= 10) {
+    const formatted = gb.toFixed(1);
+    return `${formatted.endsWith('.0') ? formatted.slice(0, -2) : formatted} GB`;
+  }
+  const formatted = gb.toFixed(2);
+  return `${formatted.endsWith('.00') ? formatted.slice(0, -3) : formatted} GB`;
+};
+
+function WindowsDriveIcon({ isSystem, isRemovable, isPortable }) {
+  if (isPortable) {
+    return (
+      <div className="win-drive-icon-container" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <MdPhoneAndroid size={24} style={{ color: '#0078d4', filter: 'drop-shadow(0 1px 3px rgba(0,0,0,0.3))' }} />
+      </div>
+    );
+  }
+
+  return (
+    <div className="win-drive-icon-container">
+      {isSystem && (
+        <div className="win-drive-os-badge" title="Windows System Drive">
+          <BsWindows size={9} color="#ffffff" />
+        </div>
+      )}
+      <svg width="38" height="28" viewBox="0 0 46 34" fill="none" xmlns="http://www.w3.org/2000/svg" className="win-drive-svg">
+        <defs>
+          <linearGradient id="sbDriveChassisGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+            <stop offset="0%" stopColor="#4b5563" />
+            <stop offset="40%" stopColor="#2e3440" />
+            <stop offset="100%" stopColor="#181c24" />
+          </linearGradient>
+          <linearGradient id="sbDriveTopFace" x1="0%" y1="0%" x2="100%" y2="80%">
+            <stop offset="0%" stopColor="#f3f4f6" />
+            <stop offset="50%" stopColor="#e5e7eb" />
+            <stop offset="100%" stopColor="#9ca3af" />
+          </linearGradient>
+        </defs>
+        
+        {/* Drive Front Chassis */}
+        <rect x="2" y="10" width="42" height="20" rx="3" fill="url(#sbDriveChassisGrad)" stroke="#4b5563" strokeWidth="1" />
+        
+        {/* Top Surface (Isometric Slope) */}
+        <path d="M4 10 L10 3 L36 3 L42 10 Z" fill="url(#sbDriveTopFace)" stroke="#9ca3af" strokeWidth="0.8" />
+        <path d="M10 3 L36 3" stroke="#ffffff" strokeWidth="1" strokeLinecap="round" />
+        
+        {/* Front Plate Inset */}
+        <rect x="5" y="13" width="36" height="14" rx="2" fill="#141820" stroke="#2d3340" strokeWidth="0.8" />
+        
+        {/* Activity LED */}
+        <circle cx="9" cy="20" r="2.2" fill={isRemovable ? "#10b981" : "#22c55e"} />
+        <circle cx="9" cy="20" r="1" fill="#ffffff" />
+        
+        {/* Front Drive Slot */}
+        <line x1="15" y1="20" x2="37" y2="20" stroke="#374151" strokeWidth="1.8" strokeLinecap="round" />
+      </svg>
+    </div>
+  );
+}
+
 const getFolderIcon = (name = '') => {
   const lower = String(name).toLowerCase();
   if (lower.includes('desktop')) return <MdDesktopMac />;
@@ -33,7 +98,7 @@ const getFolderIcon = (name = '') => {
   return <MdFolder />;
 };
 
-function ExplorerSidebar({ drives, onNavigate, currentPath }) {
+function ExplorerSidebar({ drives, onNavigate, currentPath, onContextMenu }) {
   const [favorites, setFavorites] = useState(() => {
     try {
       const stored = localStorage.getItem(FAVORITES_KEY);
@@ -65,14 +130,41 @@ function ExplorerSidebar({ drives, onNavigate, currentPath }) {
   const treeChildrenRef = React.useRef({});
   const treeLoadingRef = React.useRef({});
 
-  // Save favorites to localStorage whenever they change
-  useEffect(() => {
+  const reloadFavorites = useCallback(() => {
     try {
-      localStorage.setItem(FAVORITES_KEY, JSON.stringify(favorites));
-    } catch (e) {
-      console.error('Error saving favorites:', e);
-    }
-  }, [favorites]);
+      const stored = localStorage.getItem(FAVORITES_KEY);
+      setFavorites(stored ? JSON.parse(stored) : []);
+    } catch { setFavorites([]); }
+  }, []);
+
+  useEffect(() => {
+    const handleStorage = (e) => {
+      if (e.key === FAVORITES_KEY) {
+        reloadFavorites();
+      } else if (e.key === RECENT_FOLDERS_KEY) {
+        try {
+          const stored = localStorage.getItem(RECENT_FOLDERS_KEY);
+          setRecentFolders(stored ? JSON.parse(stored) : []);
+        } catch { }
+      }
+    };
+
+    const handleFavUpdated = (e) => {
+      if (e.detail && Array.isArray(e.detail)) {
+        setFavorites(e.detail);
+      } else {
+        reloadFavorites();
+      }
+    };
+
+    window.addEventListener('storage', handleStorage);
+    window.addEventListener('favorites-updated', handleFavUpdated);
+
+    return () => {
+      window.removeEventListener('storage', handleStorage);
+      window.removeEventListener('favorites-updated', handleFavUpdated);
+    };
+  }, [reloadFavorites]);
 
   // Save recent folders to localStorage whenever they change
   useEffect(() => {
@@ -227,22 +319,42 @@ function ExplorerSidebar({ drives, onNavigate, currentPath }) {
     }
   }, []);
 
-  // Save favorites to localStorage
-  const saveFavorites = (newFavorites) => {
+  // Save favorites to localStorage and broadcast event
+  const saveFavorites = useCallback((newFavorites) => {
     setFavorites(newFavorites);
-    localStorage.setItem(FAVORITES_KEY, JSON.stringify(newFavorites));
-  };
+    try {
+      localStorage.setItem(FAVORITES_KEY, JSON.stringify(newFavorites));
+      window.dispatchEvent(new StorageEvent('storage', { key: FAVORITES_KEY, newValue: JSON.stringify(newFavorites) }));
+      window.dispatchEvent(new CustomEvent('favorites-updated', { detail: newFavorites }));
+    } catch (e) {
+      console.error('Error saving favorites:', e);
+    }
+  }, []);
 
   const addFavorite = useCallback((folderPath, folderName) => {
-    if (favorites.some(f => f.path === folderPath)) return;
-    const newFavorites = [...favorites, { path: folderPath, name: folderName || folderPath.split('\\').pop() }];
-    saveFavorites(newFavorites);
-  }, [favorites]);
+    try {
+      const stored = localStorage.getItem(FAVORITES_KEY);
+      const currentFavs = stored ? JSON.parse(stored) : [];
+      const norm = normalizePath(folderPath);
+      if (currentFavs.some(f => normalizePath(f.path) === norm)) return;
+      const newFavorites = [...currentFavs, { path: folderPath, name: folderName || folderPath.split(/[\\/]/).pop() }];
+      saveFavorites(newFavorites);
+    } catch (e) {
+      console.error(e);
+    }
+  }, [saveFavorites]);
 
   const removeFavorite = useCallback((folderPath) => {
-    const newFavorites = favorites.filter(f => f.path !== folderPath);
-    saveFavorites(newFavorites);
-  }, [favorites]);
+    try {
+      const stored = localStorage.getItem(FAVORITES_KEY);
+      const currentFavs = stored ? JSON.parse(stored) : [];
+      const norm = normalizePath(folderPath);
+      const newFavorites = currentFavs.filter(f => normalizePath(f.path) !== norm);
+      saveFavorites(newFavorites);
+    } catch (e) {
+      console.error(e);
+    }
+  }, [saveFavorites]);
 
   const toggleSection = useCallback((section) => {
     setExpandedSections(prev => ({ ...prev, [section]: !prev[section] }));
@@ -500,12 +612,14 @@ function ExplorerSidebar({ drives, onNavigate, currentPath }) {
     const isCurrent = isActive(driveDevice);
 
     const usedSpace = driveSize - driveAvailable;
-    const usedPercent = driveSize > 0 ? Math.round((usedSpace / driveSize) * 100) : 0;
-    const availableGB = Math.round(driveAvailable / (1024 ** 3));
-    const totalGB = Math.round(driveSize / (1024 ** 3));
+    const usedPercent = driveSize > 0 ? Math.min(100, Math.round((usedSpace / driveSize) * 100)) : 0;
+    const isSystem = drive.isSystem || driveDevice.toUpperCase().startsWith('C:') || String(driveLabel).toLowerCase().includes('windows');
+    const isRemovable = Boolean(drive.isRemovable || drive.isUSB);
+
+    const isPortable = Boolean(drive.isPortable || drive.type === 'portable');
 
     return (
-      <div key={driveDevice || driveLabel} className={`drive-card-wrapper`}>
+      <div key={driveDevice || driveLabel} className="drive-card-wrapper">
         <div
           className={`drive-card ${isCurrent ? 'active' : ''} ${dragOverPath === driveDevice ? 'drag-over' : ''}`}
           onClick={() => onNavigate(driveDevice)}
@@ -524,18 +638,20 @@ function ExplorerSidebar({ drives, onNavigate, currentPath }) {
             >
               {isExpanded ? '▾' : '▸'}
             </button>
-            <span className="drive-icon">💾</span>
+            <WindowsDriveIcon isSystem={isSystem} isRemovable={isRemovable} isPortable={isPortable} />
             <div className="drive-info">
-              <div className="drive-name">{driveLabel}</div>
-              <div className="drive-space">{availableGB} GB free of {totalGB} GB</div>
+              <div className="drive-name" title={driveLabel}>{driveLabel}</div>
+              <div className="drive-space">{isPortable && driveSize === 0 ? 'Portable Device' : `${formatWindowsDriveSize(driveAvailable)} free of ${formatWindowsDriveSize(driveSize)}`}</div>
             </div>
           </div>
-          <div className="drive-progress-bar">
-            <div
-              className={`drive-progress-fill ${usedPercent > 90 ? 'critical' : usedPercent > 75 ? 'warning' : ''}`}
-              style={{ width: `${usedPercent}%` }}
-            />
-          </div>
+          {(!isPortable || driveSize > 0) && (
+            <div className="drive-progress-bar">
+              <div
+                className={`drive-progress-fill ${usedPercent > 90 ? 'critical' : usedPercent > 75 ? 'warning' : ''}`}
+                style={{ width: `${usedPercent}%` }}
+              />
+            </div>
+          )}
         </div>
 
         {isExpanded && (
@@ -551,30 +667,24 @@ function ExplorerSidebar({ drives, onNavigate, currentPath }) {
 
   return (
     <div className="explorer-sidebar">
-      {/* Favorites / Pinned */}
-      {favorites.length > 0 && (
-        <div className="sidebar-section">
-          <div
-            className="sidebar-title collapsible"
-            onClick={() => toggleSection('favorites')}
-          >
-            <span className="collapse-icon">{expandedSections.favorites ? '▾' : '▸'}</span>
-            ⭐ Favorites
-          </div>
-          {expandedSections.favorites && (
-            <div className="sidebar-tree">
-              {favorites.map((fav) => renderTreeNode({
-                path: fav.path,
-                name: fav.name,
-                isRoot: true,
-                icon: '📌',
-                removable: true,
-                onRemove: removeFavorite,
-              }, 0))}
-            </div>
-          )}
+      {/* Home & This PC Navigation */}
+      <div className="sidebar-section sidebar-home-section">
+        <div
+          className={`sidebar-item sidebar-home-item ${currentPath === 'Home' || !currentPath ? 'active' : ''}`}
+          onClick={() => onNavigate('Home')}
+        >
+          <span className="sidebar-icon"><MdHome size={18} /></span>
+          <span className="sidebar-label">Home</span>
         </div>
-)}
+        <div
+          className={`sidebar-item ${currentPath === 'This PC' ? 'active' : ''}`}
+          onClick={() => onNavigate('This PC')}
+        >
+          <span className="sidebar-icon"><MdComputer size={18} /></span>
+          <span className="sidebar-label">This PC</span>
+        </div>
+      </div>
+
       {/* Quick Access */}
       <div className="sidebar-section">
         <div
@@ -587,9 +697,47 @@ function ExplorerSidebar({ drives, onNavigate, currentPath }) {
         {expandedSections.quickAccess && (
           <>
             {systemRoots?.specialFolders?.filter(f => f.id !== 'this_pc').map((folder) => (
-              <div key={folder.id} className={`sidebar-item ${isActive(folder.path) ? 'active' : ''}`} onClick={() => navigateToQuickAccess(folder.path)}>
+              <div
+                key={folder.id}
+                className={`sidebar-item ${isActive(folder.path) ? 'active' : ''}`}
+                onClick={() => navigateToQuickAccess(folder.path)}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  onContextMenu?.(e, { path: folder.path, name: folder.name, type: 'folder' });
+                }}
+              >
                 <span className="sidebar-icon">{getFolderIcon(folder.name)}</span>
                 <span className="sidebar-label">{folder.name}</span>
+              </div>
+            ))}
+
+            {/* Pinned folders in Quick access */}
+            {favorites.map((fav) => (
+              <div
+                key={fav.path}
+                className={`sidebar-item ${isActive(fav.path) ? 'active' : ''} ${dragOverPath === fav.path ? 'drag-over' : ''}`}
+                onClick={() => onNavigate(fav.path)}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  onContextMenu?.(e, { path: fav.path, name: fav.name || getNodeName(fav.path), type: 'folder' });
+                }}
+                title={fav.path}
+              >
+                <span className="sidebar-icon">📌</span>
+                <span className="sidebar-label">{fav.name || getNodeName(fav.path)}</span>
+                <button
+                  type="button"
+                  className="sidebar-unpin"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    removeFavorite(fav.path);
+                  }}
+                  title="Unpin from Quick access"
+                >
+                  ×
+                </button>
               </div>
             ))}
           </>
@@ -613,6 +761,11 @@ function ExplorerSidebar({ drives, onNavigate, currentPath }) {
                   key={rf.path}
                   className={`sidebar-item ${isActive(rf.path) ? 'active' : ''}`}
                   onClick={() => onNavigate(rf.path)}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    onContextMenu?.(e, { path: rf.path, name: rf.name, type: 'folder' });
+                  }}
                   title={`${rf.path} (${rf.count || 1} visits)`}
                 >
                   <span className="sidebar-icon">{getFolderIcon(rf.name)}</span>
@@ -649,7 +802,7 @@ function ExplorerSidebar({ drives, onNavigate, currentPath }) {
         </div>
       )}
 
-              {/* Drives */}
+      {/* Drives */}
       {drives.length > 0 && (
         <div className="sidebar-section">
           <div
@@ -657,7 +810,9 @@ function ExplorerSidebar({ drives, onNavigate, currentPath }) {
             onClick={() => toggleSection('drives')}
           >
             <span className="collapse-icon">{expandedSections.drives ? '▾' : '▸'}</span>
-            Drives
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+              <MdStorage size={15} /> Drives
+            </span>
           </div>
           {expandedSections.drives && (
             <div className="sidebar-drives">
@@ -667,7 +822,12 @@ function ExplorerSidebar({ drives, onNavigate, currentPath }) {
                   device: drive.device || drive.id || drive.path || drive.DeviceID || drive.Device || '',
                   description: drive.description || drive.name || drive.label || drive.VolumeName || drive.volumeName || drive.device || drive.path || '',
                   size: drive.size || drive.Size || 0,
-                  available: drive.available ?? drive.free ?? drive.Free ?? drive.freeSpace ?? drive.free_space ?? 0
+                  available: drive.available ?? drive.free ?? drive.Free ?? drive.freeSpace ?? drive.free_space ?? 0,
+                  isPortable: Boolean(drive.isPortable),
+                  isRemovable: Boolean(drive.isRemovable || drive.isUSB),
+                  isUSB: Boolean(drive.isUSB),
+                  isSystem: Boolean(drive.isSystem),
+                  type: drive.type || (drive.isPortable ? 'portable' : 'drive')
                 };
                 return renderDriveCard(drv);
               })}

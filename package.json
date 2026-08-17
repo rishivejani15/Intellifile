@@ -1,1 +1,10 @@
-{}
+{
+  "name": "intellifile-workspace",
+  "version": "1.0.3",
+  "private": true,
+  "scripts": {
+    "start": "npm --prefix frontend start",
+    "dev": "npm --prefix frontend run dev",
+    "build": "npm --prefix frontend run build"
+  }
+}

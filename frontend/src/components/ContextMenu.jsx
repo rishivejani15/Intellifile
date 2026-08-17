@@ -187,7 +187,14 @@ function ContextMenu({
           <div className="context-menu-item" onClick={() => { onOpenInVSCode?.(); onClose(); }}>
             📘 Open in VS Code
           </div>
-          <div className="context-menu-divider"></div>
+          {currentPath && String(currentPath).toLowerCase() !== 'home' && (
+            <>
+              <div className="context-menu-item" onClick={() => { onPinToFavorites?.(); onClose(); }}>
+                {isPinnedToFavorites ? '📌 Unpin from Quick access' : '📌 Pin to Quick access'}
+              </div>
+              <div className="context-menu-divider"></div>
+            </>
+          )}
           <div className="context-menu-item" onClick={() => { onProperties?.(); onClose(); }}>
             ℹ️ Properties
           </div>
@@ -236,6 +243,11 @@ function ContextMenu({
         <div className="context-menu-item" onClick={() => { onOpen(); onClose(); }}>
           Open
         </div>
+        {selectedItem?.type === 'folder' && (
+          <div className="context-menu-item" onClick={() => { onPinToFavorites?.(); onClose(); }}>
+            {isPinnedToFavorites ? '📌 Unpin from Quick access' : '📌 Pin to Quick access'}
+          </div>
+        )}
         {selectedItem?.type === 'file' && (
           <div className="context-menu-item" onClick={() => { onOpenWith?.(); onClose(); }}>
             📂 Open with…

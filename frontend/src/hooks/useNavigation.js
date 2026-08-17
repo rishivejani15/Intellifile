@@ -35,6 +35,14 @@ export const useNavigation = (ipcRenderer) => {
   }, [currentPath, tabs, activeTabId, addressPath]);
 
   const updateBreadcrumb = useCallback((dirPath) => {
+    if (!dirPath || dirPath === 'Home' || dirPath === 'home') {
+      setBreadcrumb([{ name: 'Home', path: 'Home' }]);
+      return;
+    }
+    if (dirPath === 'This PC' || dirPath === 'this pc') {
+      setBreadcrumb([{ name: 'This PC', path: 'This PC' }]);
+      return;
+    }
     const parts = dirPath.split('\\').filter(p => p);
     const crumbs = parts.map((part, idx) => ({
       name: part,
@@ -59,7 +67,10 @@ export const useNavigation = (ipcRenderer) => {
     const targetId = tabId || activeTabId;
     setTabs(prev => prev.map(tab => {
       if (tab.id === targetId) {
-        const title = path.split('\\').filter(Boolean).pop() || 'Root';
+        let title = 'Root';
+        if (!path || path === 'Home' || path === 'home') title = 'Home';
+        else if (path === 'This PC' || path === 'this pc') title = 'This PC';
+        else title = path.split('\\').filter(Boolean).pop() || 'Root';
         return { ...tab, path, title };
       }
       return tab;
