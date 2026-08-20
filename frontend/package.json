@@ -19,6 +19,7 @@
     "extends": null,
     "appId": "com.intellifile.app",
     "productName": "IntelliFile",
+    "electronVersion": "41.4.0",
     "icon": "public/intellifile_logo.ico",
     "publish": {
       "provider": "github",
@@ -30,7 +31,9 @@
     },
     "win": {
       "target": "nsis",
-      "artifactName": "${productName}-Setup-${version}.${ext}"
+      "icon": "public/intellifile_logo.ico",
+      "artifactName": "${productName}-Setup-${version}.${ext}",
+      "sign": "dummySign.js"
     },
     "nsis": {
       "oneClick": false,
@@ -52,6 +55,7 @@
       "sync_engine.js",
       "listDirectoryCache.js",
       "file_lock_service.js",
+      "public/**/*",
       "build/**/*",
       "!build/**/*.map"
     ],
@@ -91,7 +95,7 @@
   "devDependencies": {
     "axios": "^1.4.0",
     "concurrently": "^8.2.2",
-    "electron": "^41.4.0",
+    "electron": "41.4.0",
     "electron-builder": "^25.1.8",
     "qrcode.react": "^4.2.0",
     "react": "^18.2.0",

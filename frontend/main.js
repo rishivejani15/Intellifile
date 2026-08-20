@@ -237,9 +237,17 @@ ipcMain.handle('get-app-version', () => {
 });
 
 ipcMain.handle('claim-onboarding-tour', () => {
-  if (onboardingTourClaimed) return false;
-  onboardingTourClaimed = true;
-  return true;
+  try {
+    const tourFlagPath = path.join(app.getPath('userData'), 'onboarding_tour_claimed.flag');
+    if (onboardingTourClaimed || fs.existsSync(tourFlagPath)) return false;
+    onboardingTourClaimed = true;
+    fs.writeFileSync(tourFlagPath, 'true', 'utf8');
+    return true;
+  } catch (_) {
+    if (onboardingTourClaimed) return false;
+    onboardingTourClaimed = true;
+    return true;
+  }
 });
 
 function isNewerVersion(latest, current) {
@@ -6174,6 +6182,27 @@ function startDriveWatcher() {
   }, 2500);
 }
 
+function resolveAppIconPath(filename) {
+  const isWin = process.platform === 'win32';
+  const primaryName = filename || (isWin ? 'intellifile_logo.ico' : 'intellifile_logo.png');
+  const fallbackName = isWin ? 'intellifile_logo.png' : 'intellifile_logo.ico';
+  const possiblePaths = [
+    path.join(__dirname, 'public', primaryName),
+    path.join(__dirname, 'build', primaryName),
+    path.join(__dirname, primaryName),
+    path.join(process.resourcesPath || '', 'public', primaryName),
+    path.join(process.resourcesPath || '', primaryName),
+    path.join(__dirname, 'public', fallbackName),
+    path.join(__dirname, 'build', fallbackName),
+    path.join(process.resourcesPath || '', 'public', fallbackName),
+    path.join(process.resourcesPath || '', fallbackName)
+  ];
+  for (const p of possiblePaths) {
+    if (fs.existsSync(p)) return p;
+  }
+  return path.join(__dirname, 'public', primaryName);
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1400,
@@ -6190,7 +6219,7 @@ function createWindow() {
       height: 44
     },
     backgroundColor: '#ffffff',
-    icon: path.join(__dirname, 'public', 'intellifile_logo.png'),
+    icon: resolveAppIconPath(),
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -6374,8 +6403,8 @@ app.on('before-quit', () => {
 function createTrayIconIfNeeded() {
   if (appTray) return;
   try {
-    const iconPath = path.join(__dirname, 'public', 'favicon.ico');
-    const icon = fs.existsSync(iconPath) ? nativeImage.createFromPath(iconPath) : nativeImage.createEmpty();
+    const iconPath = resolveAppIconPath('intellifile_logo.ico');
+    const icon = fs.existsSync(iconPath) ? nativeImage.createFromPath(iconPath) : nativeImage.createFromPath(resolveAppIconPath('intellifile_logo.png'));
     appTray = new Tray(icon);
     appTray.setToolTip('IntelliFile - File Lock Guard Active');
 

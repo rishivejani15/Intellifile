@@ -256,21 +256,17 @@ function App() {
           return;
         }
 
-        // localStorage is shared eventually, but simultaneous new windows can
-        // read it before either has written the flag. The main process gives
-        // only one window permission to show onboarding in that situation.
         const canShowTour = await claimTour();
+        try { localStorage.setItem(TOUR_COMPLETED_KEY, 'true'); } catch (_) {}
         if (!canShowTour) {
           if (active) setShowOnboardingTour(false);
           return;
         }
 
-        localStorage.setItem(TOUR_COMPLETED_KEY, 'true');
         if (active) setShowOnboardingTour(true);
       } catch (_) {
-        // Even if browser storage is unavailable, the process-level claim
-        // still ensures that only the first window can show the tour.
         const canShowTour = await claimTour().catch(() => false);
+        try { localStorage.setItem(TOUR_COMPLETED_KEY, 'true'); } catch (_) {}
         if (active) setShowOnboardingTour(Boolean(canShowTour));
       }
     };
