@@ -2,10 +2,10 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   MdExpandMore, MdPushPin,
   MdDesktopMac, MdDescription, MdDownload, MdImage, MdMusicNote, MdVideoLibrary,
-  MdFolder, MdAccessTime, MdStar, MdPeople, MdClose
+  MdFolder, MdAccessTime, MdStar, MdPeople
 } from 'react-icons/md';
 import { getFileIcon, formatFileSize } from '../utils/fileUtils';
-import { getRecentFiles, trackRecentFile, removeRecentFile } from '../../../utils/recentTracker';
+import { getRecentFiles, trackRecentFile } from '../../../utils/recentTracker';
 import './ExplorerHome.css';
 
 const FAVORITES_KEY = 'intellifile-favorites';
@@ -477,7 +477,6 @@ export default function ExplorerHome({
                   <span className="hd-col hd-location">Location</span>
                   <span className="hd-col hd-type">Type</span>
                   <span className="hd-col hd-size">Size</span>
-                  <span className="hd-col hd-action" />
                 </div>
 
                 {/* Details View Items List */}
@@ -522,22 +521,6 @@ export default function ExplorerHome({
                           {item.type === 'folder' ? '--' : formatFileSize(item.size || 0)}
                         </div>
 
-                        <div className="file-item-action">
-                          {activeTab === 'recent' && (
-                            <button
-                              className="home-item-remove"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                removeRecentFile(item.path);
-                                try { window.electron?.removeRecentItem?.(item.path); } catch (_) {}
-                                setRecentItems(prev => prev.filter(r => r.path !== item.path));
-                              }}
-                              title="Remove from recent"
-                            >
-                              <MdClose size={14} />
-                            </button>
-                          )}
-                        </div>
                       </div>
                     );
                   })}

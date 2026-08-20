@@ -172,7 +172,7 @@ function FileList({
           onEmptySpaceContextMenu?.(e);
         }}
       >
-        <MdFolderOpen size={20} style={{ marginRight: 8, verticalAlign: 'middle', opacity: 0.7 }} /> This folder is empty
+        This folder is empty
       </div>
     );
   }

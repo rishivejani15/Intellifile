@@ -7,9 +7,10 @@
    ─────────────────────────────────────────────────────── */
 .toast-host {
   position: fixed;
-  top: var(--sp-4);
+  /* Show temporary notices immediately below the window controls. */
+  top: 58px;
   right: var(--sp-4);
-  z-index: var(--z-toast);
+  z-index: 2147483647;
   display: flex;
   flex-direction: column;
   gap: var(--sp-2);

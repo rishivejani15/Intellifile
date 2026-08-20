@@ -5,7 +5,7 @@ export function showToast(message, options = {}) {
   const detail = {
     type,
     title: options.title || (type === 'success' ? 'Success' : type === 'warning' ? 'Warning' : type === 'error' ? 'Error' : 'Info'),
-    message: message || '',
+    message: options.message || message || '',
     reason: options.reason || '',
     solution: options.solution || '',
     duration: typeof options.duration === 'number' ? options.duration : 4500,

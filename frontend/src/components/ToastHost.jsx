@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { TOAST_EVENT } from '../utils/toast';
 import './ToastHost.css';
 
@@ -24,7 +25,7 @@ function ToastHost() {
 
   if (toasts.length === 0) return null;
 
-  return (
+  return createPortal(
     <div className="toast-host" aria-live="polite" aria-atomic="true">
       {toasts.map(toast => (
         <div key={toast.id} className={`toast-item ${toast.type || 'error'}`}>
@@ -37,7 +38,8 @@ function ToastHost() {
           {toast.solution && <div className="toast-meta"><strong>Fix:</strong> {toast.solution}</div>}
         </div>
       ))}
-    </div>
+    </div>,
+    document.body
   );
 }
 

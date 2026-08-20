@@ -2,6 +2,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import './Settings.css';
 import confirmApp from '../utils/confirm';
+import { showToast } from '../utils/toast';
 import { FaPalette } from 'react-icons/fa';
 import {
   FiFolder,
@@ -36,9 +37,9 @@ import {
 } from 'react-icons/fi';
 
 // Lightweight toast helper
-const toast = (title, options = {}) => {
-  if (window.intellifile?.showToast) return window.intellifile.showToast(title, options);
-  window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: title, ...options } }));
+const toast = (message, options = {}) => {
+  if (window.intellifile?.showToast) return window.intellifile.showToast(message, options);
+  return showToast(message, options);
 };
 
 const DEFAULT_WATCH_FOLDERS = ['Downloads', 'Desktop'];
@@ -64,15 +65,16 @@ const formatBytes = (bytes, decimals = 1) => {
 };
 
 const SECTIONS = [
+  { id: 'about', label: 'About', icon: <FiInfo /> },
+  { id: 'ai-model', label: 'AI Model', icon: <FiCpu /> },
   { id: 'appearance', label: 'Appearance', icon: <FaPalette /> },
   { id: 'file-management', label: 'File Management', icon: <FiFolder /> },
-  { id: 'search-indexing', label: 'Search & Indexing', icon: <FiSearch /> },
-  { id: 'ai-model', label: 'AI Model', icon: <FiCpu /> },
-  { id: 'storage', label: 'Storage', icon: <FiHardDrive /> },
-  { id: 'updates', label: 'Updates', icon: <FiRefreshCw /> },
+  { id: 'preferences', label: 'Preferences', icon: <FiTool /> },
   { id: 'privacy', label: 'Privacy', icon: <FiLock /> },
+  { id: 'search-indexing', label: 'Search & Indexing', icon: <FiSearch /> },
+  { id: 'storage', label: 'Storage', icon: <FiHardDrive /> },
   { id: 'take-tour', label: 'Take a Tour', icon: <FiCompass />, isAction: true },
-  { id: 'about', label: 'About', icon: <FiInfo /> },
+  { id: 'updates', label: 'Updates', icon: <FiRefreshCw /> },
 ];
 
 export default function Settings({ theme, onThemeChange, onStartTour, initialTab }) {
@@ -90,14 +92,81 @@ export default function Settings({ theme, onThemeChange, onStartTour, initialTab
   const [autoUpdateWiFi, setAutoUpdateWiFi] = useState(false);
   const [autoModelUpgrade, setAutoModelUpgrade] = useState(true);
 
+  const [isDefaultFileManager, setIsDefaultFileManager] = useState(false);
+  const [allowProtectedIndexing, setAllowProtectedIndexing] = useState(false);
+  const [isSettingDefault, setIsSettingDefault] = useState(false);
+
   const [searchTerm, setSearchTerm] = useState('');
-  const [activeTab, setActiveTab] = useState(initialTab || 'appearance');
+  const [activeTab, setActiveTab] = useState(initialTab || 'about');
 
   useEffect(() => {
     if (initialTab) {
       setActiveTab(initialTab);
     }
   }, [initialTab]);
+
+  useEffect(() => {
+    let mounted = true;
+    const checkDefaultStatus = async () => {
+      try {
+        if (window.intellifile?.checkIsDefaultFileManager) {
+          const res = await window.intellifile.checkIsDefaultFileManager();
+          if (mounted) setIsDefaultFileManager(!!res);
+        }
+      } catch (e) {
+        console.warn('Failed to check default file manager status:', e);
+      }
+    };
+    checkDefaultStatus();
+    return () => { mounted = false; };
+  }, []);
+
+  const updateIsDefaultFileManager = async (nextValue) => {
+    setIsDefaultFileManager(nextValue);
+    setIsSettingDefault(true);
+    toast(
+      nextValue ? '⏳ Setting as default...' : '⏳ Removing default...',
+      {
+        type: 'info',
+        title: 'In Progress',
+        message: 'Applying changes in the background, please wait...',
+        duration: 3000
+      }
+    );
+    try {
+      if (window.intellifile?.setDefaultFileManager) {
+        const result = await window.intellifile.setDefaultFileManager(nextValue);
+        if (result && !result.success) {
+          setIsDefaultFileManager(!nextValue);
+          toast(result.error || 'Failed to set as default file manager', { type: 'error' });
+        } else if (result && result.success) {
+          toast(
+            nextValue ? 'Default file manager enabled.' : 'Default file manager disabled.',
+            {
+              type: 'success',
+              message: nextValue 
+                ? 'IntelliFile is now set as the default handler for folders and File Explorer shortcuts.' 
+                : 'IntelliFile has been unregistered as the default file manager.',
+              solution: 'You can test it by opening folders or using Win+E.'
+            }
+          );
+        }
+      } else {
+        await persistSetting('is_default_file_manager', nextValue);
+      }
+    } catch (e) {
+      setIsDefaultFileManager(!nextValue);
+      console.warn('Failed to update default file manager preference:', e);
+      toast(e.message || 'Failed to update default preference', { type: 'error' });
+    } finally {
+      setIsSettingDefault(false);
+    }
+  };
+
+  const updateAllowProtectedIndexing = async (val) => {
+    setAllowProtectedIndexing(val);
+    await persistSetting('allow_protected_indexing', val);
+  };
 
   // Update System States
   const [currentVersion, setCurrentVersion] = useState('1.0.2');
@@ -461,6 +530,7 @@ export default function Settings({ theme, onThemeChange, onStartTour, initialTab
     const map = {
       appearance: ['theme', 'light', 'dark', 'system', 'appearance', 'mode'],
       'file-management': ['auto', 'sort', 'watched', 'folder', 'file'],
+      preferences: ['preferences', 'default', 'protected', 'permission'],
       'search-indexing': ['index', 'search', 'scan', 'indexing'],
       'ai-model': ['ai', 'model', 'llm', 'path', 'download'],
       updates: ['update', 'version', 'download', 'wifi'],
@@ -672,6 +742,8 @@ export default function Settings({ theme, onThemeChange, onStartTour, initialTab
     }
   }, [telemetryEnabled, activeTab]);
 
+
+
   // ─── Render ───
   return (
     <div className="settings-page">
@@ -790,7 +862,7 @@ export default function Settings({ theme, onThemeChange, onStartTour, initialTab
                   </div>
                 </div>
                 <div className="settings-panel-content">
-                  <div className="settings-toggle-row" onClick={() => persistSetting('auto_sort_enabled', !autoSortEnabled)}>
+                  <div className={`setting-card-row ${autoSortEnabled ? 'is-active' : ''}`} onClick={() => persistSetting('auto_sort_enabled', !autoSortEnabled)}>
                     <div className="settings-toggle-info">
                       <div className="settings-toggle-label">Enable Auto-Sort</div>
                       <div className="settings-toggle-desc">Automatically organize files into smart folders based on type and content</div>
@@ -908,6 +980,42 @@ export default function Settings({ theme, onThemeChange, onStartTour, initialTab
             </>
           )}
 
+          {/* ═══ PREFERENCES ═══ */}
+          {(activeTab === 'preferences' || searchTerm) && matchesSection('preferences') && (
+            <section className="settings-panel preferences-panel">
+              <div className="settings-panel-header">
+                <div>
+                  <div className="settings-panel-title">
+                    <span className="panel-icon"><FiTool /></span> Preferences
+                  </div>
+                  <div className="settings-panel-subtitle">Choose how IntelliFile works with Windows and protected files</div>
+                </div>
+              </div>
+              <div className="settings-panel-content">
+                <div className={`setting-card-row ${isDefaultFileManager ? 'is-active' : ''}`} onClick={() => !isSettingDefault && updateIsDefaultFileManager(!isDefaultFileManager)}>
+                  <div className="settings-toggle-info">
+                    <div className="settings-toggle-label">Set IntelliFile as default</div>
+                    <div className="settings-toggle-desc">Use IntelliFile when opening folders and File Explorer shortcuts</div>
+                  </div>
+                  <label className="switch" onClick={(event) => event.stopPropagation()}>
+                    <input type="checkbox" checked={isDefaultFileManager} disabled={isSettingDefault} onChange={(event) => updateIsDefaultFileManager(event.target.checked)} />
+                    <span className="slider"></span>
+                  </label>
+                </div>
+                <div className={`setting-card-row ${allowProtectedIndexing ? 'is-active' : ''}`} onClick={() => updateAllowProtectedIndexing(!allowProtectedIndexing)}>
+                  <div className="settings-toggle-info">
+                    <div className="settings-toggle-label">Allow protected indexing</div>
+                    <div className="settings-toggle-desc">Include files that require permission or a password when indexing</div>
+                  </div>
+                  <label className="switch" onClick={(event) => event.stopPropagation()}>
+                    <input type="checkbox" checked={allowProtectedIndexing} onChange={(event) => updateAllowProtectedIndexing(event.target.checked)} />
+                    <span className="slider"></span>
+                  </label>
+                </div>
+              </div>
+            </section>
+          )}
+
           {/* ═══ SEARCH & INDEXING ═══ */}
           {activeTab === 'search-indexing' && matchesSection('search-indexing') && (
             <section className="settings-panel">
@@ -920,7 +1028,7 @@ export default function Settings({ theme, onThemeChange, onStartTour, initialTab
                 </div>
               </div>
               <div className="settings-panel-content">
-                <div className="settings-toggle-row" onClick={() => persistSetting('index_enabled', !indexEnabled)}>
+                <div className={`setting-card-row ${indexEnabled ? 'is-active' : ''}`} onClick={() => persistSetting('index_enabled', !indexEnabled)}>
                   <div className="settings-toggle-info">
                     <div className="settings-toggle-label">Automatic Background Indexing</div>
                     <div className="settings-toggle-desc">Automatically index new & modified files in watched folders to enable semantic search</div>
@@ -931,16 +1039,16 @@ export default function Settings({ theme, onThemeChange, onStartTour, initialTab
                   </label>
                 </div>
 
-                <div style={{ marginTop: '1.5rem', paddingTop: '1.25rem', borderTop: '1px solid var(--bo-light)', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                  <div style={{ fontSize: 'var(--text-sm)', fontWeight: '700', color: 'var(--t-primary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <div className="settings-operations-container">
+                  <div className="settings-sub-heading">
                     <FiTool /> Indexing Operations
                   </div>
 
                   {/* Option 1: Re-scan System */}
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.75rem 1rem', background: 'var(--s-hover)', borderRadius: 'var(--rd-md)' }}>
+                  <div className="operation-card-row op-success">
                     <div>
-                      <div style={{ fontSize: 'var(--text-sm)', fontWeight: '600', color: 'var(--t-primary)' }}>1. Re-scan System Files & Folders</div>
-                      <div style={{ fontSize: 'var(--text-xs)', color: 'var(--t-muted)', marginTop: '2px' }}>Scan system for new & modified files for indexing</div>
+                      <div className="settings-toggle-label">1. Re-scan System Files & Folders</div>
+                      <div className="settings-toggle-desc">Scan system for new & modified files for indexing</div>
                     </div>
                     <button
                       className="settings-button primary"
@@ -952,10 +1060,10 @@ export default function Settings({ theme, onThemeChange, onStartTour, initialTab
                   </div>
 
                   {/* Option 2: Re-create Embeddings */}
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.75rem 1rem', background: 'var(--s-hover)', borderRadius: 'var(--rd-md)' }}>
+                  <div className="operation-card-row op-success">
                     <div>
-                      <div style={{ fontSize: 'var(--text-sm)', fontWeight: '600', color: 'var(--t-primary)' }}>2. Re-create Embeddings</div>
-                      <div style={{ fontSize: 'var(--text-xs)', color: 'var(--t-muted)', marginTop: '2px' }}>Re-generate vector embeddings for already extracted files</div>
+                      <div className="settings-toggle-label">2. Re-create Embeddings</div>
+                      <div className="settings-toggle-desc">Re-generate vector embeddings for already extracted files</div>
                     </div>
                     <button
                       className="settings-button secondary"
@@ -967,14 +1075,13 @@ export default function Settings({ theme, onThemeChange, onStartTour, initialTab
                   </div>
 
                   {/* Option 3: Reset Indexing & Embeddings */}
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.75rem 1rem', background: 'var(--c-error-soft, rgba(239, 68, 68, 0.1))', borderRadius: 'var(--rd-md)', border: '1px solid rgba(239, 68, 68, 0.2)' }}>
+                  <div className="operation-card-row op-danger">
                     <div>
-                      <div style={{ fontSize: 'var(--text-sm)', fontWeight: '600', color: 'var(--c-error, #ef4444)' }}>3. Reset Indexing & Embeddings</div>
-                      <div style={{ fontSize: 'var(--text-xs)', color: 'var(--t-muted)', marginTop: '2px' }}>Purge previous vector DB & index, building the whole vector DB again from scratch</div>
+                      <div className="settings-toggle-label op-danger-title">3. Reset Indexing & Embeddings</div>
+                      <div className="settings-toggle-desc">Purge previous vector DB & index, building the whole vector DB again from scratch</div>
                     </div>
                     <button
-                      className="settings-button secondary"
-                      style={{ color: 'var(--c-error, #ef4444)', borderColor: 'rgba(239, 68, 68, 0.4)' }}
+                      className="settings-button danger-outline"
                       disabled={indexingBusy}
                       onClick={handleResetIndexing}
                     >
@@ -1025,7 +1132,7 @@ export default function Settings({ theme, onThemeChange, onStartTour, initialTab
                 </label>
 
                 {/* Auto Model Upgrade Toggle */}
-                <div className="settings-toggle-row" onClick={() => persistSetting('auto_model_upgrade', !autoModelUpgrade)} style={{ marginTop: '1rem' }}>
+                <div className={`setting-card-row ${autoModelUpgrade ? 'is-active' : ''}`} onClick={() => persistSetting('auto_model_upgrade', !autoModelUpgrade)} style={{ marginTop: '1rem' }}>
                   <div className="settings-toggle-info">
                     <div className="settings-toggle-label">Automatically Upgrade Search Models</div>
                     <div className="settings-toggle-desc">Background dual-database migration keeps searches active while building new vector embeddings</div>
@@ -1158,7 +1265,7 @@ export default function Settings({ theme, onThemeChange, onStartTour, initialTab
                 )}
 
                 {/* Wi-Fi Auto-Download Toggle */}
-                <div className="settings-toggle-row" onClick={() => persistSetting('auto_update_wifi', !autoUpdateWiFi)} style={{ marginTop: '8px' }}>
+                <div className={`setting-card-row ${autoUpdateWiFi ? 'is-active' : ''}`} onClick={() => persistSetting('auto_update_wifi', !autoUpdateWiFi)} style={{ marginTop: '8px' }}>
                   <div className="settings-toggle-info">
                     <div className="settings-toggle-label">Wi‑Fi Auto-Download</div>
                     <div className="settings-toggle-desc">Automatically download updates in background when connected to Wi-Fi</div>
@@ -1495,7 +1602,7 @@ export default function Settings({ theme, onThemeChange, onStartTour, initialTab
               </div>
               <div className="settings-panel-content">
                 <p>IntelliFile runs 100% offline. All AI processing happens locally on your machine. No data ever leaves your device.</p>
-                <div className="settings-toggle-row" onClick={() => persistSetting('telemetry_enabled', !telemetryEnabled)}>
+                <div className={`setting-card-row ${telemetryEnabled ? 'is-active' : ''}`} onClick={() => persistSetting('telemetry_enabled', !telemetryEnabled)}>
                   <div className="settings-toggle-info">
                     <div className="settings-toggle-label">Local Usage Diagnostics</div>
                     <div className="settings-toggle-desc">Record anonymous usage statistics (search count, index runs) locally in SQLite for diagnostic inspection</div>

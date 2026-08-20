@@ -367,8 +367,8 @@ body {
   align-items: center;
   justify-content: flex-start;
   padding: 0 140px 0 var(--sp-2); /* 140px reserved for native Windows titlebar buttons */
-  height: 38px;
-  min-height: 38px;
+  height: 50px;
+  min-height: 50px;
   background: var(--s-glass);
   backdrop-filter: blur(20px) saturate(1.2);
   -webkit-backdrop-filter: blur(20px) saturate(1.2);
@@ -383,15 +383,16 @@ body {
 .header-left {
   display: flex;
   align-items: center;
-  gap: var(--sp-2);
+  gap: 10px;
   flex-shrink: 0;
   -webkit-app-region: drag;
-  padding-right: 4px;
+  padding-left: 6px;
+  padding-right: 10px;
 }
 
 .app-logo {
-  width: 18px;
-  height: 18px;
+  width: 22px;
+  height: 22px;
   object-fit: contain;
   flex-shrink: 0;
   filter: drop-shadow(0 2px 4px var(--c-brand-glow));
@@ -399,13 +400,12 @@ body {
 }
 
 .app-title {
-  font-size: 12.5px;
+  font-size: 15px;
   font-weight: 700;
   color: var(--t-primary);
-  letter-spacing: -0.2px;
+  letter-spacing: -0.3px;
   white-space: nowrap;
   pointer-events: none;
-  padding-right: 6px;
 }
 
 /* ───────────────────────────────────────────────────────
@@ -441,7 +441,7 @@ body {
   transition: all var(--dur-150) var(--ease-default);
   letter-spacing: 0.2px;
   overflow: hidden;
-  height: 28px;
+  height: 38px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -500,7 +500,7 @@ body {
   color: var(--color-primary);
   cursor: pointer;
   transition: all 0.15s ease;
-  height: 26px;
+  height: 32px;
   -webkit-app-region: no-drag;
 }
 

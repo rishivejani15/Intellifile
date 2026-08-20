@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { MdHome, MdComputer, MdStorage, MdCloud, MdDelete, MdDesktopMac, MdDescription, MdDownload, MdFolder, MdImage, MdMusicNote, MdVideoLibrary, MdPhoneAndroid } from 'react-icons/md';
 import { BsWindows } from 'react-icons/bs';
 import './FileExplorer/FileExplorer.css';
-import { showErrorToast, showToast } from '../utils/toast';
+import { showErrorToast } from '../utils/toast';
 
 const FAVORITES_KEY = 'intellifile-favorites';
 const RECENT_FOLDERS_KEY = 'intellifile-recent-folders';
@@ -122,9 +122,6 @@ function ExplorerSidebar({ drives, onNavigate, currentPath, onContextMenu }) {
   const [treeExpanded, setTreeExpanded] = useState({});
   const [treeChildren, setTreeChildren] = useState({});
   const [treeLoading, setTreeLoading] = useState({});
-  const [allowProtectedIndexing, setAllowProtectedIndexing] = useState(false);
-  const [isDefaultFileManager, setIsDefaultFileManager] = useState(false);
-  const [isSettingDefault, setIsSettingDefault] = useState(false);
   const [dragOverPath, setDragOverPath] = useState(null);
   const dragTimerRef = React.useRef(null);
   const treeChildrenRef = React.useRef({});
@@ -233,90 +230,6 @@ function ExplorerSidebar({ drives, onNavigate, currentPath, onContextMenu }) {
 
     window.addEventListener('intellifile-folder-visited', handleFolderVisited);
     return () => window.removeEventListener('intellifile-folder-visited', handleFolderVisited);
-  }, []);
-
-  useEffect(() => {
-    let mounted = true;
-    const loadPrefs = async () => {
-      try {
-        const prefs = await window.intellifile?.getIndexingPreferences?.();
-        if (!mounted) return;
-        if (prefs && typeof prefs.allowProtectedIndexing === 'boolean') {
-          setAllowProtectedIndexing(prefs.allowProtectedIndexing);
-        }
-      } catch (e) {
-        console.warn('Failed to load indexing preferences:', e);
-      }
-    };
-    loadPrefs();
-    return () => { mounted = false; };
-  }, []);
-
-  const updateAllowProtectedIndexing = useCallback(async (nextValue) => {
-    setAllowProtectedIndexing(nextValue);
-    try {
-      await window.intellifile?.setIndexingPreferences?.({ allowProtectedIndexing: nextValue });
-    } catch (e) {
-      console.warn('Failed to save indexing preference:', e);
-    }
-  }, []);
-
-  useEffect(() => {
-    let mounted = true;
-    const checkDefaultStatus = async () => {
-      try {
-        if (window.intellifile?.checkIsDefaultFileManager) {
-          const res = await window.intellifile.checkIsDefaultFileManager();
-          if (mounted) setIsDefaultFileManager(res);
-        }
-      } catch (e) {
-        console.warn('Failed to check default file manager status:', e);
-      }
-    };
-    checkDefaultStatus();
-    return () => { mounted = false; };
-  }, []);
-
-  const updateIsDefaultFileManager = useCallback(async (nextValue) => {
-    // Optimistically update UI
-    setIsDefaultFileManager(nextValue);
-    setIsSettingDefault(true);
-    showToast(
-      nextValue ? '⏳ Setting as default...' : '⏳ Removing default...',
-      {
-        type: 'info',
-        title: 'In Progress',
-        message: 'Applying changes in the background, please wait...',
-        duration: 3000
-      }
-    );
-    try {
-      if (window.intellifile?.setDefaultFileManager) {
-        const result = await window.intellifile.setDefaultFileManager(nextValue);
-        if (result && !result.success) {
-          // Revert UI state on failure silently
-          setIsDefaultFileManager(!nextValue);
-        } else if (result && result.success) {
-          // Show final success toast overriding the optimistic one
-          showToast(
-            nextValue ? 'Default file manager enabled.' : 'Default file manager disabled.',
-            {
-              type: 'success',
-              message: nextValue 
-                ? 'IntelliFile is now set as the default handler for folders and File Explorer shortcuts.' 
-                : 'IntelliFile has been unregistered as the default file manager.',
-              solution: 'You can test it by opening folders or using Win+E.'
-            }
-          );
-        }
-      }
-    } catch (e) {
-      // Revert UI state on unexpected error
-      setIsDefaultFileManager(!nextValue);
-      console.warn('Failed to update default file manager preference:', e);
-    } finally {
-      setIsSettingDefault(false);
-    }
   }, []);
 
   // Save favorites to localStorage and broadcast event
@@ -836,34 +749,6 @@ function ExplorerSidebar({ drives, onNavigate, currentPath, onContextMenu }) {
         </div>
       )}
 
-      <div className="sidebar-section">
-        <div className="sidebar-title">Preferences</div>
-        
-        {window.electron && (
-          <div style={{ marginBottom: '12px' }}>
-            <label className="sidebar-toggle">
-              <input
-                type="checkbox"
-                checked={isDefaultFileManager}
-                disabled={isSettingDefault}
-                onChange={(e) => updateIsDefaultFileManager(e.target.checked)}
-              />
-              <span className="sidebar-toggle-text">Set IntelliFile as default</span>
-            </label>
-            <div className="sidebar-help">Replaces Windows Explorer as default handler for opening folders and explorer shortcuts.</div>
-          </div>
-        )}
-
-        <label className="sidebar-toggle">
-          <input
-            type="checkbox"
-            checked={allowProtectedIndexing}
-            onChange={(e) => updateAllowProtectedIndexing(e.target.checked)}
-          />
-          <span className="sidebar-toggle-text">Allow protected indexing</span>
-        </label>
-        <div className="sidebar-help">Includes files that require permission or a password.</div>
-      </div>
     </div>
   );
 }

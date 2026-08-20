@@ -50,18 +50,6 @@ function App() {
     setShowOnboardingTour(false);
   };
 
-  // Synchronize native Windows titlebar overlay buttons colors with current theme
-  useEffect(() => {
-    const isDark = theme === 'dark' || (theme === 'system' && window.matchMedia?.('(prefers-color-scheme: dark)').matches);
-    if (window.intellifile?.setTitleBarOverlay) {
-      window.intellifile.setTitleBarOverlay({
-        color: isDark ? '#09090b' : '#f8fafc',
-        symbolColor: isDark ? '#e8ece9' : '#0f172a',
-        height: 38
-      });
-    }
-  }, [theme]);
-
   useEffect(() => {
     console.log('App mounted, ipcRenderer available:', !!ipcRenderer);
     

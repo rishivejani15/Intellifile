@@ -227,7 +227,8 @@ const LogsPanel = () => {
                 onClick={() => setLevelFilter(lv)}
                 title={`Show ${LEVEL_LABELS[lv]} logs`}
               >
-                {LEVEL_ICONS[lv]} {LEVEL_LABELS[lv]}
+                <span className="chip-icon">{LEVEL_ICONS[lv]}</span>
+                <span className="chip-label">{LEVEL_LABELS[lv]}</span>
                 {lv !== 'all' && levelCounts[lv] ? (
                   <span className="chip-badge">{levelCounts[lv]}</span>
                 ) : null}

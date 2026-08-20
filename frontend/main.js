@@ -6098,6 +6098,12 @@ async function getDrivesInfo() {
       });
     }
 
+    // Keep fixed, removable, and portable drives in a stable natural order.
+    drives.sort((a, b) => String(a.device || a.path || a.name || '').localeCompare(
+      String(b.device || b.path || b.name || ''),
+      undefined,
+      { numeric: true, sensitivity: 'base' }
+    ));
     return { success: true, drives };
   } catch (err) {
     console.error('[get-drives-info] error:', err);
@@ -6133,7 +6139,7 @@ function createWindow() {
     titleBarOverlay: {
       color: '#09090b',
       symbolColor: '#e8ece9',
-      height: 38
+      height: 44
     },
     backgroundColor: '#111827',
     icon: path.join(__dirname, 'public', 'intellifile_logo.png'),

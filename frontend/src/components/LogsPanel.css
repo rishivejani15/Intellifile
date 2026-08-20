@@ -240,17 +240,32 @@
 .level-chip {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 3px 10px;
+  gap: 5px;
+  padding: 4px 11px;
   border-radius: var(--rd-full);
   font-size: 11px;
   font-weight: 600;
+  line-height: 1;
   cursor: pointer;
-  border: 1px solid transparent;
+  border: 1px solid var(--bo-light, rgba(0, 0, 0, 0.08));
   background: var(--s-elev);
   color: var(--t-secondary);
   transition: all var(--dur-150) var(--ease-default);
   user-select: none;
+}
+
+.level-chip .chip-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.level-chip .chip-label {
+  display: inline-flex;
+  align-items: center;
+  line-height: 1;
 }
 
 .level-chip:hover { background: var(--global-hover-bg) !important; }
@@ -266,14 +281,24 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 16px;
+  min-width: 18px;
   height: 16px;
-  padding: 0 4px;
-  background: rgba(255,255,255,0.25);
+  padding: 0 5px;
+  background: rgba(0, 0, 0, 0.08);
   border-radius: 999px;
   font-size: 10px;
   font-weight: 700;
   line-height: 1;
+  margin-left: 2px;
+}
+
+.level-chip.active .chip-badge {
+  background: rgba(255, 255, 255, 0.25);
+  color: #ffffff;
+}
+
+[data-theme="dark"] .chip-badge {
+  background: rgba(255, 255, 255, 0.15);
 }
 
 /* ───────────────────────────────────────────────────────

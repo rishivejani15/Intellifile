@@ -60,6 +60,19 @@ export const getParentPath = (filePath) => {
 export const sortItems = (items, sortBy, sortDirection = 'asc') => {
   if (!items) return [];
 
+  // This PC always lists drive roots in ascending device order, independent of
+  // the generic file sort preference or a custom volume label.
+  const isDriveList = items.length > 0 && items.every(item =>
+    item.type === 'drive' || item.type === 'portable' || item.isPortable
+  );
+  if (isDriveList) {
+    return [...items].sort((a, b) => String(a.device || a.path || a.name || '').localeCompare(
+      String(b.device || b.path || b.name || ''),
+      undefined,
+      { numeric: true, sensitivity: 'base' }
+    ));
+  }
+
   return [...items].sort((a, b) => {
     if (a.type === 'folder' && b.type !== 'folder') return -1;
     if (a.type !== 'folder' && b.type === 'folder') return 1;
