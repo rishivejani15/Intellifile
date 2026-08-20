@@ -266,7 +266,7 @@ function FileLockManager() {
       {/* Minimalist Top Header (matching Explorer & Settings) */}
       <header className="vault-header" data-tour="vault-tools">
         <div className="vault-header-left">
-          <div className="vault-icon-badge">
+          <div className="vault-icon-badge vault-icon-badge--security">
             <MdSecurity size={20} />
           </div>
           <div className="vault-title-group">
@@ -374,8 +374,19 @@ function FileLockManager() {
           <>
             {filteredFiles.length === 0 ? (
               <div className="vault-empty-state">
-                <div className="empty-icon-wrap">
-                  <MdLock size={36} />
+                <div className="vault-lock-visual" aria-hidden="true">
+                  <span className="vault-lock-halo" />
+                  <span className="vault-lock-spark vault-lock-spark--one" />
+                  <span className="vault-lock-spark vault-lock-spark--two" />
+                  <span className="vault-lock-document">
+                    <span className="vault-lock-document-fold" />
+                    <span className="vault-lock-document-line vault-lock-document-line--one" />
+                    <span className="vault-lock-document-line vault-lock-document-line--two" />
+                  </span>
+                  <span className="vault-padlock">
+                    <span className="vault-padlock-shackle" />
+                    <span className="vault-padlock-body"><MdLock size={20} /></span>
+                  </span>
                 </div>
                 <h3 className="empty-title">
                   {searchQuery ? 'No matching files found' : 'Your vault is empty'}
@@ -386,7 +397,7 @@ function FileLockManager() {
                     : 'Encrypted files are protected locally with your password and recovery key. Click below to add files to your vault.'}
                 </p>
                 {!searchQuery && (
-                  <button className="vault-btn-primary empty-action-btn" onClick={handleLockNewFile}>
+                  <button className="vault-btn-primary vault-empty-action-btn" onClick={handleLockNewFile}>
                     <MdAdd size={16} /> Lock Your First File
                   </button>
                 )}
@@ -606,7 +617,7 @@ function FileLockManager() {
                 </p>
                 {(historySearch || historyFilter !== 'all') && (
                   <button
-                    className="vault-btn-primary empty-action-btn"
+                    className="vault-btn-primary vault-empty-action-btn"
                     onClick={() => { setHistorySearch(''); setHistoryFilter('all'); }}
                   >
                     Reset Filters

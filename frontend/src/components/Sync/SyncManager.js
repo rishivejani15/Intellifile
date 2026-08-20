@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { QRCodeCanvas } from 'qrcode.react';
 import {
-  FiRefreshCw, FiTrash2, FiExternalLink, FiCloud, FiLink,
+  FiRefreshCw, FiTrash2, FiExternalLink, FiLink,
   FiCheck, FiX, FiPlus, FiSmartphone, FiMonitor, FiDownload,
   FiActivity, FiCopy, FiWifi
 } from 'react-icons/fi';
@@ -237,6 +237,13 @@ const SyncManager = () => {
     savedSettings.isInitiator,
   ]);
 
+  // The guided tour opens the pairing workspace before spotlighting it.
+  useEffect(() => {
+    const showTourPairing = () => setActiveTab('devices');
+    window.addEventListener('intellifile-tour-open-sync-pairing', showTourPairing);
+    return () => window.removeEventListener('intellifile-tour-open-sync-pairing', showTourPairing);
+  }, []);
+
   // ── Poll connected devices from server ────────────────────────────────
 
   useEffect(() => {
@@ -471,7 +478,7 @@ const SyncManager = () => {
       )}
 
       {/* ── Minimalist Top Header (matching Vault) ────────────────────── */}
-      <header className="vault-header" data-tour="sync-overview">
+      <header className="vault-header">
         <div className="vault-header-left">
           <div className="vault-icon-badge">
             <FiRefreshCw size={19} className={isConnected ? 'sync-spin-slow' : ''} />
@@ -643,8 +650,10 @@ const SyncManager = () => {
             ) : filteredFiles.length === 0 ? (
               /* Centered Empty State */
               <div className="vault-empty-state">
-                <div className="empty-icon-wrap">
-                  <FiCloud size={36} />
+                <div className="sync-transfer-visual" aria-hidden="true">
+                  <div className="sync-transfer-node sync-transfer-node--desktop"><FiMonitor size={24} /></div>
+                  <div className="sync-transfer-track"><span className="sync-transfer-file"><MdFolder size={18} /></span></div>
+                  <div className="sync-transfer-node sync-transfer-node--phone"><FiSmartphone size={24} /></div>
                 </div>
                 <h3 className="empty-title">
                   {searchQuery ? 'No matching staged files' : 'No files staged for sync'}
@@ -656,10 +665,10 @@ const SyncManager = () => {
                 </p>
                 {!searchQuery && (
                   <div className="empty-action-group">
-                    <button className="vault-btn-primary empty-action-btn" onClick={handleAddFiles}>
+                    <button className="vault-btn-primary vault-empty-action-btn" onClick={handleAddFiles}>
                       <FiPlus size={16} /> Stage Files for Sync
                     </button>
-                    <button className="vault-btn-secondary empty-action-btn" onClick={() => setActiveTab('devices')}>
+                    <button className="vault-btn-secondary vault-empty-action-btn" onClick={() => setActiveTab('devices')}>
                       <FiSmartphone size={16} /> Connect Mobile Device
                     </button>
                   </div>
@@ -766,7 +775,7 @@ const SyncManager = () => {
         {/* ── TAB 2: PAIR & DEVICES ──────────────────────────────────── */}
         {activeTab === 'devices' && (
           <div className="sync-devices-tab-view">
-            <div className="sync-devices-layout-grid">
+            <div className="sync-devices-layout-grid" data-tour="sync-overview">
               {/* Left Card: High-Impact LAN Wi-Fi QR Code */}
               <div className="vault-card sync-qr-showcase-card" data-tour="sync-qr-code">
                 <div className="showcase-header">

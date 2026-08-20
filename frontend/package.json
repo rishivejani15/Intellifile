@@ -1,6 +1,6 @@
 {
   "name": "intellifile",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "IntelliFile - AI-powered local file manager",
   "main": "main.js",
   "homepage": "./",
@@ -33,10 +33,10 @@
       "artifactName": "${productName}-Setup-${version}.${ext}"
     },
     "nsis": {
-      "oneClick": true,
+      "oneClick": false,
       "perMachine": false,
       "allowElevation": true,
-      "allowToChangeInstallationDirectory": false,
+      "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "deleteAppDataOnUninstall": false,

@@ -33,7 +33,9 @@ const TOUR_STEPS = [
     target: '[data-tour="sync-overview"]',
     title: 'Sync across devices with QR pairing',
     description: 'Add files for secure transfer, then use the QR code to pair a mobile device on the same network. Scan it from IntelliFile Sync on your phone for the fastest secure connection, and review activity here afterwards.',
-    section: 'sync'
+    section: 'sync',
+    action: 'open-sync-pairing',
+    cardPlacement: 'sync-pairing-left'
   },
   {
     target: '[data-tour="vault-tools"]',
@@ -49,6 +51,21 @@ const TOUR_STEPS = [
     section: 'explorer',
     action: 'open-version-history',
     cardPlacement: 'left'
+  },
+  {
+    target: '[data-tour="auto-sort-settings"]',
+    title: 'Keep new files organized automatically',
+    description: 'Enable Auto-Sort, choose the folders IntelliFile watches, and set the destination where organized files are placed.',
+    section: 'settings',
+    settingsTab: 'file-management'
+  },
+  {
+    target: '[data-tour="storage-settings"]',
+    title: 'Understand and manage storage',
+    description: 'Review disk capacity, see which files use the most space, and keep IntelliFile storage under control.',
+    section: 'settings',
+    settingsTab: 'storage',
+    cardPlacement: 'storage-bottom-right'
   }
 ];
 
@@ -81,18 +98,43 @@ export default function OnboardingTour({ open, onStart, onNavigate, onClose }) {
   }, [mode, open, stepIndex]);
 
   useEffect(() => {
-    if (open && mode === 'tour') onNavigate?.(step.section || 'explorer');
-  }, [mode, onNavigate, open, step.section]);
+    if (open && mode === 'tour') onNavigate?.(step.section || 'explorer', step.settingsTab);
+  }, [mode, onNavigate, open, step.section, step.settingsTab]);
 
   useEffect(() => {
     if (!open || mode !== 'tour' || !step.action) return undefined;
     const timer = window.setTimeout(() => {
       if (step.action === 'open-version-history') {
         window.dispatchEvent(new CustomEvent('intellifile-tour-open-version-history'));
+      } else if (step.action === 'open-sync-pairing') {
+        window.dispatchEvent(new CustomEvent('intellifile-tour-open-sync-pairing'));
       }
     }, 150);
     return () => window.clearTimeout(timer);
   }, [mode, open, step.action]);
+
+  // The caption controls are rendered by Electron outside the web page. Match
+  // their native title bar to the tour scrim so they do not appear highlighted.
+  useEffect(() => {
+    if (!open) return undefined;
+
+    window.intellifile?.setTitleBarOverlay?.({
+      // This matches the page after the tour scrim is applied, so the native
+      // caption controls do not look like a separate highlighted strip.
+      color: '#58635d',
+      symbolColor: '#d4ddd7',
+      height: 44,
+    });
+
+    return () => {
+      const isDarkTheme = document.documentElement.getAttribute('data-theme') === 'dark';
+      window.intellifile?.setTitleBarOverlay?.(
+        isDarkTheme
+          ? { color: '#09090b', symbolColor: '#e8ece9', height: 44 }
+          : { color: '#ffffff', symbolColor: '#1f2937', height: 44 }
+      );
+    };
+  }, [open]);
 
   useLayoutEffect(() => {
     if (!open || mode !== 'tour') return undefined;
@@ -136,6 +178,29 @@ export default function OnboardingTour({ open, onStart, onNavigate, onClose }) {
   };
 
   const cardStyle = targetRect ? (() => {
+    if (step.cardPlacement === 'sync-pairing-left') {
+      // The pairing view occupies the centre of the page and its QR code is
+      // the key action. Keep this explanation in the unused space to the
+      // left, rather than placing it on top of the code people need to scan.
+      const leftGutter = Math.max(230, Math.min(280, targetRect.left - 30));
+      if (targetRect.left >= 250) {
+        return {
+          left: Math.max(12, targetRect.left - leftGutter - 14),
+          top: Math.max(20, Math.min(targetRect.top + 24, window.innerHeight - 380)),
+          width: leftGutter,
+        };
+      }
+      return {
+        left: Math.max(20, Math.min(targetRect.left + 20, window.innerWidth - 390)),
+        top: Math.max(20, Math.min(targetRect.top + targetRect.height + 18, window.innerHeight - 380)),
+      };
+    }
+    if (step.cardPlacement === 'storage-bottom-right') {
+      return {
+        left: Math.max(20, Math.min(targetRect.left + targetRect.width - 390, window.innerWidth - 390)),
+        top: Math.max(20, window.innerHeight - 265),
+      };
+    }
     if (step.cardPlacement === 'left') {
       return {
         left: Math.max(20, targetRect.left - 388),
@@ -158,13 +223,27 @@ export default function OnboardingTour({ open, onStart, onNavigate, onClose }) {
     };
   })() : undefined;
 
+  const spotlightStyle = targetRect ? (() => {
+    const padding = 6;
+    const topOverflow = Math.max(0, padding - targetRect.top);
+    const leftOverflow = Math.max(0, padding - targetRect.left);
+    return {
+      // Preserve the target's true size. At a window edge, only the outside
+      // padding is removed instead of moving the outline inward.
+      top: Math.max(0, targetRect.top - padding),
+      left: Math.max(0, targetRect.left - padding),
+      width: targetRect.width + (padding * 2) - leftOverflow,
+      height: targetRect.height + (padding * 2) - topOverflow,
+    };
+  })() : undefined;
+
   return (
     <div className="onboarding-tour" role="presentation">
       {mode === 'welcome' && <div className="onboarding-backdrop" />}
       {mode === 'tour' && targetRect && (
         <div
           className="onboarding-spotlight"
-          style={{ top: targetRect.top - 6, left: targetRect.left - 6, width: targetRect.width + 12, height: targetRect.height + 12 }}
+          style={spotlightStyle}
         />
       )}
 

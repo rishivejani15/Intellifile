@@ -40,9 +40,21 @@ function App() {
   const [showOnboardingTour, setShowOnboardingTour] = useState(false);
 
   const startOnboardingTour = () => {
+    // Apply the native caption color before the overlay mounts, avoiding a
+    // bright flash of the minimize/maximize/close area at tour start.
+    window.intellifile?.setTitleBarOverlay?.({
+      color: '#58635d',
+      symbolColor: '#d4ddd7',
+      height: 44,
+    });
     setActiveTab('explorer');
     setShowOnboardingTour(true);
     window.dispatchEvent(new CustomEvent('intellifile-tour-start'));
+  };
+
+  const navigateTour = (section, settingsTab) => {
+    if (section === 'settings' && settingsTab) setSettingsSubTab(settingsTab);
+    setActiveTab(section);
   };
 
   const closeOnboardingTour = () => {
@@ -200,38 +212,71 @@ function App() {
   // Apply theme
   useEffect(() => {
     const doc = document.documentElement;
+    const setEffectiveTheme = (effectiveTheme) => {
+      doc.setAttribute('data-theme', effectiveTheme);
+
+      // The Windows caption buttons live outside the web page, so update
+      // Electron's title-bar overlay whenever the app theme changes.
+      window.intellifile?.setTitleBarOverlay?.(
+        effectiveTheme === 'dark'
+          ? { color: '#09090b', symbolColor: '#e8ece9', height: 44 }
+          : { color: '#ffffff', symbolColor: '#1f2937', height: 44 }
+      );
+    };
+
+    localStorage.setItem('intellifile-theme', theme);
+
     if (theme === 'system') {
       const mql = window.matchMedia('(prefers-color-scheme: dark)');
       const apply = () => {
-        if (mql.matches) {
-          doc.setAttribute('data-theme', 'dark');
-        } else {
-          doc.setAttribute('data-theme', 'light');
-        }
+        setEffectiveTheme(mql.matches ? 'dark' : 'light');
       };
       apply();
       mql.addEventListener('change', apply);
       return () => mql.removeEventListener('change', apply);
     } else {
-      doc.setAttribute('data-theme', theme);
+      setEffectiveTheme(theme);
     }
-    localStorage.setItem('intellifile-theme', theme);
   }, [theme]);
 
   useEffect(() => {
     if (!setupComplete) return;
-    try {
-      const hasSeenTour = localStorage.getItem(TOUR_COMPLETED_KEY) === 'true';
-      if (!hasSeenTour) {
+    let active = true;
+    const claimTour = () => {
+      const invoke = window.electron?.ipcRenderer?.invoke;
+      return typeof invoke === 'function'
+        ? invoke('claim-onboarding-tour')
+        : Promise.resolve(true);
+    };
+
+    const decideWhetherToShowTour = async () => {
+      try {
+        if (localStorage.getItem(TOUR_COMPLETED_KEY) === 'true') {
+          if (active) setShowOnboardingTour(false);
+          return;
+        }
+
+        // localStorage is shared eventually, but simultaneous new windows can
+        // read it before either has written the flag. The main process gives
+        // only one window permission to show onboarding in that situation.
+        const canShowTour = await claimTour();
+        if (!canShowTour) {
+          if (active) setShowOnboardingTour(false);
+          return;
+        }
+
         localStorage.setItem(TOUR_COMPLETED_KEY, 'true');
-        setShowOnboardingTour(true);
-      } else {
-        setShowOnboardingTour(false);
+        if (active) setShowOnboardingTour(true);
+      } catch (_) {
+        // Even if browser storage is unavailable, the process-level claim
+        // still ensures that only the first window can show the tour.
+        const canShowTour = await claimTour().catch(() => false);
+        if (active) setShowOnboardingTour(Boolean(canShowTour));
       }
-    } catch (_) {
-      // If storage is unavailable, show the tour for this session only.
-      setShowOnboardingTour(true);
-    }
+    };
+
+    decideWhetherToShowTour();
+    return () => { active = false; };
   }, [setupComplete]);
 
   return (
@@ -328,7 +373,7 @@ function App() {
       <OnboardingTour
         open={showOnboardingTour && setupComplete}
         onStart={() => setActiveTab('explorer')}
-        onNavigate={setActiveTab}
+        onNavigate={navigateTour}
         onClose={closeOnboardingTour}
       />
 

@@ -1025,12 +1025,15 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
 
   const handleTabSelect = useCallback((tab) => {
     const targetPath = handleSelectTab(tab);
-    loadDirectory(targetPath, { trackHistory: false });
+    // React state updates activeTabId asynchronously.  Pass the selected tab
+    // explicitly so this load never writes the selected folder into the tab
+    // that was active a moment ago.
+    loadDirectory(targetPath, { trackHistory: false, tabId: tab.id });
   }, [handleSelectTab, loadDirectory]);
 
   const handleTabClose = useCallback((tabId) => {
-    handleCloseTab(tabId, (nextPath) => {
-      loadDirectory(nextPath, { trackHistory: false });
+    handleCloseTab(tabId, (nextPath, nextTabId) => {
+      loadDirectory(nextPath, { trackHistory: false, tabId: nextTabId });
     });
   }, [handleCloseTab, loadDirectory]);
 
@@ -1477,10 +1480,11 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
     }
   };
 
-  // When the onboarding tour starts, navigate away from Home to a real folder (like Documents/Desktop)
-  // so that search, file listing, toolbar actions, and version history are displayed with real items.
+  // When the tour starts from Home, open a real folder so later steps can show
+  // file actions. Never change a folder the person is already browsing.
   useEffect(() => {
     const handleTourStart = async () => {
+      if (currentPath && currentPath !== 'Home') return;
       try {
         const rootsRes = await ipcRenderer?.invoke('get-system-roots');
         const special = rootsRes?.data?.specialFolders || [];
@@ -1501,7 +1505,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
 
     window.addEventListener('intellifile-tour-start', handleTourStart);
     return () => window.removeEventListener('intellifile-tour-start', handleTourStart);
-  }, []);
+  }, [currentPath]);
 
   // The guided tour opens a real, versionable file so users can see the
   // Version History timeline rather than only reading about it.

@@ -301,6 +301,14 @@
   background: rgba(255, 255, 255, 0.15);
 }
 
+/* In dark mode --t-primary is near-white, so the generic active chip would
+   otherwise render white text on a white background. */
+[data-theme="dark"] .level-chip.active {
+  background: var(--color-primary);
+  color: var(--t-inverse);
+  border-color: var(--color-primary);
+}
+
 /* ───────────────────────────────────────────────────────
    Category Filter Chips
    ─────────────────────────────────────────────────────── */

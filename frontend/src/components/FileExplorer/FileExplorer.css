@@ -231,7 +231,7 @@
 /* Sidebar Unpin Button */
 .sidebar-unpin {
   background: transparent;
-  border: none;
+  border: 1px solid var(--color-primary);
   color: var(--t-muted);
   font-size: 14px;
   padding: var(--sp-1);
@@ -955,17 +955,18 @@
   transition: all var(--dur-150) var(--ease-spring-sm);
   white-space: nowrap;
   animation: pulseGlow 2s infinite;
-  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.25);
+  box-shadow: 0 2px 8px var(--c-brand-soft);
 }
 
 .navbar-update-btn.available {
-  background: linear-gradient(135deg, var(--color-primary), #3b82f6);
+  background: var(--color-primary);
   color: #ffffff;
 }
 
 .navbar-update-btn.available:hover {
   transform: translateY(-1px) scale(1.02);
-  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.4);
+  background: var(--color-primary-hover);
+  box-shadow: 0 4px 12px var(--c-brand-soft);
 }
 
 .navbar-update-btn.downloading {
@@ -976,27 +977,28 @@
 }
 
 .navbar-update-btn.downloaded {
-  background: linear-gradient(135deg, #10b981, #059669);
+  background: var(--color-primary);
   color: #ffffff;
-  box-shadow: 0 2px 8px rgba(16, 185, 129, 0.3);
+  box-shadow: 0 2px 8px var(--c-brand-soft);
 }
 
 .navbar-update-btn.downloaded:hover {
   transform: translateY(-1px) scale(1.02);
-  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.45);
+  background: var(--color-primary-hover);
+  box-shadow: 0 4px 12px var(--c-brand-soft);
 }
 
 @keyframes pulseGlow {
   0% {
-    box-shadow: 0 0 0 0 rgba(37, 99, 235, 0.4);
+    box-shadow: 0 0 0 0 var(--c-brand-soft);
   }
 
   70% {
-    box-shadow: 0 0 0 6px rgba(37, 99, 235, 0);
+    box-shadow: 0 0 0 6px transparent;
   }
 
   100% {
-    box-shadow: 0 0 0 0 rgba(37, 99, 235, 0);
+    box-shadow: 0 0 0 0 transparent;
   }
 }
 
@@ -1265,13 +1267,14 @@
   border: 1px solid transparent;
   border-radius: var(--rd-lg);
   background: var(--s-elev);
-  transition: background-color var(--dur-150) ease, border-color var(--dur-150) ease, box-shadow var(--dur-150) ease;
+  transition: background-color var(--dur-150) ease, border-color var(--dur-150) ease, box-shadow var(--dur-150) ease, transform var(--dur-150) ease;
 }
 
 .file-list.icons .file-item:hover {
   background: var(--global-hover-bg) !important;
   border-color: var(--bo);
   box-shadow: var(--sh-md);
+  transform: translateY(-2px);
 }
 
 .file-list.icons .file-item.selected,
@@ -1495,7 +1498,7 @@
   align-items: center;
   padding: var(--sp-1) var(--sp-3);
   border-bottom: 1px solid var(--bo-light);
-  transition: background-color var(--dur-150) ease, color var(--dur-150) ease;
+  transition: background-color var(--dur-150) ease, color var(--dur-150) ease, box-shadow var(--dur-150) ease, transform var(--dur-150) ease;
   min-height: 36px;
   user-select: none;
 }
@@ -1518,6 +1521,8 @@
 
 .file-list.details .file-item:hover {
   background: var(--global-hover-bg) !important;
+  box-shadow: var(--sh-sm);
+  transform: translateX(2px);
 }
 
 .file-list.details .file-info {

@@ -45,6 +45,10 @@ let cachedUpdateState = {
   error: null
 };
 
+// Multiple IntelliFile windows share this process. Claiming the tour here is
+// atomic, so two windows starting together cannot both launch onboarding.
+let onboardingTourClaimed = false;
+
 let checkTimeout = null;
 
 autoUpdater.on('checking-for-update', () => {
@@ -182,26 +186,47 @@ autoUpdater.on('error', (err) => {
   }
 });
 
-// Daily automatic background update check (runs 15s after startup and every 24h)
+// Check GitHub quietly after launch and then once a day.  A release is only
+// announced to the renderer; downloading remains an explicit user action.
+async function checkForUpdatesInBackground() {
+  if (!app.isPackaged || cachedUpdateState.status === 'available' || cachedUpdateState.status === 'downloaded') return;
+
+  try {
+    cachedUpdateState = { ...cachedUpdateState, status: 'checking', error: null };
+    const release = await fetchLatestGitHubRelease();
+    const currentVersion = app.getVersion();
+
+    if (release?.version && isNewerVersion(release.version, currentVersion)) {
+      cachedUpdateState = { status: 'available', version: release.version, progress: 0, error: null };
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('update-available', { version: release.version });
+      }
+      console.log('[Update] Background check found version:', release.version);
+      return;
+    }
+
+    cachedUpdateState = { status: 'latest', version: currentVersion, progress: 100, error: null };
+    console.log('[Update] Background check completed; app is up to date.');
+  } catch (err) {
+    // Background checks should never interrupt the user. The manual check can
+    // still provide an error message and retry when needed.
+    cachedUpdateState = { ...cachedUpdateState, status: 'idle', error: null };
+    console.log('[Update] Background check skipped:', err?.message || err);
+  }
+}
+
+// Daily automatic background update check (runs shortly after startup and every 24h)
 function setupDailyUpdateCheck() {
   if (!app.isPackaged) return;
   setTimeout(() => {
     console.log('[Update] Running automatic background update check...');
-    if (cachedUpdateState.status !== 'downloaded' && cachedUpdateState.status !== 'available') {
-      autoUpdater.checkForUpdates().catch((err) => {
-        console.log('[Update] Background check skipped:', err?.message || err);
-      });
-    }
-  }, 15000);
+    checkForUpdatesInBackground();
+  }, 3000);
 
   const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000;
   setInterval(() => {
     console.log('[Update] Running 24-hour scheduled update check...');
-    if (app.isPackaged && cachedUpdateState.status !== 'downloaded' && cachedUpdateState.status !== 'available') {
-      autoUpdater.checkForUpdates().catch((err) => {
-        console.log('[Update] Scheduled check skipped:', err?.message || err);
-      });
-    }
+    checkForUpdatesInBackground();
   }, TWENTY_FOUR_HOURS);
 }
 
@@ -209,6 +234,12 @@ setupDailyUpdateCheck();
 
 ipcMain.handle('get-app-version', () => {
   return app.getVersion();
+});
+
+ipcMain.handle('claim-onboarding-tour', () => {
+  if (onboardingTourClaimed) return false;
+  onboardingTourClaimed = true;
+  return true;
 });
 
 function isNewerVersion(latest, current) {
@@ -3217,6 +3248,21 @@ ipcMain.handle('get-setting', async (_event, key) => {
   return { key: targetKey, value: null };
 });
 
+// Open trusted web links in the operating system's default browser instead of
+// creating a new Electron window inside IntelliFile.
+ipcMain.handle('open-external-url', async (_event, rawUrl) => {
+  try {
+    const target = new URL(String(rawUrl));
+    if (target.protocol !== 'https:' && target.protocol !== 'http:') {
+      return { success: false, error: 'Only web links can be opened externally.' };
+    }
+    await shell.openExternal(target.href);
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
 ipcMain.handle('settings:set', async (_event, payload = {}) => {
   const key = payload?.key;
   const value = payload?.value;
@@ -6137,11 +6183,13 @@ function createWindow() {
     show: false,
     titleBarStyle: 'hidden',
     titleBarOverlay: {
-      color: '#09090b',
-      symbolColor: '#e8ece9',
+      // Light startup fallback; the renderer immediately applies the saved
+      // IntelliFile light/dark/system theme through setTitleBarOverlay.
+      color: '#ffffff',
+      symbolColor: '#1f2937',
       height: 44
     },
-    backgroundColor: '#111827',
+    backgroundColor: '#ffffff',
     icon: path.join(__dirname, 'public', 'intellifile_logo.png'),
     webPreferences: {
       nodeIntegration: false,

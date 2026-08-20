@@ -131,7 +131,7 @@ export const useNavigation = (ipcRenderer) => {
         const nextTab = filtered[filtered.length - 1];
         setActiveTabId(nextTab.id);
         if (onTabClose) {
-          onTabClose(nextTab.path || null, nextTab.cachedItems || null);
+          onTabClose(nextTab.path || null, nextTab.id, nextTab.cachedItems || null);
         }
       }
       return filtered;

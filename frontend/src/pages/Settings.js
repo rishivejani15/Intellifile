@@ -33,7 +33,8 @@ import {
   FiTool,
   FiBarChart2,
   FiAlertCircle,
-  FiCheck
+  FiCheck,
+  FiLinkedin
 } from 'react-icons/fi';
 
 // Lightweight toast helper
@@ -44,6 +45,27 @@ const toast = (message, options = {}) => {
 
 const DEFAULT_WATCH_FOLDERS = ['Downloads', 'Desktop'];
 const ipc = window.intellifile;
+
+const openExternalLink = (url) => {
+  // Use the renderer's IPC bridge rather than the optional shell preload API.
+  // Some already-running windows do not expose that API, which caused the
+  // previous click handler to crash.
+  const invoke = window.electron?.ipcRenderer?.invoke;
+  if (typeof invoke === 'function') {
+    invoke('open-external-url', url).catch(() => {
+      window.open(url, '_blank', 'noopener,noreferrer');
+    });
+    return;
+  }
+
+  window.open(url, '_blank', 'noopener,noreferrer');
+};
+const TEAM_MEMBERS = [
+  { name: 'Daksh Gopani', initials: 'DG', linkedin: 'https://www.linkedin.com/in/daksh-gopani-a13993251/' },
+  { name: 'Rishi Vejani', initials: 'RV', linkedin: 'https://www.linkedin.com/in/rishi-vejani/' },
+  { name: 'Rudra Parmar', initials: 'RP', linkedin: 'https://www.linkedin.com/in/rudra-parmar-089125245/' },
+  { name: 'Samyak Chheda', initials: 'SC', linkedin: 'https://www.linkedin.com/in/samyakchheda/' },
+];
 
 const formatRelativeTime = (timestamp) => {
   if (!timestamp) return 'Just now';
@@ -851,6 +873,7 @@ export default function Settings({ theme, onThemeChange, onStartTour, initialTab
           {/* ═══ FILE MANAGEMENT ═══ */}
           {activeTab === 'file-management' && matchesSection('file-management') && (
             <>
+              <div className="settings-tour-auto-sort" data-tour="auto-sort-settings">
               {/* Auto Sort Toggle */}
               <section className="settings-panel">
                 <div className="settings-panel-header">
@@ -929,6 +952,8 @@ export default function Settings({ theme, onThemeChange, onStartTour, initialTab
                   </div>
                 </div>
               </section>
+
+              </div>
 
               {/* Recent Auto-Sorts */}
               <section className="settings-panel">
@@ -1281,7 +1306,7 @@ export default function Settings({ theme, onThemeChange, onStartTour, initialTab
 
           {/* ═══ STORAGE ═══ */}
           {activeTab === 'storage' && matchesSection('storage') && (
-            <section className="settings-panel">
+            <section className="settings-panel" data-tour="storage-settings">
               <div className="settings-panel-header">
                 <div>
                   <div className="settings-panel-title">
@@ -1671,6 +1696,64 @@ export default function Settings({ theme, onThemeChange, onStartTour, initialTab
           {/* ═══ ABOUT ═══ */}
           {activeTab === 'about' && matchesSection('about') && (
             <>
+
+              <section className="settings-panel about-story-panel">
+                <div className="settings-panel-content">
+                  <div className="about-hero">
+                    <div className="about-hero-mark" aria-hidden="true"><FiFolder /></div>
+                    <div>
+                      <p className="about-eyebrow">OUR STORY</p>
+                      <h3>Files should make life easier, not harder.</h3>
+                      <p>
+                        IntelliFile began with a problem we all experience: finding, organizing, and understanding the growing number of files we rely on every day. We set out to build more than a traditional file explorer—one that can understand your work and help manage it intelligently.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="about-mission">
+                    <h3>Intelligence, with your data in your control.</h3>
+                    <p>
+                      From natural-language search and automatic organization to meaningful versions, folder questions, reminders, and device sync, every feature has one purpose: helping your files work for you while keeping control in your hands.
+                    </p>
+                  </div>
+
+                  <div className="about-team-heading">
+                    <div>
+                      <h3>Meet the team</h3>
+                      <p>Four developers building for simplicity, intelligence, privacy, and real-world usability.</p>
+                    </div>
+                  </div>
+                  <div className="about-team-grid">
+                    {TEAM_MEMBERS.map((member) => (
+                      <a
+                        className="team-member-card"
+                        key={member.name}
+                        href={member.linkedin}
+                        onClick={(event) => {
+                          // Avoid Electron opening a new in-app window; let the
+                          // operating system hand the profile to the default browser.
+                          event.preventDefault();
+                          openExternalLink(member.linkedin);
+                        }}
+                        aria-label={`Open ${member.name}'s LinkedIn profile in your browser`}
+                      >
+                        <div className="team-member-avatar" aria-hidden="true">{member.initials}</div>
+                        <div className="team-member-details">
+                          <h4>{member.name}</h4>
+                          <span>IntelliFile Team</span>
+                        </div>
+                        <span className="team-link-placeholder">
+                          <FiLinkedin aria-hidden="true" /> LinkedIn
+                        </span>
+                      </a>
+                    ))}
+                  </div>
+
+                  <p className="about-closing">
+                    IntelliFile is our attempt to make digital files feel less like clutter and more like something you can rely on.
+                  </p>
+                </div>
+              </section>
 
               <section className="settings-panel">
                 <div className="settings-panel-header">
