@@ -856,7 +856,12 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
 
     const handleVersionUpdated = (event) => {
       if (!event?.filePath || !currentPath) return;
-      if (event.filePath.toLowerCase().replace(/[\\/]+$/, '') !== currentPath.toLowerCase().replace(/[\\/]+$/, '')) return;
+      // Extract the parent directory of the changed file and compare it
+      // against currentPath. Previously this compared the file path directly
+      // against the directory path, which never matched.
+      const fileDir = event.filePath.replace(/[\\/]+$/, '').replace(/[\\/][^\\/]+$/, '').toLowerCase();
+      const normCurrent = currentPath.toLowerCase().replace(/[\\/]+$/, '');
+      if (fileDir !== normCurrent) return;
       loadDirectory(currentPath, { soft: true, trackHistory: false });
     };
 

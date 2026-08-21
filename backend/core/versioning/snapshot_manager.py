@@ -170,7 +170,7 @@ def save_snapshot(file_path: str, content_or_path: Any, metadata: dict, custom_t
     """
 
     # Robust path normalization
-    norm_path = os.path.normpath(os.path.abspath(file_path)).lower()
+    norm_path = os.path.normpath(os.path.realpath(file_path)).lower()
     file_identifier = generate_sha256(norm_path)
     file_dir = os.path.join(BASE_VERSION_PATH, file_identifier)
 

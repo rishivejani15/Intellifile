@@ -197,7 +197,7 @@ class VersionEngine:
 
     def process_and_save(self, file_path, old_content, new_content):
         format_type = self.detect_format(file_path)
-        from core.versioning.snapshot_manager import save_snapshot, list_versions
+        from core.versioning.snapshot_manager import save_snapshot, list_versions, update_version_index, get_file_id, compute_file_hash
         
         # Binary comparison logic: fetch previous structure if possible
         if format_type in ["word", "excel"] and (not old_content or old_content == new_content):
@@ -205,8 +205,7 @@ class VersionEngine:
             if versions:
                 last_version_id = versions[0]["version_id"]
                 try:
-                    abs_path = os.path.abspath(file_path)
-                    norm_path = os.path.normpath(abs_path).lower()
+                    norm_path = os.path.normpath(os.path.realpath(file_path)).lower()
                     fid = generate_sha256(norm_path)
                     
                     # Detect storage path
@@ -242,7 +241,9 @@ class VersionEngine:
 
         # Detection of first version to use original timestamp for a historically accurate timeline
         custom_timestamp = None
-        if not list_versions(file_path):
+        existing_versions = list_versions(file_path)
+        is_first_version = len(existing_versions) == 0
+        if is_first_version:
             try:
                 # Use the oldest possible date (minimum of creation and modification)
                 # This handles cases where a file was moved/copied (which resets ctime)
@@ -256,4 +257,32 @@ class VersionEngine:
 
         version_id = save_snapshot(file_path, new_content, metadata, custom_timestamp=custom_timestamp)
         metadata["version_id"] = version_id
+
+        # Update the version index so this version is discoverable via both
+        # the index and the legacy filesystem scan.  Previously only
+        # save_snapshot was called (which writes to disk but not the index),
+        # causing the first version to sometimes be invisible.
+        ext = os.path.splitext(file_path)[1].lower()
+        is_binary = ext in [".docx", ".xlsx", ".pdf", ".zip"]
+        file_hash = compute_file_hash(new_content if not is_binary else file_path, is_binary)
+        version_num = 1 if is_first_version else (existing_versions[0].get("version", 0) + 1)
+        parent = None if is_first_version else existing_versions[0].get("version")
+
+        version_entry = {
+            "version": version_num,
+            "version_id": version_id,
+            "parent": parent,
+            "storage_type": "full",
+            "file_hash": file_hash,
+            "timestamp": version_id,
+            "snapshot_path": None,
+            "diff_path": None,
+            "summary": metadata.get("summary", ""),
+            "intent": metadata.get("intent", ""),
+            "semantic": metadata.get("semantic", {}),
+            "risk_level": metadata.get("risk_level", ""),
+            "stability_score": metadata.get("stability_score", 0)
+        }
+        update_version_index(file_path, version_entry, add_version=True)
+
         return metadata
