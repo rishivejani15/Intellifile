@@ -469,7 +469,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
   // Load directory with filtering and sorting
   const loadDirectory = useCallback(async (dirPath, options = {}) => {
     loadDirectoryRef.current = loadDirectory;
-    const { soft = false, trackHistory = true, tabId = null, selectFile = null, suppressLoading = false } = options;
+    const { soft = false, trackHistory = true, tabId = null, selectFile = null, suppressLoading = false, skipSearchFilter = false } = options;
 
     // Handle 'Home' special virtual path
     const isHome = !dirPath || String(dirPath).toLowerCase() === 'home';
@@ -586,7 +586,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
           let loadedItems = result.items || [];
 
           // Apply search filter
-          if (searchQuery) {
+          if (searchQuery && !skipSearchFilter) {
             loadedItems = loadedItems.filter(item =>
               item.name.toLowerCase().includes(searchQuery.toLowerCase())
             );
@@ -1912,7 +1912,11 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
     } else if (e.key === 'Escape') {
       if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
       setSemanticResults(null);
+      setSemanticLoading(false);
       setSearchQuery('');
+      if (currentPath) {
+        loadDirectory(currentPath, { suppressLoading: true, soft: true, skipSearchFilter: true });
+      }
     }
   };
 
@@ -1972,7 +1976,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
         setSemanticResults(null);
         setSemanticLoading(false);
         if (currentPath) {
-          loadDirectory(currentPath, { suppressLoading: true, soft: true });
+          loadDirectory(currentPath, { suppressLoading: true, soft: true, skipSearchFilter: true });
         }
       } else {
         setSemanticResults((prev) => (prev !== null ? prev : []));
