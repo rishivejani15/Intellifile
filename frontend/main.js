@@ -1414,6 +1414,68 @@ app.on('will-quit', () => {
   }
 });
 
+function triggerFileVersionSave(filePath) {
+  if (!filePath || _isTransientFile(filePath)) return;
+  const normP = filePath.toLowerCase().replace(/\//g, '\\');
+  if (_recentlyDeletedPaths.has(normP)) return;
+
+  if (debounceTimers.has(normP)) {
+    clearTimeout(debounceTimers.get(normP));
+  }
+
+  debounceTimers.set(normP, setTimeout(async () => {
+    debounceTimers.delete(normP);
+    console.log(`[Watcher] Processing debounced version save for: ${filePath}`);
+
+    try {
+      if (!fs.existsSync(filePath)) return;
+      const extP = path.extname(filePath).toLowerCase();
+      const isBinaryP = ['.docx', '.xlsx', '.pdf', '.zip', '.pptx', '.pptm', '.ppt'].includes(extP);
+
+      let currentVal = '';
+      if (!isBinaryP) {
+        try {
+          currentVal = fs.readFileSync(filePath, 'utf-8');
+        } catch (_) {
+          return;
+        }
+      } else {
+        try {
+          currentVal = fs.statSync(filePath).mtimeMs.toString();
+        } catch (_) {
+          return;
+        }
+      }
+
+      let lastVal = fileContents.get(normP) || '';
+      if (!isBinaryP && currentVal.trim() === lastVal.trim() && lastVal.length > 0) return;
+      if (isBinaryP && currentVal === lastVal && lastVal.length > 0) return;
+
+      console.log(`[Watcher] External file change verified. Triggering version save for ${filePath}...`);
+      const result = await sendToPython({
+        action: "save_version",
+        file_path: filePath,
+        old_content: isBinaryP ? filePath : lastVal,
+        new_content: isBinaryP ? filePath : currentVal
+      });
+
+      if (result && result.success) {
+        fileContents.set(normP, currentVal);
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('version-updated', {
+            filePath: filePath,
+            versionId: result.data?.version_id,
+            summary: result.data?.summary,
+            riskLevel: result.data?.risk_level
+          });
+        }
+      }
+    } catch (err) {
+      console.error(`[Watcher] Version save error for ${filePath}: ${err.message || err}`);
+    }
+  }, 2000));
+}
+
 function startWatchingFile(filePath) {
   if (!filePath) return;
 
@@ -1433,58 +1495,12 @@ function startWatchingFile(filePath) {
 
     watcher.on('change', (p) => {
       console.log(`[Watcher] Raw Change detected: ${p}`);
-      const normP = p.toLowerCase().replace(/\//g, '\\');
-      const extP = path.extname(p).toLowerCase();
-      const isBinaryP = ['.docx', '.xlsx'].includes(extP);
-
-      if (debounceTimers.has(normP)) {
-        clearTimeout(debounceTimers.get(normP));
-      }
-
-      debounceTimers.set(normP, setTimeout(async () => {
-        debounceTimers.delete(normP);
-        console.log(`[Watcher] Processing debounced change for: ${p}`);
-
-        try {
-          if (!fs.existsSync(p)) return; // Handle rapid temp file deletions
-          let currentVal = isBinaryP ? fs.statSync(p).mtimeMs.toString() : fs.readFileSync(p, 'utf-8');
-          let lastVal = fileContents.get(normP) || '';
-
-          if (!isBinaryP && currentVal.trim() === lastVal.trim()) return;
-          if (isBinaryP && currentVal === lastVal) return;
-
-          console.log(`[Watcher] Change verified. Triggering version save...`);
-          // For binary files, pass path as "content" to let engine parse it
-          const result = await sendToPython({
-            action: "save_version",
-            file_path: p,
-            old_content: isBinaryP ? p : lastVal,
-            new_content: isBinaryP ? p : currentVal
-          });
-
-          // Trigger immediate indexing for the modified file
-          sendToPython({
-            action: "index_file",
-            file_path: p,
-            allow_protected: getAllowProtectedIndexing(),
-          }).catch(err => console.error(`[Watcher] Index trigger error:`, err));
-
-          if (result && result.success) {
-            fileContents.set(normP, currentVal);
-            if (mainWindow && !mainWindow.isDestroyed()) {
-              // Sync with VersionTimeline.js which expects 'version-updated' and { filePath }
-              mainWindow.webContents.send('version-updated', {
-                filePath: p,
-                versionId: result.data?.version_id,
-                summary: result.data?.summary,
-                riskLevel: result.data?.risk_level
-              });
-            }
-          }
-        } catch (err) {
-          console.error(`[Watcher] Update error: ${err.message}`);
-        }
-      }, 2500)); // 2.5-second debounce window to outlast MS Word's save process
+      triggerFileVersionSave(p);
+      sendToPython({
+        action: "index_file",
+        file_path: p,
+        allow_protected: getAllowProtectedIndexing(),
+      }).catch(err => console.error(`[Watcher] Index trigger error:`, err));
     });
 
     watcher.on('unlink', (p) => {
@@ -1629,6 +1645,7 @@ function startWatchingDirectory(directoryPath) {
         broadcastDirectoryChange(directoryPath, { action: 'add', item });
         if (item.type === 'file') {
           sendToPython({ action: 'index_file', file_path: filePath, allow_protected: getAllowProtectedIndexing() }).catch(() => { });
+          triggerFileVersionSave(filePath);
         }
       }
     });
@@ -1652,6 +1669,7 @@ function startWatchingDirectory(directoryPath) {
         appendLog('FileWatch', `File modified: ${path.basename(filePath)}`);
         if (item.type === 'file') {
           sendToPython({ action: 'index_file', file_path: filePath, allow_protected: getAllowProtectedIndexing() }).catch(() => { });
+          triggerFileVersionSave(filePath);
         }
       }
     });
@@ -6328,6 +6346,36 @@ function createWindow() {
 
 }
 
+function initializeWatchedDirectories() {
+  try {
+    const localSettings = readLocalSettings();
+    const userWatched = Array.isArray(localSettings.watched_folders) ? localSettings.watched_folders : [];
+
+    const defaultDirs = [
+      app.getPath('downloads'),
+      app.getPath('documents'),
+      app.getPath('desktop'),
+    ];
+
+    for (const wFolder of userWatched) {
+      if (typeof wFolder === 'string') {
+        const resolvedPath = path.isAbsolute(wFolder) ? wFolder : path.join(app.getPath('home'), wFolder);
+        if (fs.existsSync(resolvedPath) && !defaultDirs.includes(resolvedPath)) {
+          defaultDirs.push(resolvedPath);
+        }
+      }
+    }
+
+    for (const dirPath of defaultDirs) {
+      if (dirPath && fs.existsSync(dirPath)) {
+        startWatchingDirectory(dirPath);
+      }
+    }
+  } catch (err) {
+    console.error('[Watcher] Failed to initialize watched directories:', err);
+  }
+}
+
 app.on('ready', () => {
   loadIndexingPreferences();
   registerIpcHandlers();
@@ -6337,6 +6385,7 @@ app.on('ready', () => {
   startDriveWatcher();
   if (CHAT_ENABLED) startChatBackend();
   createWindow();
+  initializeWatchedDirectories();
 });
 
 app.on('window-all-closed', () => {

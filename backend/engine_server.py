@@ -591,11 +591,24 @@ while True:
             new_content = request.get("new_content", "")
             
             # Strict Deduplication: Prevent double-entries from Chokidar overlapping with internal saves
-            from core.versioning.snapshot_manager import get_last_version, compute_file_hash
+            from core.versioning.snapshot_manager import get_last_version, compute_file_hash, get_version_content
             import os
             ext = os.path.splitext(file_path)[1].lower() if file_path else ""
-            is_binary = ext in [".docx", ".xlsx", ".pdf", ".zip"]
+            is_binary = ext in [".docx", ".xlsx", ".pdf", ".zip", ".pptx", ".pptm", ".ppt"]
             
+            # Auto-read current disk content for external file changes if new_content was omitted/empty
+            if file_path and os.path.exists(file_path) and (new_content == "" or new_content is None):
+                if is_binary:
+                    new_content = file_path
+                else:
+                    try:
+                        with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+                            new_content = f.read()
+                    except Exception:
+                        is_binary = True
+                        new_content = file_path
+                        
+            last_version = None
             try:
                 last_version = get_last_version(file_path)
                 current_hash = compute_file_hash(new_content if not is_binary else file_path, is_binary)
@@ -607,6 +620,14 @@ while True:
             except Exception:
                 pass
                 
+            # If old_content wasn't provided but a previous version exists, retrieve old_content for accurate diffing
+            if last_version and (not old_content or old_content == ""):
+                try:
+                    if not is_binary:
+                        old_content = get_version_content(file_path, last_version["version_id"]) or ""
+                except Exception:
+                    pass
+
             ve = get_version_engine()
             result = ve.process_and_save(file_path, old_content, new_content)
             print(json.dumps({"_id": req_id, "success": True, "data": result}), flush=True)
@@ -625,9 +646,13 @@ while True:
                     if is_binary:
                         current_hash = compute_file_hash(file_path, True)
                     else:
-                        with open(file_path, "r", encoding="utf-8") as f:
-                            current_content = f.read()
-                        current_hash = compute_file_hash(current_content, False)
+                        try:
+                            with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+                                current_content = f.read()
+                            current_hash = compute_file_hash(current_content, False)
+                        except Exception:
+                            is_binary = True
+                            current_hash = compute_file_hash(file_path, True)
                         
                     last_version = get_last_version(file_path)
                     

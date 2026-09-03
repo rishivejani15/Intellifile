@@ -53,6 +53,12 @@ class _CreatedHandler(FileSystemEventHandler):
         self.service.cancel_pending(event.src_path)
         self.service.enqueue(event.dest_path)
 
+    def on_modified(self, event):
+        if event.is_directory:
+            return
+        self.service.defer_enqueue(event.src_path)
+
+
 
 class WatcherService:
     _CREATED_GRACE_SECONDS = 4.0
