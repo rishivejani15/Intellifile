@@ -19,19 +19,19 @@ def expand_camel_case(text: str) -> str:
     return re.sub(r'\b[A-Za-z0-9]+\b', _repl, text)
 
 
-def chunk_text(text, chunk_size=280, overlap=45, doc_context=""):
+def chunk_text(text, chunk_size=350, overlap=35, doc_context=""):
     """
     Split *text* into overlapping chunks, preferring sentence boundaries and line breaks.
     Falls back to word-level splitting for very long paragraphs.
 
-    chunk_size of ~280 words (≈ 350-400 tokens) comfortably fits within the 512-token
-    context window of bge-small-en-v1.5 without truncation, while isolating individual
-    projects, sections, and topics for high semantic similarity.
+    chunk_size of ~350 words (≈ 440 tokens) comfortably fits within the 512-token
+    context window of bge-small-en-v1.5 without truncation, while reducing total
+    chunks and accelerating embedding.
 
     Parameters
     ----------
-    chunk_size  : int   – max words per chunk (default 280 words ≈ 380 tokens)
-    overlap     : int   – words shared between consecutive chunks (default 45)
+    chunk_size  : int   – max words per chunk (default 350 words ≈ 440 tokens)
+    overlap     : int   – words shared between consecutive chunks (default 35)
     doc_context : str   – optional parent document name/title to prepend to every chunk
                           so chunks maintain parent context for both FTS5 and vector search
 

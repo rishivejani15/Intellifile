@@ -15,8 +15,8 @@ from core.model import MODEL
 from core.faiss_manager import load_index, save_index, invalidate_cache, INDEX_PATH
 
 _ENCODE_BATCH_SIZE = 64
-_MINI_BATCH_SIZE = 16
-_THROTTLE_SLEEP_SEC = 0.04  # Throttling delay between batches to keep CPU fans quiet
+_MINI_BATCH_SIZE = 32
+_THROTTLE_SLEEP_SEC = 0.01  # Optimized delay for high throughput while keeping thermals safe
 
 
 def get_staging_index_path():

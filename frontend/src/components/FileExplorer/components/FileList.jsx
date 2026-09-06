@@ -1,6 +1,61 @@
 import React from 'react';
+import {
+  MdOutlineAutoAwesome,
+  MdOutlineTextFields,
+  MdOutlineDriveFileRenameOutline,
+  MdOutlineDocumentScanner,
+  MdCalendarToday
+} from 'react-icons/md';
 import FileItem from './FileItem';
 import { groupItems } from '../utils/fileUtils';
+
+const RETRIEVAL_METHODS = {
+  semantic: {
+    label: 'Semantic',
+    icon: <MdOutlineAutoAwesome className="method-badge-icon" />,
+    className: 'method-badge-semantic',
+    tooltip: 'Retrieved via AI semantic similarity search'
+  },
+  keyword: {
+    label: 'Keyword',
+    icon: <MdOutlineTextFields className="method-badge-icon" />,
+    className: 'method-badge-keyword',
+    tooltip: 'Retrieved via exact keyword matching'
+  },
+  filename: {
+    label: 'File Name',
+    icon: <MdOutlineDriveFileRenameOutline className="method-badge-icon" />,
+    className: 'method-badge-filename',
+    tooltip: 'Retrieved via file name match'
+  },
+  ocr: {
+    label: 'OCR',
+    icon: <MdOutlineDocumentScanner className="method-badge-icon" />,
+    className: 'method-badge-ocr',
+    tooltip: 'Retrieved via OCR text recognized in image/scan'
+  },
+  date: {
+    label: 'Date',
+    icon: <MdCalendarToday className="method-badge-icon" />,
+    className: 'method-badge-date',
+    tooltip: 'Retrieved via creation date match'
+  }
+};
+
+function getResultMethods(result) {
+  if (Array.isArray(result.methods) && result.methods.length > 0) {
+    return result.methods;
+  }
+  if (typeof result.methods === 'string' && result.methods.trim()) {
+    return [result.methods.trim()];
+  }
+  const path = (result.path || '').toLowerCase();
+  const isImage = /\.(png|jpe?g|bmp|webp|tiff)$/i.test(path);
+  if (isImage) {
+    return ['ocr', 'semantic'];
+  }
+  return ['semantic'];
+}
 
 function FileList({
   items,

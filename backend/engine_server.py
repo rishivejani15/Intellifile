@@ -294,6 +294,7 @@ while True:
                             "path": r["path"],
                             "score": round(float(r["score"]), 3),
                             "created_time": r.get("created_time"),
+                            "methods": r.get("methods", []),
                         }
                         for r in results
                     ]

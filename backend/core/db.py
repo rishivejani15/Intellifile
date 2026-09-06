@@ -40,7 +40,8 @@ def init_db():
                     path TEXT UNIQUE,
                     filename TEXT,
                     modified_time INTEGER,
-                    created_time INTEGER
+                    created_time INTEGER,
+                    chunk_count INTEGER DEFAULT NULL
                 );
                 ''')
     cur.execute('''
@@ -104,10 +105,17 @@ def init_db():
     except Exception:
         pass  # Column already exists
 
+    # Safe migration: add chunk_count for self-healing indexing state
+    try:
+        cur.execute("ALTER TABLE files ADD COLUMN chunk_count INTEGER DEFAULT NULL")
+    except Exception:
+        pass  # Column already exists
+
     # Indexes for fast lookups during incremental indexing
     cur.execute('CREATE INDEX IF NOT EXISTS idx_files_path ON files(path)')
     cur.execute('CREATE INDEX IF NOT EXISTS idx_chunks_file_id ON chunks(file_id)')
     cur.execute('CREATE INDEX IF NOT EXISTS idx_files_created ON files(created_time)')
+    cur.execute('CREATE INDEX IF NOT EXISTS idx_files_chunk_count ON files(chunk_count)')
     cur.execute('CREATE INDEX IF NOT EXISTS idx_sort_log_timestamp ON sort_log(timestamp)')
     cur.execute('CREATE INDEX IF NOT EXISTS idx_analytics_timestamp ON analytics_events(timestamp)')
 

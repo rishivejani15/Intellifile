@@ -93,8 +93,7 @@ def ingest_single_file(file_path: str, allow_protected: bool = False, force: boo
     name_no_ext = os.path.splitext(filename)[0].replace("_", " ").replace("-", " ")
     chunks = chunk_text(text, doc_context=name_no_ext) if text and len(text.strip()) >= 50 else []
 
-    meta_chunk = f"{name_no_ext} {filename} {abs_path}"
-    chunks.insert(0, meta_chunk)
+    cur.execute("UPDATE files SET chunk_count = ? WHERE id = ?", (len(chunks), file_id))
 
     new_chunk_ids: List[int] = []
     for idx, chunk in enumerate(chunks):

@@ -45,6 +45,8 @@ _STOP_WORDS = {
     "would", "you", "your", "yours", "yourself", "yourselves"
 }
 
+# _IMAGE_EXTS = ('.png', '.jpg', '.jpeg', '.bmp', '.webp', '.tiff')
+
 
 def _classify_query_intent(query):
     """
@@ -350,7 +352,7 @@ def _date_range_search(top_k, date_from=None, date_to=None, root_folder=None):
             params + [top_k],
         )
         return [
-            {"path": row[0], "score": 1.0, "created_time": row[1]}
+            {"path": row[0], "score": 1.0, "created_time": row[1], "methods": ["date"]}
             for row in cur.fetchall()
         ]
     except Exception:
@@ -387,12 +389,14 @@ def semantic_search(query, top_k=20, min_similarity=0.15, date_from=None, date_t
 
     # ── RRF at chunk level (with dynamic intent weighting) ─────────────
     chunk_rrf = {}
+    chunk_sims = {}  # cid -> float raw similarity
     # Track which search signals contributed to each chunk
     chunk_signals = defaultdict(set)  # cid -> {'semantic', 'keyword'}
 
-    for rank, (cid, _score) in enumerate(sem_hits, 1):
+    for rank, (cid, score) in enumerate(sem_hits, 1):
         chunk_rrf[cid] = chunk_rrf.get(cid, 0) + w_sem / (_RRF_K + rank)
         chunk_signals[cid].add('semantic')
+        chunk_sims[cid] = max(chunk_sims.get(cid, 0.0), score)
 
     for rank, (cid, _score) in enumerate(kw_hits, 1):
         chunk_rrf[cid] = chunk_rrf.get(cid, 0) + w_kw / (_RRF_K + rank)
@@ -404,6 +408,11 @@ def semantic_search(query, top_k=20, min_similarity=0.15, date_from=None, date_t
         filename_boost[path] = (w_fn * 1.0) / (_RRF_K + rank)
 
     if not chunk_rrf and not filename_boost:
+        return []
+
+    # Noise gate: if query has no keyword or filename matches, reject if top semantic similarity is noise (< 0.40)
+    max_sem = max((score for _, score in sem_hits), default=0.0)
+    if not kw_hits and not fn_hits and max_sem < 0.40:
         return []
 
     # ── Map chunk IDs → file paths + created_time + chunk text ────────
@@ -442,6 +451,7 @@ def semantic_search(query, top_k=20, min_similarity=0.15, date_from=None, date_t
     file_best_rrf = {}
     file_signals = defaultdict(set)  # path -> set of signal types
     file_best_chunk = {}
+    file_best_sim = {}  # path -> highest semantic similarity score
 
     for cid, path, ctime, ctext in rows:
         rrf = chunk_rrf.get(cid, 0)
@@ -449,6 +459,8 @@ def semantic_search(query, top_k=20, min_similarity=0.15, date_from=None, date_t
             file_best_rrf[path] = rrf
             file_best_chunk[path] = ctext or ""
         file_signals[path].update(chunk_signals.get(cid, set()))
+        if cid in chunk_sims:
+            file_best_sim[path] = max(file_best_sim.get(path, 0.0), chunk_sims[cid])
         if ctime is not None:
             file_created[path] = ctime
 
@@ -480,6 +492,15 @@ def semantic_search(query, top_k=20, min_similarity=0.15, date_from=None, date_t
         chunk_txt = file_best_chunk.get(path, "").lower()
         corpus = f"{fname} {chunk_txt}"
 
+        # If any query content token is in the file name, record filename signal
+        if any(tok in fname for tok in content_tokens):
+            file_signals[path].add('filename')
+
+        # If image file matched on content (semantic or keyword), mark OCR signal
+        # if path.lower().endswith(_IMAGE_EXTS):
+        #     if 'semantic' in file_signals[path] or 'keyword' in file_signals[path]:
+        #         file_signals[path].add('ocr')
+
         # 1. Exact phrase match bonus
         if clean_query and clean_query in corpus:
             file_best_rrf[path] *= 1.25
@@ -502,6 +523,19 @@ def semantic_search(query, top_k=20, min_similarity=0.15, date_from=None, date_t
         elif n_signals >= 2:
             file_best_rrf[path] *= 1.25
 
+    # ── Filter semantic noise ───────────────────────────
+    # Files with only a semantic signal (no keyword, no filename) must meet the quality floor (>= 0.38)
+    valid_paths = set()
+    for path, signals in file_signals.items():
+        if 'keyword' in signals or 'filename' in signals:
+            valid_paths.add(path)
+        elif file_best_sim.get(path, 0.0) >= 0.38:
+            valid_paths.add(path)
+
+    file_best_rrf = {p: score for p, score in file_best_rrf.items() if p in valid_paths}
+    if not file_best_rrf:
+        return []
+
     # Sort by RRF rank
     ranked = sorted(file_best_rrf.items(), key=lambda x: x[1], reverse=True)
 
@@ -513,57 +547,64 @@ def semantic_search(query, top_k=20, min_similarity=0.15, date_from=None, date_t
             if ctime is None:
                 # Include files with unknown creation time (not yet re-indexed)
                 filtered.append((path, rrf))
+                file_signals[path].add('date')
                 continue
             if date_from is not None and ctime < date_from:
                 continue
             if date_to is not None and ctime > date_to:
                 continue
             filtered.append((path, rrf))
+            file_signals[path].add('date')
         ranked = filtered
 
     ranked = ranked[:top_k]
-
-    # ── Compute normalized confidence scores (0–100%) ───
-    # Uses min-max normalization of RRF scores with a multi-signal boost.
-    # This replaces the old misleading raw-cosine display.
     if not ranked:
         return []
 
-    rrf_values = [rrf for _, rrf in ranked]
-    rrf_max = max(rrf_values)
-    rrf_min = min(rrf_values)
-    rrf_range = rrf_max - rrf_min
-
-    # Base confidence range: top result gets ~92%, worst gets ~40%
-    _CONF_CEIL = 0.92
-    _CONF_FLOOR = 0.40
-
+    # ── Compute grounded confidence scores (0–100%) ─────
+    # Grounded in signal strength, exact keyword matches, and real vector cosine similarity
+    # rather than artificially scaling low-similarity noise up to 92%.
     results = []
     for path, rrf in ranked:
-        # Normalize RRF score to [FLOOR, CEIL] range
-        if rrf_range > 0:
-            norm = (rrf - rrf_min) / rrf_range
+        signals = file_signals.get(path, set())
+        raw_sim = file_best_sim.get(path, 0.0)
+
+        if 'keyword' in signals and 'filename' in signals:
+            base_conf = 0.92
+        elif 'filename' in signals:
+            base_conf = 0.85
+        elif 'keyword' in signals:
+            base_conf = 0.80
+        elif raw_sim > 0:
+            # Semantic only: score reflects actual cosine similarity
+            # e.g., 0.40 -> ~50%, 0.60 -> ~75%, 0.80+ -> 90%+
+            base_conf = min(0.92, max(0.40, raw_sim * 1.15))
         else:
-            # All results have the same RRF score
-            norm = 1.0
-        confidence = _CONF_FLOOR + norm * (_CONF_CEIL - _CONF_FLOOR)
+            base_conf = 0.50
 
-        # Multi-signal boost: files matched by multiple signals get
-        # a confidence bump (max +8% for all three signals matching)
-        n_signals = len(file_signals.get(path, set()))
+        # Multi-signal boost: independent verification across modes
+        n_signals = len(signals)
         if n_signals >= 3:
-            confidence += 0.08  # semantic + keyword + filename
+            confidence = min(0.99, base_conf + 0.08)
         elif n_signals == 2:
-            confidence += 0.05  # two signals agree
-        # Single-signal hits keep their base confidence
+            confidence = min(0.96, base_conf + 0.05)
+        else:
+            confidence = base_conf
 
-        confidence = min(confidence, 0.99)  # cap at 99%
+        confidence = min(confidence, 0.99)
+
+        signals = file_signals.get(path, set())
+        methods = [m for m in ["semantic", "keyword", "filename", "ocr", "date"] if m in signals]
+        if not methods:
+            methods = ["semantic"] if rrf > 0 else ["filename"]
 
         results.append({
             "path": path,
             "score": round(confidence, 3),
             "created_time": file_created.get(path),
+            "methods": methods,
         })
 
     results.sort(key=lambda x: x["score"], reverse=True)
     return results[:top_k]
+

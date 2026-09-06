@@ -33,11 +33,7 @@ def _extract_one(path, allow_protected=False):
     name_no_ext = os.path.splitext(filename)[0].replace("_", " ").replace("-", " ")
     chunks = chunk_text(text, doc_context=name_no_ext) if len(text.strip()) >= 50 else []
 
-    # Always include filename + path as a searchable chunk so every
-    # indexed file can be found by its name even without body text.
-    meta_chunk = f"{name_no_ext} {filename} {path}"
-    chunks.insert(0, meta_chunk)
-
+    # Zero chunks for textless files (images, icons, etc.) and no redundant meta_chunk
     return (path, chunks, reason)
 
 
@@ -104,12 +100,8 @@ def index_files_incremental(root_folder=None, progress_cb=None, allow_protected=
     cur.execute("SELECT path, modified_time, id FROM files")
     db_states = {row[0]: (row[2], row[1]) for row in cur.fetchall()}  # path -> (file_id, mtime)
 
-    # Self-healing: identify existing files in DB that have 0 chunks (e.g. from interrupted passes)
-    cur.execute("""
-        SELECT files.path FROM files
-        LEFT JOIN chunks ON files.id = chunks.file_id
-        WHERE chunks.id IS NULL
-    """)
+    # Self-healing: identify existing files in DB that have not completed extraction (chunk_count IS NULL)
+    cur.execute("SELECT files.path FROM files WHERE chunk_count IS NULL")
     files_with_no_chunks = {row[0] for row in cur.fetchall()}
 
     # ── Determine which files actually need work ────────
@@ -182,18 +174,24 @@ def index_files_incremental(root_folder=None, progress_cb=None, allow_protected=
     skipped_by_reason = {}
     extractor = partial(_extract_one, allow_protected=allow_protected)
 
+    chunk_count_updates = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=_EXTRACT_WORKERS) as pool:
         batch_data = []  # accumulate (file_id, idx, chunk_text)
 
         for path, chunks, reason in pool.map(extractor, paths):
+            fid = path_to_fid[path]
             if not chunks:
-                skipped.append((path, reason or "no_content"))
-                if reason:
-                    skipped_by_reason[reason] = skipped_by_reason.get(reason, 0) + 1
+                if reason in _SKIP_REASONS:
+                    skipped.append((path, reason))
+                    if reason:
+                        skipped_by_reason[reason] = skipped_by_reason.get(reason, 0) + 1
+                else:
+                    # Textless file (e.g. image with no OCR text) — mark completed with 0 chunks
+                    chunk_count_updates.append((0, fid))
                 processed += 1
                 continue
 
-            fid = path_to_fid[path]
+            chunk_count_updates.append((len(chunks), fid))
             for idx, chunk in enumerate(chunks):
                 batch_data.append((fid, idx, chunk))
 
@@ -213,12 +211,21 @@ def index_files_incremental(root_folder=None, progress_cb=None, allow_protected=
                 _progress("extract", f"Extracted {processed}/{total_to_extract} files", pct=pct)
                 print(f"  … extracted {processed}/{total_to_extract} files", flush=True)
 
-        # Flush remaining
+        # Flush remaining chunks
         if batch_data:
             cur.executemany(
                 "INSERT INTO chunks (file_id, chunk_index, text) VALUES (?, ?, ?)",
                 batch_data,
             )
+            conn.commit()
+
+        # Update chunk_count for all processed files
+        if chunk_count_updates:
+            for i in range(0, len(chunk_count_updates), 500):
+                cur.executemany(
+                    "UPDATE files SET chunk_count = ? WHERE id = ?",
+                    chunk_count_updates[i:i + 500],
+                )
             conn.commit()
 
     if skipped:
@@ -232,6 +239,7 @@ def index_files_incremental(root_folder=None, progress_cb=None, allow_protected=
                 affected_chunk_ids.extend(r[0] for r in cur.fetchall())
                 cur.execute(f"DELETE FROM chunks WHERE file_id IN ({placeholders})", batch)
                 cur.execute(f"DELETE FROM files WHERE id IN ({placeholders})", batch)
+            conn.commit()
 
     # Collect IDs of newly inserted chunks for FAISS
     fids = list(path_to_fid.values())

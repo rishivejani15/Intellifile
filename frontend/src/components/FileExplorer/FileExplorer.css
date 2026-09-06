@@ -2927,6 +2927,174 @@
 }
 
 /* ───────────────────────────────────────────────────────
+   Search Retrieval Method Badges
+   ─────────────────────────────────────────────────────── */
+.file-name-header {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2, 8px);
+  min-width: 0;
+  max-width: 100%;
+}
+
+.file-name-header .file-name {
+  flex-shrink: 1;
+  min-width: 0;
+}
+
+.retrieval-method-badges {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.method-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3.5px;
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 1.5px 7px;
+  border-radius: 9999px;
+  letter-spacing: 0.02em;
+  line-height: 1.35;
+  user-select: none;
+  white-space: nowrap;
+  transition: all var(--dur-150, 0.15s) var(--ease-default, ease);
+  border: 1px solid transparent;
+}
+
+.method-badge-icon {
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.method-badge-label {
+  display: inline-block;
+}
+
+/* Semantic - Violet/Purple */
+.method-badge-semantic {
+  background: rgba(139, 92, 246, 0.12);
+  color: #7c3aed;
+  border-color: rgba(139, 92, 246, 0.28);
+}
+
+.method-badge-semantic:hover {
+  background: rgba(139, 92, 246, 0.2);
+}
+
+/* Keyword - Emerald/Green */
+.method-badge-keyword {
+  background: rgba(16, 185, 129, 0.12);
+  color: #059669;
+  border-color: rgba(16, 185, 129, 0.28);
+}
+
+.method-badge-keyword:hover {
+  background: rgba(16, 185, 129, 0.2);
+}
+
+/* File Name - Blue/Sky */
+.method-badge-filename {
+  background: rgba(14, 165, 233, 0.12);
+  color: #0284c7;
+  border-color: rgba(14, 165, 233, 0.28);
+}
+
+.method-badge-filename:hover {
+  background: rgba(14, 165, 233, 0.2);
+}
+
+/* OCR - Amber/Gold */
+.method-badge-ocr {
+  background: rgba(245, 158, 11, 0.12);
+  color: #d97706;
+  border-color: rgba(245, 158, 11, 0.28);
+}
+
+.method-badge-ocr:hover {
+  background: rgba(245, 158, 11, 0.2);
+}
+
+/* Date - Cyan/Teal */
+.method-badge-date {
+  background: rgba(20, 184, 166, 0.12);
+  color: #0d9488;
+  border-color: rgba(20, 184, 166, 0.28);
+}
+
+.method-badge-date:hover {
+  background: rgba(20, 184, 166, 0.2);
+}
+
+/* Default fallback */
+.method-badge-default {
+  background: rgba(100, 116, 139, 0.12);
+  color: #475569;
+  border-color: rgba(100, 116, 139, 0.25);
+}
+
+/* Dark mode overrides */
+[data-theme="dark"] .method-badge-semantic {
+  background: rgba(167, 139, 250, 0.18);
+  color: #c4b5fd;
+  border-color: rgba(167, 139, 250, 0.35);
+}
+
+[data-theme="dark"] .method-badge-semantic:hover {
+  background: rgba(167, 139, 250, 0.28);
+}
+
+[data-theme="dark"] .method-badge-keyword {
+  background: rgba(52, 211, 153, 0.18);
+  color: #6ee7b7;
+  border-color: rgba(52, 211, 153, 0.35);
+}
+
+[data-theme="dark"] .method-badge-keyword:hover {
+  background: rgba(52, 211, 153, 0.28);
+}
+
+[data-theme="dark"] .method-badge-filename {
+  background: rgba(56, 189, 248, 0.18);
+  color: #7dd3fc;
+  border-color: rgba(56, 189, 248, 0.35);
+}
+
+[data-theme="dark"] .method-badge-filename:hover {
+  background: rgba(56, 189, 248, 0.28);
+}
+
+[data-theme="dark"] .method-badge-ocr {
+  background: rgba(251, 191, 36, 0.18);
+  color: #fde68a;
+  border-color: rgba(251, 191, 36, 0.35);
+}
+
+[data-theme="dark"] .method-badge-ocr:hover {
+  background: rgba(251, 191, 36, 0.28);
+}
+
+[data-theme="dark"] .method-badge-date {
+  background: rgba(45, 212, 191, 0.18);
+  color: #99f6e4;
+  border-color: rgba(45, 212, 191, 0.35);
+}
+
+[data-theme="dark"] .method-badge-date:hover {
+  background: rgba(45, 212, 191, 0.28);
+}
+
+[data-theme="dark"] .method-badge-default {
+  background: rgba(148, 163, 184, 0.18);
+  color: #cbd5e1;
+  border-color: rgba(148, 163, 184, 0.3);
+}
+
+/* ───────────────────────────────────────────────────────
    Loading & Empty States
    ─────────────────────────────────────────────────────── */
 .loading {
