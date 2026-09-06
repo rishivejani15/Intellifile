@@ -29,19 +29,29 @@ def _extract_one(path, allow_protected=False):
     if reason in _SKIP_REASONS and not allow_protected:
         return (path, None, reason)
 
-    is_image = path.lower().endswith((".png", ".jpg", ".jpeg"))
-    chunks = chunk_text(text) if len(text.strip()) >= 50 else []
+    filename = os.path.basename(path)
+    name_no_ext = os.path.splitext(filename)[0].replace("_", " ").replace("-", " ")
+    chunks = chunk_text(text, doc_context=name_no_ext) if len(text.strip()) >= 50 else []
 
     # Always include filename + path as a searchable chunk so every
     # indexed file can be found by its name even without body text.
-    # For images, skip this if no actual OCR text chunks were generated.
-    if not is_image or chunks:
-        filename = os.path.basename(path)
-        name_no_ext = os.path.splitext(filename)[0].replace("_", " ").replace("-", " ")
-        meta_chunk = f"{name_no_ext} {filename} {path}"
-        chunks.insert(0, meta_chunk)
+    meta_chunk = f"{name_no_ext} {filename} {path}"
+    chunks.insert(0, meta_chunk)
 
     return (path, chunks, reason)
+
+
+def _is_under_roots(file_path, roots):
+    if not roots:
+        return True
+    if isinstance(roots, (str, os.PathLike)):
+        roots = [roots]
+    norm_path = os.path.normcase(os.path.abspath(file_path)).rstrip("\\/")
+    for r in roots:
+        norm_r = os.path.normcase(os.path.abspath(r)).rstrip("\\/")
+        if norm_path == norm_r or norm_path.startswith(norm_r + os.sep):
+            return True
+    return False
 
 
 def index_files_incremental(root_folder=None, progress_cb=None, allow_protected=False):
@@ -94,6 +104,14 @@ def index_files_incremental(root_folder=None, progress_cb=None, allow_protected=
     cur.execute("SELECT path, modified_time, id FROM files")
     db_states = {row[0]: (row[2], row[1]) for row in cur.fetchall()}  # path -> (file_id, mtime)
 
+    # Self-healing: identify existing files in DB that have 0 chunks (e.g. from interrupted passes)
+    cur.execute("""
+        SELECT files.path FROM files
+        LEFT JOIN chunks ON files.id = chunks.file_id
+        WHERE chunks.id IS NULL
+    """)
+    files_with_no_chunks = {row[0] for row in cur.fetchall()}
+
     # ── Determine which files actually need work ────────
     files_to_process = []      # (path, mtime, file_id_or_None)
     new_files_data = []        # (path, filename, mtime, ctime) for bulk insert
@@ -106,7 +124,7 @@ def index_files_incremental(root_folder=None, progress_cb=None, allow_protected=
     for path, (modified_time, created_time) in files.items():
         if path in db_states:
             file_id, old_mtime = db_states[path]
-            if old_mtime == modified_time:
+            if old_mtime == modified_time and path not in files_with_no_chunks:
                 unchanged_files += 1
                 continue
             modified_fids.append(file_id)
@@ -168,8 +186,8 @@ def index_files_incremental(root_folder=None, progress_cb=None, allow_protected=
         batch_data = []  # accumulate (file_id, idx, chunk_text)
 
         for path, chunks, reason in pool.map(extractor, paths):
-            if chunks is None:
-                skipped.append((path, reason))
+            if not chunks:
+                skipped.append((path, reason or "no_content"))
                 if reason:
                     skipped_by_reason[reason] = skipped_by_reason.get(reason, 0) + 1
                 processed += 1
@@ -226,6 +244,9 @@ def index_files_incremental(root_folder=None, progress_cb=None, allow_protected=
     # ── Handle deleted files ────────────────────────────
     deleted_fids = []
     for path, (file_id, _) in db_states.items():
+        # When roots is specified, only consider files that fall under the scanned roots
+        if roots is not None and not _is_under_roots(path, roots):
+            continue
         if path not in files:
             deleted_fids.append(file_id)
 

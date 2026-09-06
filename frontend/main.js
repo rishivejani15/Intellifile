@@ -2565,18 +2565,19 @@ function parseDateFromQuery(rawQuery) {
     }
   }
 
-  // Pattern: "<month> <year>" (whole month, no day) or just "<month>"
+  // Pattern: "<month> <year>" or explicit prefix + "<month>" (e.g. "in august", "from may 2025")
   if (!dateFrom && !dateTo) {
-    const monthYearRe = new RegExp(
-      `(?:from|in|during|of)?\\s*(${monthPattern})(?:\\s+(\\d{4}))?\\b`,
+    const monthYearWithPrefixRe = new RegExp(
+      `(?:\\b(?:from|in|during|of|dated|created)\\s+(${monthPattern})(?:\\s+(\\d{4}))?\\b)|(?:\\b(${monthPattern})\\s+(\\d{4})\\b)`,
       'i'
     );
-    match = query.match(monthYearRe);
+    match = query.match(monthYearWithPrefixRe);
     if (match) {
-      const month = MONTHS[match[1].toLowerCase()];
+      const monthStr = match[1] || match[3];
+      const yearStr = match[2] || match[4];
+      const month = MONTHS[monthStr.toLowerCase()];
       const now = new Date();
-      // If year is provided, use it, otherwise default to current year
-      const year = match[2] ? parseInt(match[2]) : now.getFullYear();
+      const year = yearStr ? parseInt(yearStr) : now.getFullYear();
 
       dateFrom = startOfMonth(year, month);
       dateTo = endOfMonth(year, month);
@@ -2635,8 +2636,10 @@ function parseDateFromQuery(rawQuery) {
     }
   }
 
-  // Clean up filler words left behind
-  query = query.replace(/\b(containing|with|about|files?|from|created|on|dated|in|during|of)\b/gi, ' ').replace(/\s+/g, ' ').trim();
+  // Clean up date-related filler words only if a date filter was actually identified
+  if (dateFrom || dateTo) {
+    query = query.replace(/\b(containing|with|about|files?|from|created|on|dated|in|during|of)\b/gi, ' ').replace(/\s+/g, ' ').trim();
+  }
 
   return {
     cleanQuery: (!query.trim() && (dateFrom || dateTo)) ? "" : (query.trim() || rawQuery.trim()),

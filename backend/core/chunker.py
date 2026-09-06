@@ -4,18 +4,36 @@ import re
 MAX_CHUNKS_PER_FILE = 40
 
 
-def chunk_text(text, chunk_size=1000, overlap=150):
+def expand_camel_case(text: str) -> str:
     """
-    Split *text* into overlapping chunks, preferring sentence boundaries.
+    Expands CamelCase and compound technical terms (e.g. 'DriveSafe' -> 'DriveSafe Drive Safe',
+    'FastAPI' -> 'FastAPI Fast API') so that both compound and separate terms are indexed in
+    FTS5 and captured by vector embeddings.
+    """
+    def _repl(match):
+        word = match.group(0)
+        split = re.sub(r'([a-z])([A-Z])', r'\1 \2', word)
+        split = re.sub(r'([A-Z]{2,})([A-Z][a-z])', r'\1 \2', split)
+        return f'{word} {split}' if split != word else word
+
+    return re.sub(r'\b[A-Za-z0-9]+\b', _repl, text)
+
+
+def chunk_text(text, chunk_size=280, overlap=45, doc_context=""):
+    """
+    Split *text* into overlapping chunks, preferring sentence boundaries and line breaks.
     Falls back to word-level splitting for very long paragraphs.
 
-    Larger chunk_size (1000 words ≈ 512 tokens) matches the model's max
-    input length, so we get the same quality with far fewer chunks.
+    chunk_size of ~280 words (≈ 350-400 tokens) comfortably fits within the 512-token
+    context window of bge-small-en-v1.5 without truncation, while isolating individual
+    projects, sections, and topics for high semantic similarity.
 
     Parameters
     ----------
-    chunk_size : int   – max words per chunk (1000 ≈ 512 model tokens)
-    overlap    : int   – words shared between consecutive chunks
+    chunk_size  : int   – max words per chunk (default 280 words ≈ 380 tokens)
+    overlap     : int   – words shared between consecutive chunks (default 45)
+    doc_context : str   – optional parent document name/title to prepend to every chunk
+                          so chunks maintain parent context for both FTS5 and vector search
 
     Returns
     -------
@@ -24,8 +42,11 @@ def chunk_text(text, chunk_size=1000, overlap=150):
     if not text or not text.strip():
         return []
 
-    # Split on sentence-ending punctuation or paragraph breaks
-    sentences = re.split(r'(?<=[.!?;])\s+|\n{2,}', text.strip())
+    # Expand CamelCase so compound identifiers can be searched both merged and separated
+    text = expand_camel_case(text)
+
+    # Split on sentence-ending punctuation or line/paragraph breaks
+    sentences = re.split(r'(?<=[.!?;])\s+|\n+', text.strip())
     sentences = [s.strip() for s in sentences if s.strip()]
 
     if not sentences:
@@ -63,5 +84,10 @@ def chunk_text(text, chunk_size=1000, overlap=150):
         # Keep evenly spaced chunks to maintain coverage
         step = len(chunks) / MAX_CHUNKS_PER_FILE
         chunks = [chunks[int(i * step)] for i in range(MAX_CHUNKS_PER_FILE)]
+
+    # Prepend parent document context if provided
+    if doc_context and doc_context.strip():
+        prefix = f"[{doc_context.strip()}] "
+        chunks = [f"{prefix}{c}" for c in chunks]
 
     return chunks

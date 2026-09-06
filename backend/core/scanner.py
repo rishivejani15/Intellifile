@@ -95,10 +95,13 @@ IGNORE_DIRS = {
     "appdata", ".cache", ".local", ".config",
     # Browsers
     "google", "mozilla", "edge", "chrome", "firefox",
-    # Dev / build
+    # Dev / build / toolchains
     "node_modules", ".git", ".venv", "venv", "__pycache__",
     "build", "dist", "out", "target", "bin", "obj",
-    ".vs", ".idea", ".vscode", ".antigravity", "packages", "site-packages",
+    ".vs", ".idea", ".vscode", ".antigravity", ".antigravity-ide", ".gemini",
+    "packages", "site-packages", "backend-dist", "sync-dist",
+    # Third-party server / toolchains
+    "msys64", "xampp",
     # Package managers / runtimes
     "npm", "pip", "conda", ".nuget", ".cargo", ".rustup",
     ".gradle", ".m2", ".npm", ".yarn",

@@ -12,10 +12,10 @@ from core.scanner import is_indexable_document
 from indexing.update_faiss import update_faiss
 
 
-def ingest_single_file(file_path: str, allow_protected: bool = False) -> Dict[str, object]:
+def ingest_single_file(file_path: str, allow_protected: bool = False, force: bool = False) -> Dict[str, object]:
     """
     Ingest one file into the canonical files.db + vectors.faiss pipeline.
-    Uses persistent dedup based on absolute path + modified time.
+    Uses persistent dedup based on absolute path + modified time (bypassable with force=True).
     """
     init_db()
 
@@ -47,7 +47,7 @@ def ingest_single_file(file_path: str, allow_protected: bool = False) -> Dict[st
     affected_chunk_ids: List[int] = []
     if existing:
         file_id, old_mtime = existing
-        if int(old_mtime) == modified_time:
+        if not force and int(old_mtime) == modified_time:
             conn.close()
             sys.stderr.write(f"[ingest] Skipped (unchanged): {abs_path}\n")
             sys.stderr.flush()
@@ -90,13 +90,11 @@ def ingest_single_file(file_path: str, allow_protected: bool = False) -> Dict[st
         )
         file_id = cur.lastrowid
 
-    is_image = filename.lower().endswith((".png", ".jpg", ".jpeg"))
-    chunks = chunk_text(text) if text and len(text.strip()) >= 50 else []
+    name_no_ext = os.path.splitext(filename)[0].replace("_", " ").replace("-", " ")
+    chunks = chunk_text(text, doc_context=name_no_ext) if text and len(text.strip()) >= 50 else []
 
-    if not is_image or chunks:
-        name_no_ext = os.path.splitext(filename)[0].replace("_", " ").replace("-", " ")
-        meta_chunk = f"{name_no_ext} {filename} {abs_path}"
-        chunks.insert(0, meta_chunk)
+    meta_chunk = f"{name_no_ext} {filename} {abs_path}"
+    chunks.insert(0, meta_chunk)
 
     new_chunk_ids: List[int] = []
     for idx, chunk in enumerate(chunks):
