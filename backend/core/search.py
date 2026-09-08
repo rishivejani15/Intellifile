@@ -123,10 +123,12 @@ def _classify_query_intent(query):
 def _build_fts5_queries(query):
     """
     Build tiered FTS5 queries:
-    1. Primary (high precision): exact phrase, compound words, and AND conjunction of content words.
+    1. Primary (high precision): exact phrase, compound words, adjacent prefix phrase, and AND conjunction of content words.
     2. Fallback (high recall): OR disjunction across content words (only used if primary needs more candidates).
     """
-    tokens = re.findall(r'[a-zA-Z0-9]+', query)
+    # Normalize 3+ repeated characters for typo resilience (e.g. "safeeee" -> "safe")
+    clean_query = re.sub(r'([a-zA-Z])\1{2,}', r'\1', str(query or ""))
+    tokens = re.findall(r'[a-zA-Z0-9]+', clean_query)
     if not tokens:
         return "", ""
 
@@ -136,21 +138,28 @@ def _build_fts5_queries(query):
         content_tokens = tokens  # fallback if query consists solely of stopwords
 
     primary_clauses = []
-    # 1. Exact phrase match.  FTS5 tokenizes punctuation and whitespace, so
-    # adjacent terms must remain a phrase ("proctoring system"), not a joined
-    # token ("proctoringsystem").  The old joined form never matched normal
-    # document text and forced an overly broad OR fallback.
+    # 1. Exact phrase match and adjacent term pairs
     if len(tokens) > 1:
         primary_clauses.append(f'"{clean_phrase}"')
 
-        # Adjacent meaningful phrases preserve useful partial evidence without
-        # treating every individual query word as a successful match.
+        # Adjacent meaningful phrases preserve useful partial evidence
         for i in range(len(tokens) - 1):
             t1, t2 = tokens[i].lower(), tokens[i+1].lower()
             if t1 not in _STOP_WORDS and t2 not in _STOP_WORDS:
                 primary_clauses.append(f'"{t1} {t2}"')
+                # Adjacent prefix matching (e.g. driv* + safe* matches DriveSafe / Drive Safe)
+                if len(t1) >= 3 and len(t2) >= 3:
+                    primary_clauses.append(f'({t1}* + {t2}*)')
 
-    # 2. CamelCase split for single compound words (e.g. "DriveSafe" -> "Drive Safe")
+    # 2. Compound words (e.g. driv + safe -> drivsafe*)
+    if len(content_tokens) >= 2:
+        for i in range(len(content_tokens) - 1):
+            c = (content_tokens[i] + content_tokens[i+1]).lower()
+            if len(c) >= 5:
+                primary_clauses.append(f'"{c}"')
+                primary_clauses.append(f'{c}*')
+
+    # 3. CamelCase split for single compound words (e.g. "DriveSafe" -> "Drive Safe")
     if len(tokens) == 1:
         single = tokens[0]
         split_single = re.sub(r'([a-z])([A-Z])', r'\1 \2', single)
@@ -161,11 +170,17 @@ def _build_fts5_queries(query):
             if len(sub_tokens) > 1:
                 primary_clauses.append(f'(' + " AND ".join(f'"{t}"' for t in sub_tokens) + ')')
         primary_clauses.append(f'"{single}"')
+        if len(single) >= 4:
+            primary_clauses.append(f'{single}*')
 
-    # 3. Conjunction (AND) of informative content words
+    # 4. Conjunction (AND) of informative content words (exact and prefix)
     if len(content_tokens) > 1:
-        and_part = " AND ".join(f'"{t}"' for t in content_tokens)
-        primary_clauses.append(f'({and_part})')
+        and_exact = " AND ".join(f'"{t}"' for t in content_tokens)
+        primary_clauses.append(f'({and_exact})')
+        prefix_tokens = [f"{t}*" if len(t) >= 4 else f'"{t}"' for t in content_tokens]
+        and_prefix = " AND ".join(prefix_tokens)
+        if and_prefix != and_exact:
+            primary_clauses.append(f'({and_prefix})')
 
     primary_query = " OR ".join(primary_clauses)
 
@@ -218,7 +233,8 @@ def _faiss_search(query, top_k, min_sim=0.15, root_folder=None, date_from=None, 
     if candidate_cids is not None:
         try:
             sel = faiss.IDSelectorBatch(candidate_cids)
-            params = faiss.SearchParameters(sel=sel)
+            params = faiss.SearchParameters()
+            params.sel = sel
             k_search = min(top_k, len(candidate_cids))
             scores, ids = index.search(q_emb, k_search, params=params)
         except Exception:
@@ -443,10 +459,36 @@ def _looks_like_gibberish(query):
     letters = "".join(re.findall(r"[a-z]", str(query or "").lower()))
     if len(letters) < 8:
         return False
-    vowel_ratio = sum(letter in "aeiou" for letter in letters) / len(letters)
-    has_long_consonant_run = bool(re.search(r"[bcdfghjklmnpqrstvwxyz]{5,}", letters))
+    vowel_ratio = sum(letter in "aeiouy" for letter in letters) / len(letters)
+    has_long_consonant_run = bool(re.search(r"[bcdfghjklmnpqrstvwxz]{5,}", letters))
     has_repeated_run = bool(re.search(r"(.)\1{2,}", letters))
-    return vowel_ratio < 0.24 and (has_long_consonant_run or has_repeated_run)
+    return vowel_ratio < 0.20 and (has_long_consonant_run or has_repeated_run)
+
+
+def _is_typo_match(term, w):
+    """Accurately identify single-typo variations between a query token and corpus word."""
+    if not term or not w or len(term) < 4 or len(w) < 4 or w in _STOP_WORDS:
+        return False
+    # Preserve first character, or for longer words (>= 7) last character
+    if term[0] != w[0] and (len(term) < 7 or term[-1] != w[-1]):
+        return False
+    # 1-edit distance check (single substitution, swap, insertion, or deletion)
+    if abs(len(term) - len(w)) <= 1:
+        if len(term) == len(w):
+            diffs = [i for i in range(len(term)) if term[i] != w[i]]
+            if len(diffs) == 1:
+                return True
+            if len(diffs) == 2 and abs(diffs[0] - diffs[1]) == 1:
+                return term[diffs[0]] == w[diffs[1]] and term[diffs[1]] == w[diffs[0]]
+        else:
+            short, long = (term, w) if len(term) < len(w) else (w, term)
+            for i in range(len(long)):
+                if long[:i] + long[i+1:] == short:
+                    return True
+    # For longer words (>= 7 chars), tolerate SequenceMatcher ratio >= 0.85
+    if len(term) >= 7 and abs(len(term) - len(w)) <= 2:
+        return difflib.SequenceMatcher(None, term, w).ratio() >= 0.85
+    return False
 
 
 def fuzzy_filename_search(query, top_k=20, root_folder=None, date_from=None, date_to=None):
@@ -466,14 +508,6 @@ def fuzzy_filename_search(query, top_k=20, root_folder=None, date_from=None, dat
     if not query_terms or len(query_terms) > 4:
         return []
 
-    # A prefix is used only to obtain a small candidate set from FTS.  The
-    # final result still has to pass edit-distance checks below.
-    seed = max(query_terms, key=len)
-    # Three characters tolerate a typo very early in a word (``quaterly``
-    # versus ``quarterly``) while FTS still limits the candidate set.
-    prefix = seed[: min(len(seed), 3)]
-    fts_prefix_query = f"{prefix}*"
-
     conn = get_connection()
     try:
         cur = conn.cursor()
@@ -481,13 +515,10 @@ def fuzzy_filename_search(query, top_k=20, root_folder=None, date_from=None, dat
             root_folder, date_from, date_to
         )
         cur.execute(
-            f"""SELECT DISTINCT files.path, files.filename, files.created_time
-                FROM chunks_fts
-                JOIN chunks ON chunks_fts.rowid = chunks.id
-                JOIN files ON chunks.file_id = files.id
-                WHERE chunks_fts MATCH ?{metadata_clause}
-                LIMIT 250""",
-            [fts_prefix_query, *metadata_params],
+            f"""SELECT path, filename, created_time
+                FROM files
+                WHERE 1=1{metadata_clause}""",
+            metadata_params,
         )
         candidates = cur.fetchall()
     except Exception:
@@ -612,6 +643,9 @@ def semantic_search(query, top_k=20, min_similarity=0.15, date_from=None, date_t
     Returns list of dicts: {path, score, created_time} sorted by relevance.
     """
 
+    # Normalize 3+ repeated characters for typo resilience (e.g. "safeeee" -> "safe")
+    query = re.sub(r'([a-zA-Z])\1{2,}', r'\1', str(query or ""))
+
     # ── Fast path: date-only query (no keywords to search) ──
     # When the user asks "files of august 2022" the NLP parser strips
     # everything, leaving an empty query string.  FAISS and FTS5 cannot
@@ -667,6 +701,7 @@ def semantic_search(query, top_k=20, min_similarity=0.15, date_from=None, date_t
 
     # ── Filename matches get injected directly as file-level hits ──
     filename_boost = {}
+    fuzzy_fn_paths = set()
     compact_query = re.sub(r"[^a-z0-9]+", "", query.lower())
     for rank, (_fid, path) in enumerate(fn_hits, 1):
         compact_name = re.sub(r"[^a-z0-9]+", "", os.path.basename(path).lower())
@@ -676,8 +711,30 @@ def semantic_search(query, top_k=20, min_similarity=0.15, date_from=None, date_t
         strength = 5.0 if exact_title else 1.0
         filename_boost[path] = (w_fn * strength) / (_RRF_K + rank)
 
-    if not chunk_rrf and not filename_boost:
+    # Typo-tolerant fuzzy filename hits provide strong deterministic title evidence
+    fuzzy_fn_hits = fuzzy_filename_search(
+        query, top_k=top_k, root_folder=root_folder,
+        date_from=date_from, date_to=date_to,
+    )
+    for rank, f_hit in enumerate(fuzzy_fn_hits, 1):
+        path = f_hit["path"]
+        if path not in filename_boost:
+            filename_boost[path] = (w_fn * 3.5) / (_RRF_K + rank)
+            fuzzy_fn_paths.add(path)
+
+    def _fallback_fuzzy():
+        if query.strip():
+            return fuzzy_filename_search(
+                query,
+                top_k=top_k,
+                root_folder=root_folder,
+                date_from=date_from,
+                date_to=date_to,
+            )
         return []
+
+    if not chunk_rrf and not filename_boost:
+        return _fallback_fuzzy()
 
     # ── Map chunk IDs → file paths + created_time + chunk text ────────
     all_ids = list(chunk_rrf.keys())
@@ -731,7 +788,10 @@ def semantic_search(query, top_k=20, min_similarity=0.15, date_from=None, date_t
     # Add filename-match boost to RRF scores
     for path, boost in filename_boost.items():
         file_best_rrf[path] = file_best_rrf.get(path, 0) + boost
-        file_signals[path].add('filename')
+        if path in fuzzy_fn_paths:
+            file_signals[path].add('fuzzy')
+        else:
+            file_signals[path].add('filename')
 
     # ── Two-Stage Fine-Grained Candidate Rescoring ──────
     # Rescores candidate files based on exact phrase alignment, compound token matching,
@@ -755,14 +815,30 @@ def semantic_search(query, top_k=20, min_similarity=0.15, date_from=None, date_t
         fname = os.path.basename(path).lower()
         chunk_txt = file_best_chunk.get(path, "").lower()
         corpus = f"{fname} {chunk_txt}"
+        corpus_words = set(re.findall(r'[a-z0-9]+', corpus))
 
+        resolved_terms = []
         def contains_term(term):
             if term in corpus:
+                resolved_terms.append(term)
                 return True
             # Align lightweight coverage checks with FTS5's Porter stemming
             # for common plurals without introducing another dependency.
             if len(term) > 3 and term.endswith("s") and term[:-1] in corpus:
+                resolved_terms.append(term[:-1])
                 return True
+            if len(term) >= 4 and any(w.startswith(term) for w in corpus_words):
+                for w in corpus_words:
+                    if w.startswith(term):
+                        resolved_terms.append(w)
+                        break
+                return True
+            # Fuzzy match individual content terms with typo tolerance (e.g. lojistic -> logistic, beth -> bath)
+            for w in corpus_words:
+                if _is_typo_match(term, w):
+                    file_signals[path].add('fuzzy')
+                    resolved_terms.append(w)
+                    return True
             return False
 
         # If image file matched on content (semantic or keyword), mark OCR signal
@@ -771,18 +847,32 @@ def semantic_search(query, top_k=20, min_similarity=0.15, date_from=None, date_t
         #         file_signals[path].add('ocr')
 
         # 1. Exact phrase match bonus
+        phrase_matched = False
         if clean_query and clean_query in corpus:
             file_best_rrf[path] *= 1.25
+            phrase_matched = True
 
-        # 2. Compound word bonus
-        if any(c in corpus for c in compound_tokens):
-            file_best_rrf[path] *= 1.15
+        # 2. Compound word bonus (with typo and fuzzy tolerance)
+        has_compound = any(
+            c in corpus or any(_is_typo_match(c, w) for w in corpus_words)
+            for c in compound_tokens
+        )
+        if has_compound:
+            file_best_rrf[path] *= 1.25
+            file_signals[path].add('fuzzy')
 
         # 3. Term coverage ratio
-        if len(content_tokens) >= 2:
+        if content_tokens:
             covered = sum(1 for tok in content_tokens if contains_term(tok))
             ratio = covered / len(content_tokens)
-            file_best_rrf[path] *= (0.75 + 0.35 * ratio)
+            if len(content_tokens) >= 2:
+                file_best_rrf[path] *= (0.75 + 0.35 * ratio)
+                if not phrase_matched and len(resolved_terms) == len(content_tokens):
+                    resolved_phrase = " ".join(resolved_terms)
+                    if resolved_phrase in corpus:
+                        file_best_rrf[path] *= 1.25
+            elif len(content_tokens) == 1 and ratio == 1.0:
+                file_best_rrf[path] *= 1.20
 
         # 4. Multi-signal boost on RRF: files matching multiple independent search modes
         # receive a ranking multiplier so verified matches leapfrog
@@ -800,7 +890,7 @@ def semantic_search(query, top_k=20, min_similarity=0.15, date_from=None, date_t
     # a match.
     precise_paths = {
         path for path, signals in file_signals.items()
-        if "keyword" in signals or "filename" in signals
+        if "keyword" in signals or "filename" in signals or "fuzzy" in signals
     }
     best_semantic = max(file_best_sim.values(), default=0.0)
     semantic_floor = max(min_similarity, best_semantic - _SEMANTIC_MARGIN)
@@ -820,7 +910,7 @@ def semantic_search(query, top_k=20, min_similarity=0.15, date_from=None, date_t
 
     file_best_rrf = {p: score for p, score in file_best_rrf.items() if p in valid_paths}
     if not file_best_rrf:
-        return []
+        return _fallback_fuzzy()
 
     # Sort by RRF rank
     ranked = sorted(file_best_rrf.items(), key=lambda x: x[1], reverse=True)
@@ -854,7 +944,7 @@ def semantic_search(query, top_k=20, min_similarity=0.15, date_from=None, date_t
         deduped.append((path, rrf))
     ranked = deduped[:top_k]
     if not ranked:
-        return []
+        return _fallback_fuzzy()
 
     # ── Compute grounded confidence scores (0–100%) ─────
     # Grounded in signal strength, exact keyword matches, and real vector cosine similarity
@@ -866,8 +956,12 @@ def semantic_search(query, top_k=20, min_similarity=0.15, date_from=None, date_t
 
         if 'keyword' in signals and 'filename' in signals:
             base_conf = 0.92
+        elif path in fuzzy_fn_paths or ('fuzzy' in signals and 'filename' in signals):
+            base_conf = 0.90
         elif 'filename' in signals:
             base_conf = 0.85
+        elif 'fuzzy' in signals:
+            base_conf = 0.82
         elif 'keyword' in signals:
             base_conf = 0.80
         elif raw_sim > 0:
@@ -889,7 +983,7 @@ def semantic_search(query, top_k=20, min_similarity=0.15, date_from=None, date_t
         confidence = min(confidence, 0.99)
 
         signals = file_signals.get(path, set())
-        methods = [m for m in ["semantic", "keyword", "filename", "ocr", "date"] if m in signals]
+        methods = [m for m in ["fuzzy", "filename", "keyword", "semantic", "ocr", "date"] if m in signals]
         if not methods:
             methods = ["semantic"] if rrf > 0 else ["filename"]
 
@@ -909,5 +1003,7 @@ def semantic_search(query, top_k=20, min_similarity=0.15, date_from=None, date_t
         "filename_hits=%d returned=%d",
         len(content_tokens), len(sem_hits), len(kw_hits), len(fn_hits), len(results),
     )
+    if not results:
+        return _fallback_fuzzy()
     return results[:top_k]
 

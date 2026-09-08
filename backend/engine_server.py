@@ -319,6 +319,9 @@ while True:
                     print(json.dumps({"_id": req_id, "error": "Embedding model check failed"}), flush=True)
                     continue
 
+                import importlib
+                import core.search
+                importlib.reload(core.search)
                 from core.search import fuzzy_filename_search, semantic_search
                 query = request.get("query", "").strip()
                 results = semantic_search(query, date_from=date_from, date_to=date_to, root_folder=root_folder)

@@ -128,12 +128,25 @@ class TestRetrievalMethodBadges(unittest.TestCase):
         self.assertTrue(all(r["methods"] == ["fuzzy"] for r in results))
 
     @patch("core.search._faiss_search", return_value=[])
+    def test_semantic_search_falls_back_to_fuzzy_filename(self, mock_faiss):
+        results = semantic_search("quaterly", top_k=5)
+        self.assertTrue(results)
+        self.assertTrue(any("quarterly_financial_report" in r["path"] for r in results))
+        self.assertTrue(all(r["methods"] == ["fuzzy"] for r in results))
+
+    @patch("core.search._faiss_search", return_value=[])
     def test_all_results_have_valid_methods_list(self, mock_faiss):
         results = semantic_search("report", top_k=10)
         for r in results:
             self.assertIn("methods", r)
             self.assertIsInstance(r["methods"], list)
             self.assertGreater(len(r["methods"]), 0)
+
+    def test_content_typo_match_includes_fuzzy_badge(self):
+        with patch("core.search._faiss_search", return_value=[(self.cid1, 0.65)]):
+            results = semantic_search("quaterly report", top_k=5)
+            self.assertTrue(results)
+            self.assertIn("fuzzy", results[0]["methods"])
 
 
 if __name__ == "__main__":
