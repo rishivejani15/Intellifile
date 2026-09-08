@@ -1,4 +1,6 @@
+import difflib
 import os
+import logging
 from collections import defaultdict
 from core.model import encode_query
 from core.faiss_manager import load_index
@@ -6,6 +8,13 @@ from core.db import get_connection
 
 # Reciprocal Rank Fusion constant (higher = more uniform blending)
 _RRF_K = 60
+_SEMANTIC_MARGIN = 0.035
+# A fallback FTS OR-query is recall evidence, not the same as a phrase or
+# conjunction match.  Keep it available for conceptual searches, but prevent
+# a ubiquitous token such as "system" from dominating hybrid fusion.
+_FTS_FALLBACK_WEIGHT = 0.20
+
+logger = logging.getLogger("intellifile.search")
 
 
 def _normalize_root(root_folder):
@@ -23,6 +32,41 @@ def _path_in_root(file_path, root_folder):
         return normalized_path == normalized_root or normalized_path.startswith(normalized_root + os.sep)
     except Exception:
         return False
+
+
+def _file_metadata_clause(root_folder=None, date_from=None, date_to=None, table="files"):
+    """Build SQL predicates for the canonical creation-date metadata field.
+
+    ``date_to`` is deliberately exclusive.  This keeps month boundaries
+    unambiguous: ``before July 2026`` is ``date < 2026-07-01`` and ``during
+    July`` is ``2026-07-01 <= date < 2026-08-01``.
+    """
+    conditions = []
+    params = []
+    root_folder = _normalize_root(root_folder)
+    if root_folder:
+        conditions.append(f"({table}.path = ? OR {table}.path LIKE ?)")
+        params.extend([root_folder, root_folder + os.sep + "%"])
+    if date_from is not None:
+        conditions.append(f"{table}.created_time >= ?")
+        params.append(date_from)
+    if date_to is not None:
+        conditions.append(f"{table}.created_time < ?")
+        params.append(date_to)
+    return (" AND " + " AND ".join(conditions)) if conditions else "", params
+
+
+def _metadata_matches(created_time, date_from=None, date_to=None):
+    """Return whether a known creation timestamp satisfies an exclusive range."""
+    if date_from is None and date_to is None:
+        return True
+    if created_time is None:
+        return False
+    if date_from is not None and created_time < date_from:
+        return False
+    if date_to is not None and created_time >= date_to:
+        return False
+    return True
 
 
 import re
@@ -92,20 +136,19 @@ def _build_fts5_queries(query):
         content_tokens = tokens  # fallback if query consists solely of stopwords
 
     primary_clauses = []
-    # 1. Exact phrase match & compound merged words (e.g. "drive safe" -> "drivesafe", "bio data" -> "biodata")
+    # 1. Exact phrase match.  FTS5 tokenizes punctuation and whitespace, so
+    # adjacent terms must remain a phrase ("proctoring system"), not a joined
+    # token ("proctoringsystem").  The old joined form never matched normal
+    # document text and forced an overly broad OR fallback.
     if len(tokens) > 1:
         primary_clauses.append(f'"{clean_phrase}"')
-        compound = "".join(tokens)
-        if len(compound) > len(tokens[0]):
-            primary_clauses.append(f'"{compound}"')
 
-        # Adjacent non-stopword pairs (e.g. "bio data of a girl" -> "biodata")
+        # Adjacent meaningful phrases preserve useful partial evidence without
+        # treating every individual query word as a successful match.
         for i in range(len(tokens) - 1):
             t1, t2 = tokens[i].lower(), tokens[i+1].lower()
             if t1 not in _STOP_WORDS and t2 not in _STOP_WORDS:
-                pair = t1 + t2
-                if len(pair) >= 5 and pair != compound:
-                    primary_clauses.append(f'"{pair}"')
+                primary_clauses.append(f'"{t1} {t2}"')
 
     # 2. CamelCase split for single compound words (e.g. "DriveSafe" -> "Drive Safe")
     if len(tokens) == 1:
@@ -134,8 +177,8 @@ def _build_fts5_queries(query):
     return primary_query, fallback_query
 
 
-def _faiss_search(query, top_k, min_sim=0.15, root_folder=None):
-    """Semantic similarity search via FAISS with folder pre-filtering."""
+def _faiss_search(query, top_k, min_sim=0.15, root_folder=None, date_from=None, date_to=None):
+    """Semantic similarity search with deterministic metadata pre-filtering."""
     if not query.strip():
         return []
     index = load_index()
@@ -145,38 +188,43 @@ def _faiss_search(query, top_k, min_sim=0.15, root_folder=None):
     q_emb = encode_query(query).reshape(1, -1)
     normalized_root = _normalize_root(root_folder)
 
-    # When scoped to a folder, pre-filter candidate chunk IDs to avoid being
-    # drowned out by global nearest neighbors from outside the folder
-    folder_cids = None
-    if normalized_root:
+    # Metadata restrictions must be applied before ANN retrieval.  Filtering a
+    # global top-k afterwards loses in-range candidates and makes mixed queries
+    # appear randomly incomplete.
+    candidate_cids = None
+    if normalized_root or date_from is not None or date_to is not None:
         conn = get_connection()
         try:
             cur = conn.cursor()
+            metadata_clause, metadata_params = _file_metadata_clause(
+                normalized_root, date_from, date_to
+            )
             cur.execute(
                 """SELECT chunks.id
                    FROM chunks
                    JOIN files ON chunks.file_id = files.id
-                   WHERE files.path = ? OR files.path LIKE ?""",
-                (normalized_root, normalized_root + os.sep + "%"),
+                   WHERE 1=1""" + metadata_clause,
+                metadata_params,
             )
-            folder_cids = [r[0] for r in cur.fetchall()]
+            candidate_cids = [r[0] for r in cur.fetchall()]
         finally:
             conn.close()
 
-        if not folder_cids:
+        if not candidate_cids:
             return []
 
     scores = None
     ids = None
-    if folder_cids is not None:
+    if candidate_cids is not None:
         try:
-            sel = faiss.IDSelectorBatch(folder_cids)
+            sel = faiss.IDSelectorBatch(candidate_cids)
             params = faiss.SearchParameters(sel=sel)
-            k_search = min(top_k, len(folder_cids))
+            k_search = min(top_k, len(candidate_cids))
             scores, ids = index.search(q_emb, k_search, params=params)
         except Exception:
-            # Fallback if IDSelector is unsupported: over-fetch to capture folder items
-            scores, ids = index.search(q_emb, min(index.ntotal, top_k * 10))
+            # IndexFlatIP is exact, so a full search is the only correct
+            # fallback when an IDSelector is unavailable.
+            scores, ids = index.search(q_emb, index.ntotal)
     else:
         scores, ids = index.search(q_emb, top_k)
 
@@ -188,23 +236,29 @@ def _faiss_search(query, top_k, min_sim=0.15, root_folder=None):
             if cid == -1 or sim < min_sim:
                 continue
             cur.execute(
-                """SELECT files.path
+                """SELECT files.path, files.created_time
                    FROM chunks
                    JOIN files ON chunks.file_id = files.id
                    WHERE chunks.id = ?""",
                 (int(cid),),
             )
             row = cur.fetchone()
-            if not row or not _path_in_root(row[0], normalized_root):
+            if (
+                not row
+                or not _path_in_root(row[0], normalized_root)
+                or not _metadata_matches(row[1], date_from, date_to)
+            ):
                 continue
             hits.append((int(cid), float(sim)))
+            if len(hits) >= top_k:
+                break
     finally:
         conn.close()
 
     return hits
 
 
-def _fts5_search(query, top_k, root_folder=None):
+def _fts5_search(query, top_k, root_folder=None, date_from=None, date_to=None):
     """Keyword search via SQLite FTS5 (BM25 ranking) with tiered query and folder scoping."""
     primary_q, fallback_q = _build_fts5_queries(query)
     if not primary_q:
@@ -214,11 +268,9 @@ def _fts5_search(query, top_k, root_folder=None):
     try:
         cur = conn.cursor()
         root_folder = _normalize_root(root_folder)
-        root_clause = ""
-        folder_params = []
-        if root_folder:
-            root_clause = " AND (files.path = ? OR files.path LIKE ?)"
-            folder_params = [root_folder, root_folder + os.sep + "%"]
+        metadata_clause, metadata_params = _file_metadata_clause(
+            root_folder, date_from, date_to
+        )
 
         target_count = top_k * 5
 
@@ -228,10 +280,10 @@ def _fts5_search(query, top_k, root_folder=None):
                FROM chunks_fts
                JOIN chunks ON chunks_fts.rowid = chunks.id
                JOIN files ON chunks.file_id = files.id
-               WHERE chunks_fts MATCH ?{root_clause}
+               WHERE chunks_fts MATCH ?{metadata_clause}
                ORDER BY rank
                LIMIT ?""",
-            [primary_q] + folder_params + [target_count],
+            [primary_q] + metadata_params + [target_count],
         )
         hits = [
             (row[0], -row[1])
@@ -239,25 +291,32 @@ def _fts5_search(query, top_k, root_folder=None):
             if _path_in_root(row[2], root_folder)
         ]
 
-        # 2. Fallback Query: OR disjunction across content words (down-weighted)
+        # 2. Fallback Query: OR disjunction across content words.  Partial
+        # matches are useful only when the precision query found nothing;
+        # appending hundreds of them below a few excellent primary matches was
+        # the main source of lexical noise.
         needed = target_count - len(hits)
-        if needed > 0 and fallback_q:
+        if not hits and needed > 0 and fallback_q:
             seen_cids = {cid for cid, _ in hits}
             cur.execute(
                 f"""SELECT chunks_fts.rowid, rank, files.path
                    FROM chunks_fts
                    JOIN chunks ON chunks_fts.rowid = chunks.id
                    JOIN files ON chunks.file_id = files.id
-                   WHERE chunks_fts MATCH ?{root_clause}
+                   WHERE chunks_fts MATCH ?{metadata_clause}
                    ORDER BY rank
                    LIMIT ?""",
-                [fallback_q] + folder_params + [needed * 2],
+                [fallback_q] + metadata_params + [needed * 2],
             )
             for row in cur.fetchall():
                 if row[0] not in seen_cids and _path_in_root(row[2], root_folder):
                     seen_cids.add(row[0])
-                    # Down-weight fallback partial matches by 0.2 so primary full matches always rank higher
-                    hits.append((row[0], max(0.1, -row[1] * 0.2)))
+                    # A negative score is an internal marker for weak OR
+                    # fallback evidence.  It is deliberately distinct from a
+                    # primary phrase/conjunction hit so the fusion stage can
+                    # apply a smaller weight and avoid treating it as a
+                    # precision signal.
+                    hits.append((row[0], -max(0.1, -row[1] * _FTS_FALLBACK_WEIGHT)))
                     if len(hits) >= target_count:
                         break
 
@@ -268,30 +327,29 @@ def _fts5_search(query, top_k, root_folder=None):
         conn.close()
 
 
-def _filename_search(query, top_k, root_folder=None):
-    """Exact filename / path substring search via SQLite."""
+def _filename_search(query, top_k, root_folder=None, date_from=None, date_to=None):
+    """Find exact and title-like filename matches without tokenising punctuation away."""
     conn = get_connection()
     try:
         cur = conn.cursor()
         root_folder = _normalize_root(root_folder)
-        root_clause = ""
-        root_params = []
-        if root_folder:
-          root_clause = " AND path LIKE ?"
-          root_params.append(f"{root_folder}%")
+        metadata_clause, metadata_params = _file_metadata_clause(
+            root_folder, date_from, date_to
+        )
         if not query.strip():
             cur.execute(
                 """SELECT id, path FROM files
                    WHERE 1=1
-                   """ + root_clause + """
+                   """ + metadata_clause + """
                    ORDER BY created_time DESC, modified_time DESC
                    LIMIT ?""",
-                root_params + [top_k],
+                metadata_params + [top_k],
             )
             return cur.fetchall()
 
         patterns = [f"%{query}%"]
         tokens = re.findall(r'[a-zA-Z0-9]+', query)
+        content_tokens = [t.lower() for t in tokens if t.lower() not in _STOP_WORDS]
         for i in range(len(tokens) - 1):
             t1, t2 = tokens[i].lower(), tokens[i+1].lower()
             if t1 not in _STOP_WORDS and t2 not in _STOP_WORDS:
@@ -305,57 +363,239 @@ def _filename_search(query, top_k, root_folder=None):
             where_parts.append("(path LIKE ? OR filename LIKE ?)")
             pattern_params.extend([p, p])
 
+        # A title such as "Attention Is All You Need" is commonly stored with
+        # hyphens or underscores.  Requiring all meaningful terms lets SQLite
+        # find it without confusing a single shared word (for example "model")
+        # for a title match.
+        title_params = []
+        if len(content_tokens) >= 2:
+            where_parts.append(
+                "(" + " AND ".join("filename LIKE ?" for _ in content_tokens) + ")"
+            )
+            title_params.extend(f"%{token}%" for token in content_tokens)
+
         where_clause = " OR ".join(where_parts)
         cur.execute(
-            f"""SELECT id, path FROM files
+            f"""SELECT id, path, filename, created_time FROM files
                WHERE ({where_clause})
-               """ + root_clause + """
+               """ + metadata_clause + """
                ORDER BY created_time DESC, modified_time DESC
                LIMIT ?""",
-            [*pattern_params, *root_params, top_k * 5],
+            [*pattern_params, *title_params, *metadata_params, top_k * 10],
         )
-        return cur.fetchall()[:top_k]
+        compact_query = re.sub(r"[^a-z0-9]+", "", query.lower())
+
+        def filename_strength(row):
+            compact_name = re.sub(r"[^a-z0-9]+", "", row[2].lower())
+            if compact_query and compact_query in compact_name:
+                return 3
+            if content_tokens and all(token in row[2].lower() for token in content_tokens):
+                return 2
+            return 1
+
+        rows = cur.fetchall()
+        rows.sort(key=lambda row: (filename_strength(row), row[3] or 0), reverse=True)
+        return [(row[0], row[1]) for row in rows[:top_k]]
     except Exception:
         return []
     finally:
         conn.close()
 
 
-def _date_range_search(top_k, date_from=None, date_to=None, root_folder=None):
+def _date_range_search(top_k=None, date_from=None, date_to=None, root_folder=None, offset=0):
     """Direct SQL query for files within a creation-date range.
     
     Used when the user issues a date-only query (e.g. 'files of august 2022')
     with no semantic keywords, so FAISS/FTS5 have nothing to match on.
     """
-    root_folder = _normalize_root(root_folder)
     conn = get_connection()
     try:
         cur = conn.cursor()
-        conditions = []
-        params = []
-        if date_from is not None:
-            conditions.append("created_time >= ?")
-            params.append(date_from)
-        if date_to is not None:
-            conditions.append("created_time <= ?")
-            params.append(date_to)
-        if root_folder:
-            conditions.append("path LIKE ?")
-            params.append(f"{root_folder}%")
-
-        where = " AND ".join(conditions) if conditions else "1=1"
+        metadata_clause, params = _file_metadata_clause(root_folder, date_from, date_to)
+        limit_clause = ""
+        if top_k is not None:
+            limit_clause = " LIMIT ? OFFSET ?"
+            params.extend([top_k, max(0, offset)])
         cur.execute(
             f"""SELECT path, created_time FROM files
-                WHERE {where}
-                ORDER BY created_time DESC
-                LIMIT ?""",
-            params + [top_k],
+                WHERE 1=1{metadata_clause}
+                ORDER BY created_time DESC, path ASC{limit_clause}""",
+            params,
         )
         return [
             {"path": row[0], "score": 1.0, "created_time": row[1], "methods": ["date"]}
             for row in cur.fetchall()
         ]
     except Exception:
+        return []
+    finally:
+        conn.close()
+
+
+def _looks_like_gibberish(query):
+    """Conservatively identify keyboard-mash queries with no word structure.
+
+    This is intentionally not a dictionary check: an exact filename or FTS
+    match remains valid even for an uncommon course code, acronym, or name.
+    It only blocks dense-vector fallback for a long consonant-heavy string
+    such as ``ffgggkggikhggh``.
+    """
+    letters = "".join(re.findall(r"[a-z]", str(query or "").lower()))
+    if len(letters) < 8:
+        return False
+    vowel_ratio = sum(letter in "aeiou" for letter in letters) / len(letters)
+    has_long_consonant_run = bool(re.search(r"[bcdfghjklmnpqrstvwxyz]{5,}", letters))
+    has_repeated_run = bool(re.search(r"(.)\1{2,}", letters))
+    return vowel_ratio < 0.24 and (has_long_consonant_run or has_repeated_run)
+
+
+def fuzzy_filename_search(query, top_k=20, root_folder=None, date_from=None, date_to=None):
+    """Return typo-tolerant filename matches only after normal search misses.
+
+    Candidate generation stays inside the existing FTS index, then a strict
+    edit-similarity check is applied to filename tokens.  This avoids scanning
+    every file or changing ordinary semantic/keyword ranking and confidence.
+    """
+    if _looks_like_gibberish(query):
+        return []
+
+    query_terms = [
+        term.lower() for term in re.findall(r"[a-zA-Z0-9]+", query)
+        if term.lower() not in _STOP_WORDS and len(term) >= 4
+    ]
+    if not query_terms or len(query_terms) > 4:
+        return []
+
+    # A prefix is used only to obtain a small candidate set from FTS.  The
+    # final result still has to pass edit-distance checks below.
+    seed = max(query_terms, key=len)
+    # Three characters tolerate a typo very early in a word (``quaterly``
+    # versus ``quarterly``) while FTS still limits the candidate set.
+    prefix = seed[: min(len(seed), 3)]
+    fts_prefix_query = f"{prefix}*"
+
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        metadata_clause, metadata_params = _file_metadata_clause(
+            root_folder, date_from, date_to
+        )
+        cur.execute(
+            f"""SELECT DISTINCT files.path, files.filename, files.created_time
+                FROM chunks_fts
+                JOIN chunks ON chunks_fts.rowid = chunks.id
+                JOIN files ON chunks.file_id = files.id
+                WHERE chunks_fts MATCH ?{metadata_clause}
+                LIMIT 250""",
+            [fts_prefix_query, *metadata_params],
+        )
+        candidates = cur.fetchall()
+    except Exception:
+        return []
+    finally:
+        conn.close()
+
+    matches = []
+    for path, filename, created_time in candidates:
+        filename_terms = re.findall(r"[a-zA-Z0-9]+", (filename or "").lower())
+        if not filename_terms:
+            continue
+        term_scores = [
+            max(difflib.SequenceMatcher(None, term, candidate).ratio() for candidate in filename_terms)
+            for term in query_terms
+        ]
+        mean_score = sum(term_scores) / len(term_scores)
+        # Every meaningful word must plausibly refer to the title.  This makes
+        # fuzzy matching a typo aid, not a broad semantic substitute.
+        if min(term_scores) < 0.72 or mean_score < 0.86:
+            continue
+        matches.append((mean_score, path, created_time))
+
+    matches.sort(key=lambda row: (-row[0], row[1].lower()))
+    return [
+        {
+            "path": path,
+            "score": round(min(0.82, max(0.65, score)), 3),
+            "created_time": created_time,
+            "methods": ["fuzzy"],
+        }
+        for score, path, created_time in matches[:top_k]
+    ]
+
+
+def folder_search(folder_name, root_folder=None, date_from=None, date_to=None):
+    """List every indexed file in an exact folder-name match.
+
+    This is intentionally a metadata-only operation: it does not load FAISS,
+    run FTS, or call the embedding model.  If several folders have the same
+    name, their files are returned together and retain their full paths.
+    """
+    normalized_name = " ".join(str(folder_name or "").split())
+    if not normalized_name:
+        return []
+
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        root_folder = _normalize_root(root_folder)
+        cur.execute(
+            """SELECT DISTINCT folder_path
+               FROM indexed_folders
+               WHERE folder_name = ? COLLATE NOCASE""",
+            (normalized_name,),
+        )
+        folder_paths = [row[0] for row in cur.fetchall() if row[0]]
+        # Compatibility fallback for databases that have file rows but have
+        # not yet received the one-time ancestor-catalog migration.
+        if not folder_paths:
+            cur.execute(
+                """SELECT DISTINCT folder_path
+                   FROM files
+                   WHERE folder_name = ? COLLATE NOCASE""",
+                (normalized_name,),
+            )
+            folder_paths = [row[0] for row in cur.fetchall() if row[0]]
+        if not folder_paths:
+            return []
+
+        # Include the named folder and its descendants.  Parameters keep folder
+        # names safe even when they contain SQL wildcard characters.
+        folder_conditions = []
+        folder_params = []
+        for folder_path in folder_paths:
+            escaped_prefix = (
+                folder_path.rstrip("\\/")
+                .replace("^", "^^")
+                .replace("%", "^%")
+                .replace("_", "^_")
+            )
+            # Use ^ as the escape character: backslashes are literal and very
+            # common in Windows paths, so using them as SQL LIKE escapes would
+            # make descendant-folder matching fail.
+            folder_conditions.append("(files.folder_path = ? OR files.path LIKE ? ESCAPE '^')")
+            folder_params.extend([folder_path, escaped_prefix + "\\%"])
+
+        metadata_clause, metadata_params = _file_metadata_clause(
+            root_folder, date_from, date_to
+        )
+        cur.execute(
+            """SELECT files.path, files.created_time
+               FROM files
+               WHERE (""" + " OR ".join(folder_conditions) + ")" + metadata_clause + """
+               ORDER BY files.created_time DESC, files.path ASC""",
+            folder_params + metadata_params,
+        )
+        return [
+            {
+                "path": row[0],
+                "score": 1.0,
+                "created_time": row[1],
+                "methods": ["folder"],
+            }
+            for row in cur.fetchall()
+        ]
+    except Exception:
+        logger.exception("folder_search_failed folder_name=%r", normalized_name)
         return []
     finally:
         conn.close()
@@ -378,14 +618,35 @@ def semantic_search(query, top_k=20, min_similarity=0.15, date_from=None, date_t
     # match on an empty string, so we fall through to a direct SQL
     # date-range lookup instead.
     if not query.strip() and (date_from is not None or date_to is not None):
-        return _date_range_search(top_k, date_from=date_from, date_to=date_to, root_folder=root_folder)
+        # Date-only requests are deterministic metadata queries.  They return
+        # every matching file (the caller may opt into _date_range_search's
+        # explicit limit/offset pagination API) and never touch the model.
+        return _date_range_search(None, date_from=date_from, date_to=date_to, root_folder=root_folder)
 
     w_sem, w_kw, w_fn = _classify_query_intent(query)
     fetch_k = max(30, top_k * 5)  # over-fetch for better fusion
 
-    sem_hits = _faiss_search(query, fetch_k, min_sim=min_similarity, root_folder=root_folder)
-    kw_hits = _fts5_search(query, fetch_k, root_folder=root_folder)
-    fn_hits = _filename_search(query, fetch_k, root_folder=root_folder)
+    kw_hits = _fts5_search(
+        query, fetch_k, root_folder=root_folder,
+        date_from=date_from, date_to=date_to,
+    )
+    fn_hits = _filename_search(
+        query, fetch_k, root_folder=root_folder,
+        date_from=date_from, date_to=date_to,
+    )
+
+    # Dense retrieval has no inherent "no match" state: it will always return
+    # nearest vectors.  Never turn a clear keyboard mash into a result list
+    # unless the exact filename/primary FTS paths found real evidence first.
+    has_primary_keyword = any(score >= 0 for _cid, score in kw_hits)
+    if _looks_like_gibberish(query) and not (has_primary_keyword or fn_hits):
+        logger.info("search_rejected_gibberish query_length=%d", len(query))
+        return []
+
+    sem_hits = _faiss_search(
+        query, fetch_k, min_sim=min_similarity, root_folder=root_folder,
+        date_from=date_from, date_to=date_to,
+    )
 
     # ── RRF at chunk level (with dynamic intent weighting) ─────────────
     chunk_rrf = {}
@@ -398,21 +659,24 @@ def semantic_search(query, top_k=20, min_similarity=0.15, date_from=None, date_t
         chunk_signals[cid].add('semantic')
         chunk_sims[cid] = max(chunk_sims.get(cid, 0.0), score)
 
-    for rank, (cid, _score) in enumerate(kw_hits, 1):
-        chunk_rrf[cid] = chunk_rrf.get(cid, 0) + w_kw / (_RRF_K + rank)
-        chunk_signals[cid].add('keyword')
+    for rank, (cid, keyword_score) in enumerate(kw_hits, 1):
+        is_fallback_keyword = keyword_score < 0
+        keyword_weight = w_kw * (_FTS_FALLBACK_WEIGHT if is_fallback_keyword else 1.0)
+        chunk_rrf[cid] = chunk_rrf.get(cid, 0) + keyword_weight / (_RRF_K + rank)
+        chunk_signals[cid].add('weak_keyword' if is_fallback_keyword else 'keyword')
 
     # ── Filename matches get injected directly as file-level hits ──
     filename_boost = {}
+    compact_query = re.sub(r"[^a-z0-9]+", "", query.lower())
     for rank, (_fid, path) in enumerate(fn_hits, 1):
-        filename_boost[path] = (w_fn * 1.0) / (_RRF_K + rank)
+        compact_name = re.sub(r"[^a-z0-9]+", "", os.path.basename(path).lower())
+        exact_title = bool(compact_query and compact_query in compact_name)
+        # A full title/filename match is deterministic evidence, not merely a
+        # weak RRF hint.  Keep non-exact path matches useful but modest.
+        strength = 5.0 if exact_title else 1.0
+        filename_boost[path] = (w_fn * strength) / (_RRF_K + rank)
 
     if not chunk_rrf and not filename_boost:
-        return []
-
-    # Noise gate: if query has no keyword or filename matches, reject if top semantic similarity is noise (< 0.40)
-    max_sem = max((score for _, score in sem_hits), default=0.0)
-    if not kw_hits and not fn_hits and max_sem < 0.40:
         return []
 
     # ── Map chunk IDs → file paths + created_time + chunk text ────────
@@ -492,9 +756,14 @@ def semantic_search(query, top_k=20, min_similarity=0.15, date_from=None, date_t
         chunk_txt = file_best_chunk.get(path, "").lower()
         corpus = f"{fname} {chunk_txt}"
 
-        # If any query content token is in the file name, record filename signal
-        if any(tok in fname for tok in content_tokens):
-            file_signals[path].add('filename')
+        def contains_term(term):
+            if term in corpus:
+                return True
+            # Align lightweight coverage checks with FTS5's Porter stemming
+            # for common plurals without introducing another dependency.
+            if len(term) > 3 and term.endswith("s") and term[:-1] in corpus:
+                return True
+            return False
 
         # If image file matched on content (semantic or keyword), mark OCR signal
         # if path.lower().endswith(_IMAGE_EXTS):
@@ -511,7 +780,7 @@ def semantic_search(query, top_k=20, min_similarity=0.15, date_from=None, date_t
 
         # 3. Term coverage ratio
         if len(content_tokens) >= 2:
-            covered = sum(1 for tok in content_tokens if tok in corpus)
+            covered = sum(1 for tok in content_tokens if contains_term(tok))
             ratio = covered / len(content_tokens)
             file_best_rrf[path] *= (0.75 + 0.35 * ratio)
 
@@ -523,14 +792,31 @@ def semantic_search(query, top_k=20, min_similarity=0.15, date_from=None, date_t
         elif n_signals >= 2:
             file_best_rrf[path] *= 1.25
 
-    # ── Filter semantic noise ───────────────────────────
-    # Files with only a semantic signal (no keyword, no filename) must meet the quality floor (>= 0.38)
-    valid_paths = set()
-    for path, signals in file_signals.items():
-        if 'keyword' in signals or 'filename' in signals:
-            valid_paths.add(path)
-        elif file_best_sim.get(path, 0.0) >= 0.38:
-            valid_paths.add(path)
+    # ── Precision gate ──────────────────────────────────
+    # When FTS5 or a filename supplies deterministic evidence, semantic-only
+    # neighbours are not allowed to fill the result list.  If no such evidence
+    # exists, retain a narrow semantic band around the best *file* score; this
+    # makes an empty result possible instead of treating every top-k vector as
+    # a match.
+    precise_paths = {
+        path for path, signals in file_signals.items()
+        if "keyword" in signals or "filename" in signals
+    }
+    best_semantic = max(file_best_sim.values(), default=0.0)
+    semantic_floor = max(min_similarity, best_semantic - _SEMANTIC_MARGIN)
+    semantic_paths = {
+        path for path, score in file_best_sim.items()
+        if score >= semantic_floor
+    }
+    if precise_paths:
+        # A phrase/title hit is sufficient evidence on its own, but it does
+        # not prove that another high-quality semantic passage is irrelevant.
+        # Retain only the tightly clustered dense neighbours alongside those
+        # deterministic hits; this supports mixed wording such as
+        # "student proctoring system" without reopening the arbitrary top-k.
+        valid_paths = precise_paths | semantic_paths
+    else:
+        valid_paths = semantic_paths
 
     file_best_rrf = {p: score for p, score in file_best_rrf.items() if p in valid_paths}
     if not file_best_rrf:
@@ -539,25 +825,34 @@ def semantic_search(query, top_k=20, min_similarity=0.15, date_from=None, date_t
     # Sort by RRF rank
     ranked = sorted(file_best_rrf.items(), key=lambda x: x[1], reverse=True)
 
-    # ── Date filtering ──────────────────────────────────
+    # ── Defensive date filtering ─────────────────────────
+    # Candidates were already pre-filtered before retrieval.  Keep this guard
+    # for filename-only rows and reject unknown timestamps instead of leaking
+    # files that cannot be shown to satisfy a deterministic constraint.
     if date_from is not None or date_to is not None:
         filtered = []
         for path, rrf in ranked:
             ctime = file_created.get(path)
-            if ctime is None:
-                # Include files with unknown creation time (not yet re-indexed)
-                filtered.append((path, rrf))
-                file_signals[path].add('date')
-                continue
-            if date_from is not None and ctime < date_from:
-                continue
-            if date_to is not None and ctime > date_to:
+            if not _metadata_matches(ctime, date_from, date_to):
                 continue
             filtered.append((path, rrf))
             file_signals[path].add('date')
         ranked = filtered
 
-    ranked = ranked[:top_k]
+    # Copies are common across Downloads, OneDrive, and phone sync folders.
+    # We already aggregate chunks per file; also collapse candidates with the
+    # same matched passage so one document does not consume several result
+    # slots under different paths.
+    deduped = []
+    seen_passages = set()
+    for path, rrf in ranked:
+        passage = re.sub(r"\s+", " ", file_best_chunk.get(path, "").strip().lower())
+        if passage:
+            if passage in seen_passages:
+                continue
+            seen_passages.add(passage)
+        deduped.append((path, rrf))
+    ranked = deduped[:top_k]
     if not ranked:
         return []
 
@@ -605,6 +900,14 @@ def semantic_search(query, top_k=20, min_similarity=0.15, date_from=None, date_t
             "methods": methods,
         })
 
-    results.sort(key=lambda x: x["score"], reverse=True)
+    # ``score`` is a user-facing confidence estimate and deliberately has
+    # coarse buckets.  Ranking by it after RRF destroys the evidence-based
+    # order (and was the direct cause of unrelated semantic hits jumping ahead
+    # of exact keyword/title matches).  Preserve the fused order above.
+    logger.info(
+        "search_complete query_terms=%d semantic_hits=%d keyword_hits=%d "
+        "filename_hits=%d returned=%d",
+        len(content_tokens), len(sem_hits), len(kw_hits), len(fn_hits), len(results),
+    )
     return results[:top_k]
 

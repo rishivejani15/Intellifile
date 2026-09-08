@@ -6,7 +6,13 @@ from functools import partial
 from core.scanner import fast_scan_device
 from core.extractor import extract_text_with_status
 from core.chunker import chunk_text
-from core.db import init_db, get_connection, rebuild_fts
+from core.db import (
+    folder_metadata,
+    get_connection,
+    init_db,
+    rebuild_fts,
+    upsert_folder_catalog,
+)
 
 
 # ── Parallel text extraction ────────────────────────────
@@ -106,7 +112,7 @@ def index_files_incremental(root_folder=None, progress_cb=None, allow_protected=
 
     # ── Determine which files actually need work ────────
     files_to_process = []      # (path, mtime, file_id_or_None)
-    new_files_data = []        # (path, filename, mtime, ctime) for bulk insert
+    new_files_data = []        # (path, filename, mtime, ctime, folder_path, folder_name)
     modified_fids = []         # file_ids that changed
     modified_updates = []      # (mtime, file_id) for bulk update
     unchanged_files = 0
@@ -124,7 +130,10 @@ def index_files_incremental(root_folder=None, progress_cb=None, allow_protected=
             files_to_process.append((path, modified_time, file_id))
         else:
             filename = os.path.basename(path)
-            new_files_data.append((path, filename, modified_time, created_time))
+            folder_path, folder_name = folder_metadata(path)
+            new_files_data.append(
+                (path, filename, modified_time, created_time, folder_path, folder_name)
+            )
 
     # Bulk-delete old chunks for modified files
     if modified_fids:
@@ -139,7 +148,9 @@ def index_files_incremental(root_folder=None, progress_cb=None, allow_protected=
     # Bulk-insert new file rows
     if new_files_data:
         cur.executemany(
-            "INSERT INTO files(path, filename, modified_time, created_time) VALUES (?, ?, ?, ?)",
+            """INSERT INTO files(
+                   path, filename, modified_time, created_time, folder_path, folder_name
+               ) VALUES (?, ?, ?, ?, ?, ?)""",
             new_files_data,
         )
         # Retrieve assigned IDs for new files
@@ -149,8 +160,13 @@ def index_files_incremental(root_folder=None, progress_cb=None, allow_protected=
             ph = ",".join("?" * len(batch))
             cur.execute(f"SELECT path, id FROM files WHERE path IN ({ph})", batch)
             path_to_id = {r[0]: r[1] for r in cur.fetchall()}
-            for p, _, mt, _ in new_files_data[i:i + 500]:
+            for p, _, mt, _, _, _ in new_files_data[i:i + 500]:
                 files_to_process.append((p, mt, path_to_id[p]))
+
+        # Keep the separate ancestor catalog current for folder queries.  A
+        # file under ``Computer Networks\\Study Material`` registers both
+        # folders without changing its stored content or embedding.
+        upsert_folder_catalog(cur, new_paths)
 
     new_files = len(new_files_data)
     modified_files = len(modified_fids)

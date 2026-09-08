@@ -15,7 +15,7 @@ if BACKEND_DIR not in sys.path:
     sys.path.insert(0, BACKEND_DIR)
 
 from core.db import init_db, get_connection, rebuild_fts
-from core.search import semantic_search, _date_range_search
+from core.search import fuzzy_filename_search, semantic_search, _date_range_search
 
 
 class TestRetrievalMethodBadges(unittest.TestCase):
@@ -115,6 +115,18 @@ class TestRetrievalMethodBadges(unittest.TestCase):
         results = semantic_search("gdgdgegnwgwegfwrgczw", top_k=5)
         self.assertEqual(len(results), 0, "Gibberish should return no results")
 
+    @patch("core.search._faiss_search", return_value=[(9999, 0.85)])
+    def test_consonant_heavy_gibberish_does_not_call_dense_fallback(self, mock_faiss):
+        results = semantic_search("ffgggkggikhggh", top_k=5)
+        self.assertEqual(results, [])
+        mock_faiss.assert_not_called()
+
+    def test_fuzzy_filename_is_a_separate_strict_fallback(self):
+        results = fuzzy_filename_search("quaterly")
+        self.assertTrue(results)
+        self.assertTrue(any("quarterly_financial_report" in r["path"] for r in results))
+        self.assertTrue(all(r["methods"] == ["fuzzy"] for r in results))
+
     @patch("core.search._faiss_search", return_value=[])
     def test_all_results_have_valid_methods_list(self, mock_faiss):
         results = semantic_search("report", top_k=10)
@@ -126,5 +138,4 @@ class TestRetrievalMethodBadges(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
 

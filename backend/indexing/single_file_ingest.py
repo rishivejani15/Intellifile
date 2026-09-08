@@ -4,7 +4,13 @@ import time as _time
 from typing import Dict, List
 
 from core.chunker import chunk_text
-from core.db import get_connection, init_db, rebuild_fts
+from core.db import (
+    folder_metadata,
+    get_connection,
+    init_db,
+    rebuild_fts,
+    upsert_folder_catalog,
+)
 from core.extractor import extract_text_with_status
 from core.model import MODEL
 from core.faiss_manager import invalidate_cache, save_index
@@ -37,6 +43,7 @@ def ingest_single_file(file_path: str, allow_protected: bool = False, force: boo
     modified_time = int(os.path.getmtime(abs_path))
     created_time = int(os.stat(abs_path).st_ctime)
     filename = os.path.basename(abs_path)
+    folder_path, folder_name = folder_metadata(abs_path)
 
     conn = get_connection()
     cur = conn.cursor()
@@ -80,15 +87,21 @@ def ingest_single_file(file_path: str, allow_protected: bool = False, force: boo
         affected_chunk_ids.extend([row[0] for row in cur.fetchall()])
         cur.execute("DELETE FROM chunks WHERE file_id = ?", (file_id,))
         cur.execute(
-            "UPDATE files SET filename = ?, modified_time = ? WHERE id = ?",
-            (filename, modified_time, file_id),
+            """UPDATE files
+               SET filename = ?, modified_time = ?, folder_path = ?, folder_name = ?
+               WHERE id = ?""",
+            (filename, modified_time, folder_path, folder_name, file_id),
         )
     else:
         cur.execute(
-            "INSERT INTO files(path, filename, modified_time, created_time) VALUES (?, ?, ?, ?)",
-            (abs_path, filename, modified_time, created_time),
+            """INSERT INTO files(
+                   path, filename, modified_time, created_time, folder_path, folder_name
+               ) VALUES (?, ?, ?, ?, ?, ?)""",
+            (abs_path, filename, modified_time, created_time, folder_path, folder_name),
         )
         file_id = cur.lastrowid
+
+    upsert_folder_catalog(cur, [abs_path])
 
     name_no_ext = os.path.splitext(filename)[0].replace("_", " ").replace("-", " ")
     chunks = chunk_text(text, doc_context=name_no_ext) if text and len(text.strip()) >= 50 else []
@@ -184,6 +197,7 @@ def reset_canonical_index_store() -> Dict[str, object]:
     cur = conn.cursor()
     cur.execute("DELETE FROM chunks")
     cur.execute("DELETE FROM files")
+    cur.execute("DELETE FROM indexed_folders")
     cur.execute("DELETE FROM sqlite_sequence WHERE name='chunks'")
     cur.execute("DELETE FROM sqlite_sequence WHERE name='files'")
     conn.commit()

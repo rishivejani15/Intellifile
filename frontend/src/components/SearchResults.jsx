@@ -8,7 +8,8 @@ import {
   MdOutlineAutoAwesome,
   MdOutlineTextFields,
   MdOutlineDriveFileRenameOutline,
-  MdOutlineDocumentScanner
+  MdOutlineDocumentScanner,
+  MdFolder
 } from 'react-icons/md';
 import './FileExplorer/FileExplorer.css';
 
@@ -42,6 +43,18 @@ const RETRIEVAL_METHODS = {
     icon: <MdCalendarToday className="method-badge-icon" />,
     className: 'method-badge-date',
     tooltip: 'Retrieved via creation date match'
+  },
+  folder: {
+    label: 'Folder',
+    icon: <MdFolder className="method-badge-icon" />,
+    className: 'method-badge-default',
+    tooltip: 'Retrieved by exact folder name'
+  },
+  fuzzy: {
+    label: 'Fuzzy',
+    icon: <MdOutlineDriveFileRenameOutline className="method-badge-icon" />,
+    className: 'method-badge-filename',
+    tooltip: 'Retrieved by a close file-name spelling match'
   }
 };
 

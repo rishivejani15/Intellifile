@@ -13,6 +13,9 @@ _BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _MODELS_DIR = os.getenv("IF_MODELS_DIR", os.path.join(_BACKEND_DIR, 'models'))
 
 MODEL_NAME = os.getenv("IF_MODEL_PATH", "Xenova/bge-small-en-v1.5")
+# Increment whenever preprocessing changes in a way that requires FAISS vectors
+# to be regenerated from the persisted chunk text.
+EMBEDDING_PIPELINE_VERSION = "v1.1.0"
 
 MODEL_LOAD_ERROR = None
 _backend_name = "unknown"
@@ -133,9 +136,16 @@ def _encode(texts, normalize=True, batch_size=32):
         
         # Tokenize
         encoded = _tokenizer.encode_batch(batch_texts)
-        max_len = _MAX_SEQ_LEN
-        if encoded:
-            max_len = min(max(len(item.ids) for item in encoded), _MAX_SEQ_LEN)
+        # ``tokenizers`` has padding enabled globally.  ``len(item.ids)`` is
+        # therefore always 512, even for a two-word query.  The previous code
+        # marked every padded ``[PAD]`` token as real input in attention_mask.
+        # That corrupts CLS representations and wastes CPU.  Use the tokenizer
+        # mask to recover each sequence's true length and preserve its zeros.
+        true_lengths = [
+            max(1, min(sum(getattr(item, "attention_mask", []) or []), _MAX_SEQ_LEN))
+            for item in encoded
+        ]
+        max_len = max(true_lengths, default=1)
         input_ids = np.zeros((len(encoded), max_len), dtype=np.int64)
         attention_mask = np.zeros((len(encoded), max_len), dtype=np.int64)
         token_type_ids = np.zeros((len(encoded), max_len), dtype=np.int64)
@@ -143,7 +153,11 @@ def _encode(texts, normalize=True, batch_size=32):
         for row, item in enumerate(encoded):
             ids = item.ids[:max_len]
             input_ids[row, :len(ids)] = ids
-            attention_mask[row, :len(ids)] = 1
+            mask = getattr(item, "attention_mask", None)
+            if mask is None:
+                attention_mask[row, :len(ids)] = 1
+            else:
+                attention_mask[row, :len(mask[:max_len])] = mask[:max_len]
             try:
                 type_ids = item.type_ids[:max_len]
                 token_type_ids[row, :len(type_ids)] = type_ids

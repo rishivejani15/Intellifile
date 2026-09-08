@@ -1,4 +1,5 @@
 import json
+import ntpath
 import os
 import sqlite3
 
@@ -20,6 +21,60 @@ DEFAULT_SETTINGS = {
 # Resolve data directory relative to this file's location
 _BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _DB_PATH = os.path.join(os.getenv("IF_DATA_DIR", os.path.join(_BACKEND_DIR, 'data')), 'files.db')
+_FOLDER_CATALOG_VERSION = "v2"
+
+
+def folder_metadata(path):
+    """Return the immediate parent folder metadata for a Windows file path."""
+    normalized = str(path or "").rstrip("\\/")
+    folder_path = ntpath.dirname(normalized)
+    folder_name = ntpath.basename(folder_path.rstrip("\\/")) or folder_path
+    return folder_path, folder_name
+
+
+def folder_ancestors(path):
+    """Return every named ancestor of a Windows-style file path.
+
+    ``files.folder_name`` intentionally stores only the immediate parent for
+    display and simple filtering.  Folder queries also need the higher-level
+    ancestors (for example, ``Computer Networks`` when a file is in
+    ``Computer Networks\\Study Material``), so those are kept separately.
+    """
+    current = ntpath.dirname(str(path or "").rstrip("\\/"))
+    ancestors = []
+    while current:
+        trimmed = current.rstrip("\\/")
+        parent = ntpath.dirname(trimmed)
+        name = ntpath.basename(trimmed)
+        # Stop at a drive root; it has no useful folder name to search.
+        if not name or parent == trimmed:
+            break
+        ancestors.append((trimmed, name, parent.rstrip("\\/")))
+        if parent == current:
+            break
+        current = parent
+    return ancestors
+
+
+def upsert_folder_catalog(cur, paths):
+    """Register all ancestors for paths that were added to the file index."""
+    rows = []
+    seen = set()
+    for path in paths:
+        for row in folder_ancestors(path):
+            key = row[0].lower()
+            if key not in seen:
+                seen.add(key)
+                rows.append(row)
+    if rows:
+        cur.executemany(
+            """INSERT INTO indexed_folders(folder_path, folder_name, parent_path)
+               VALUES (?, ?, ?)
+               ON CONFLICT(folder_path) DO UPDATE SET
+                 folder_name = excluded.folder_name,
+                 parent_path = excluded.parent_path""",
+            rows,
+        )
 
 def get_connection():
     os.makedirs(os.path.dirname(_DB_PATH), exist_ok=True)
@@ -41,7 +96,9 @@ def init_db():
                     filename TEXT,
                     modified_time INTEGER,
                     created_time INTEGER,
-                    chunk_count INTEGER DEFAULT NULL
+                    chunk_count INTEGER DEFAULT NULL,
+                    folder_path TEXT,
+                    folder_name TEXT
                 );
                 ''')
     cur.execute('''
@@ -51,6 +108,14 @@ def init_db():
                     chunk_index INTEGER,
                     text TEXT,
                     FOREIGN KEY(file_id) REFERENCES files(id)
+                )
+                ''')
+
+    cur.execute('''
+                CREATE TABLE IF NOT EXISTS indexed_folders (
+                    folder_path TEXT PRIMARY KEY,
+                    folder_name TEXT NOT NULL,
+                    parent_path TEXT
                 )
                 ''')
 
@@ -111,11 +176,33 @@ def init_db():
     except Exception:
         pass  # Column already exists
 
+    # Folder metadata enables exact folder listings without invoking text or
+    # vector retrieval.  It is derived only from the already-indexed path, so
+    # this migration does not extract text or recreate embeddings.
+    for column in ("folder_path", "folder_name"):
+        try:
+            cur.execute(f"ALTER TABLE files ADD COLUMN {column} TEXT")
+        except Exception:
+            pass  # Column already exists
+
+    cur.execute(
+        "SELECT id, path FROM files WHERE folder_path IS NULL OR folder_name IS NULL"
+    )
+    missing_folder_rows = cur.fetchall()
+    if missing_folder_rows:
+        cur.executemany(
+            "UPDATE files SET folder_path = ?, folder_name = ? WHERE id = ?",
+            [(*folder_metadata(path), file_id) for file_id, path in missing_folder_rows],
+        )
+
     # Indexes for fast lookups during incremental indexing
     cur.execute('CREATE INDEX IF NOT EXISTS idx_files_path ON files(path)')
     cur.execute('CREATE INDEX IF NOT EXISTS idx_chunks_file_id ON chunks(file_id)')
     cur.execute('CREATE INDEX IF NOT EXISTS idx_files_created ON files(created_time)')
     cur.execute('CREATE INDEX IF NOT EXISTS idx_files_chunk_count ON files(chunk_count)')
+    cur.execute('CREATE INDEX IF NOT EXISTS idx_files_folder_name ON files(folder_name COLLATE NOCASE)')
+    cur.execute('CREATE INDEX IF NOT EXISTS idx_files_folder_path ON files(folder_path)')
+    cur.execute('CREATE INDEX IF NOT EXISTS idx_indexed_folders_name ON indexed_folders(folder_name COLLATE NOCASE)')
     cur.execute('CREATE INDEX IF NOT EXISTS idx_sort_log_timestamp ON sort_log(timestamp)')
     cur.execute('CREATE INDEX IF NOT EXISTS idx_analytics_timestamp ON analytics_events(timestamp)')
 
@@ -123,6 +210,20 @@ def init_db():
         cur.execute(
             "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",
             (key, value),
+        )
+
+    # One metadata-only migration fills ancestor folders for files indexed by
+    # earlier app versions.  It neither reads document content nor creates
+    # embeddings, so existing retrieval scores remain untouched.
+    cur.execute("SELECT value FROM settings WHERE key = ?", ("folder_catalog_version",))
+    catalog_version = cur.fetchone()
+    if not catalog_version or catalog_version[0] != _FOLDER_CATALOG_VERSION:
+        cur.execute("SELECT path FROM files")
+        upsert_folder_catalog(cur, [row[0] for row in cur.fetchall()])
+        cur.execute(
+            """INSERT INTO settings(key, value) VALUES (?, ?)
+               ON CONFLICT(key) DO UPDATE SET value = excluded.value""",
+            ("folder_catalog_version", _FOLDER_CATALOG_VERSION),
         )
 
     # FTS5 full-text search index with porter stemmer for word-form matching

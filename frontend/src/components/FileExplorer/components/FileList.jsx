@@ -4,7 +4,8 @@ import {
   MdOutlineTextFields,
   MdOutlineDriveFileRenameOutline,
   MdOutlineDocumentScanner,
-  MdCalendarToday
+  MdCalendarToday,
+  MdFolder
 } from 'react-icons/md';
 import FileItem from './FileItem';
 import { groupItems } from '../utils/fileUtils';
@@ -39,6 +40,18 @@ const RETRIEVAL_METHODS = {
     icon: <MdCalendarToday className="method-badge-icon" />,
     className: 'method-badge-date',
     tooltip: 'Retrieved via creation date match'
+  },
+  folder: {
+    label: 'Folder',
+    icon: <MdFolder className="method-badge-icon" />,
+    className: 'method-badge-default',
+    tooltip: 'Retrieved by exact folder name'
+  },
+  fuzzy: {
+    label: 'Fuzzy',
+    icon: <MdOutlineDriveFileRenameOutline className="method-badge-icon" />,
+    className: 'method-badge-filename',
+    tooltip: 'Retrieved by a close file-name spelling match'
   }
 };
 

@@ -1,0 +1,21 @@
+[
+  {
+    "query": "a model that thinks like human",
+    "relevant_filenames": ["AI Module 1.pdf"]
+  },
+  {
+    "query": "student proctoring system",
+    "relevant_filenames": [
+      "PRAHARI_Idea_Document.docx",
+      "Problem Statement DrishtiAI Hackathon.pdf"
+    ]
+  },
+  {
+    "query": "episodic and sequential environment",
+    "relevant_filenames": ["AI Module 1.pdf"]
+  },
+  {
+    "query": "a model that uses transformers",
+    "relevant_filenames": ["NIPS-2017-attention-is-all-you-need-Paper.pdf"]
+  }
+]

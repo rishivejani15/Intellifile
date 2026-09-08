@@ -1,6 +1,19 @@
 const { app, BrowserWindow, Menu, ipcMain, shell, dialog, clipboard, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
+let parseDeterministicMonthDateQuery = () => null;
+try {
+  ({ parseDeterministicMonthDateQuery } = require('./dateSearchParser'));
+} catch (e) {
+  console.warn('[main] Failed to load dateSearchParser:', e.message);
+}
+
+let parseFolderSearchQuery = () => null;
+try {
+  ({ parseFolderSearchQuery } = require('./folderSearchParser'));
+} catch (e) {
+  console.warn('[main] Failed to load folderSearchParser:', e.message);
+}
 
 // Force consistent canonical userData path (%APPDATA%\intellifile) across all updates & installer versions
 const appDataDir = app.getPath('appData');
@@ -2366,6 +2379,15 @@ function ensureSyncEngine() {
 }
 // ── NLP Date Parser for search queries ──────────────────
 function parseDateFromQuery(rawQuery) {
+  // Handle unambiguous month constraints first.  The general natural-language
+  // parser below remains available for day, year, and relative-date queries.
+  // This prevents "all files" from becoming a semantic query after its date
+  // condition has been removed.
+  const deterministicMonthQuery = parseDeterministicMonthDateQuery(rawQuery);
+  if (deterministicMonthQuery) {
+    return deterministicMonthQuery;
+  }
+
   const MONTHS = {
     january: 0, jan: 0, february: 1, feb: 1, march: 2, mar: 2,
     april: 3, apr: 3, may: 4, june: 5, jun: 5, july: 6, jul: 6,
@@ -2377,10 +2399,12 @@ function parseDateFromQuery(rawQuery) {
   let dateFrom = null;
   let dateTo = null;
 
-  // Helper: build start/end of day timestamps
+  // Helper: build [start, end) timestamps.  The backend interprets all upper
+  // bounds as exclusive, preventing the final second of a day/month from
+  // falling through a date filter.
   const startOfDay = (y, m, d) => new Date(y, m, d, 0, 0, 0).getTime() / 1000;
-  const endOfDay = (y, m, d) => new Date(y, m, d, 23, 59, 59).getTime() / 1000;
-  const endOfMonth = (y, m) => new Date(y, m + 1, 0, 23, 59, 59).getTime() / 1000;
+  const endOfDay = (y, m, d) => new Date(y, m, d + 1, 0, 0, 0).getTime() / 1000;
+  const endOfMonth = (y, m) => new Date(y, m + 1, 1, 0, 0, 0).getTime() / 1000;
   const startOfMonth = (y, m) => new Date(y, m, 1, 0, 0, 0).getTime() / 1000;
 
   const monthPattern = Object.keys(MONTHS).join('|');
@@ -2396,7 +2420,7 @@ function parseDateFromQuery(rawQuery) {
     const y1 = parseInt(match[2]);
     const m2 = MONTHS[match[3].toLowerCase()];
     const y2 = parseInt(match[4]);
-    // Handle second-instance events from Windows (Explorer / browser)
+    dateFrom = startOfMonth(y1, m1);
     dateTo = endOfMonth(y2, m2);
     query = query.replace(match[0], '').trim();
   }
@@ -2467,9 +2491,9 @@ function parseDateFromQuery(rawQuery) {
       const month = MONTHS[match[2].toLowerCase()];
       const year = parseInt(match[3]);
       if (match[1]) {
-        dateTo = endOfDay(year, month, parseInt(match[1]));
+        dateTo = startOfDay(year, month, parseInt(match[1]));
       } else {
-        dateTo = endOfMonth(year, month);
+        dateTo = startOfMonth(year, month);
       }
       query = query.replace(match[0], '').trim();
     }
@@ -2486,9 +2510,10 @@ function parseDateFromQuery(rawQuery) {
       const month = MONTHS[match[2].toLowerCase()];
       const year = parseInt(match[3]);
       if (match[1]) {
-        dateFrom = startOfDay(year, month, parseInt(match[1]));
+        const day = parseInt(match[1]);
+        dateFrom = startOfDay(year, month, day + 1);
       } else {
-        dateFrom = startOfMonth(year, month);
+        dateFrom = startOfMonth(year, month + 1);
       }
       query = query.replace(match[0], '').trim();
     }
@@ -2768,12 +2793,14 @@ ipcMain.handle("search", async (_, payload) => {
   const rootFolder = typeof payload === 'object' && payload ? payload.rootFolder || payload.rootPath || null : null;
   console.log('[IPC] search called, pyReady:', pyReady, 'query:', query, 'rootFolder:', rootFolder);
   const { cleanQuery, dateFrom, dateTo } = parseDateFromQuery(query);
-  console.log('[IPC] parsed date filter:', { cleanQuery, dateFrom, dateTo });
+  const folderQuery = parseFolderSearchQuery(cleanQuery);
+  console.log('[IPC] parsed search filters:', { cleanQuery, dateFrom, dateTo, folderName: folderQuery?.folderName || null });
   return sendToPython({
     action: "search",
-    query: cleanQuery,
+    query: folderQuery ? '' : cleanQuery,
     date_from: dateFrom,
     date_to: dateTo,
+    folder_name: folderQuery?.folderName || null,
     root_folder: rootFolder,
   });
 });

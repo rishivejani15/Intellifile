@@ -11,7 +11,7 @@ import numpy as np
 import faiss
 
 from core.db import get_connection, get_setting, set_setting
-from core.model import MODEL
+from core.model import MODEL, EMBEDDING_PIPELINE_VERSION
 from core.faiss_manager import load_index, save_index, invalidate_cache, INDEX_PATH
 
 _ENCODE_BATCH_SIZE = 64
@@ -24,7 +24,7 @@ def get_staging_index_path():
     return os.path.join(data_dir, "vectors_staging.faiss")
 
 
-def upgrade_model_embeddings(target_version="v2.0.0", progress_cb=None):
+def upgrade_model_embeddings(target_version=EMBEDDING_PIPELINE_VERSION, progress_cb=None):
     """
     Executes a dual-database / dual-index model migration:
     1. Keeps existing active FAISS index active for concurrent searches (zero downtime).
@@ -132,6 +132,7 @@ def upgrade_model_embeddings(target_version="v2.0.0", progress_cb=None):
     # Update active model and index version in SQLite settings
     set_setting("active_index_version", target_version)
     set_setting("active_model_version", target_version)
+    set_setting("embedding_pipeline_version", target_version)
 
     # Invalidate in-memory FAISS singleton so subsequent searches reload the new index
     invalidate_cache()

@@ -1,4 +1,5 @@
 import os
+import re
 import concurrent.futures
 
 # Only human-readable document formats — no code, no system files
@@ -29,6 +30,14 @@ SKIP_PREFIXES = ("~$", "._")
 
 SKIP_SUFFIXES = ("~",)
 
+# These are machine-generated project artefacts or legal boilerplate, not a
+# user's searchable documents.  They are intentionally limited to text files
+# so a legitimate PDF such as "License Agreement.pdf" remains indexable.
+SKIP_TEXT_STEM_PREFIXES = (
+    "readme", "license", "licence", "notice", "copying", "copyright",
+    "changelog", "changes", "authors", "contributors", "requirements",
+)
+
 def _is_valid_size(filename, size):
     # Default cap of 50MB
     if size > 50 * 1024 * 1024:
@@ -52,6 +61,12 @@ def _is_supported_file(filename):
         return False
     if name.endswith(SKIP_EXT):
         return False
+    stem, ext = os.path.splitext(name)
+    if ext == ".txt" and any(
+        stem == prefix or stem.startswith(prefix + "_") or stem.startswith(prefix + "-")
+        for prefix in SKIP_TEXT_STEM_PREFIXES
+    ):
+        return False
     return name.endswith(SUPPORTED_EXT)
 
 
@@ -61,8 +76,17 @@ def is_indexable_document(path):
         return False
 
     lower_path = str(path).lower()
-    filename = os.path.basename(lower_path)
+    # ``os.path`` follows the host platform; normalize separators so Windows
+    # paths are evaluated correctly in the packaged app and in tests alike.
+    filename = lower_path.replace("\\", "/").rsplit("/", 1)[-1]
     if not _is_supported_file(filename):
+        return False
+
+    # The bulk scanner already avoids these directories.  Keep this path-level
+    # check too, so drag-and-drop/single-file ingestion cannot bypass the same
+    # policy and reintroduce Android Studio, readme, or build artefacts.
+    path_parts = [part for part in re.split(r"[\\\\/]+", lower_path) if part]
+    if any(is_ignored(part) for part in path_parts[:-1]):
         return False
 
     ext = os.path.splitext(filename)[1].lower()
@@ -113,9 +137,9 @@ IGNORE_DIRS = {
     "cache", "caches",
     "code", "codes",
     # SDKs / frameworks
-    "flutter", "android", "sdk",
+    "flutter", "android", "android studio", "sdk",
     # Generic system folders
-    "system", "system32",
+    "system", "system32", "readme",
 }
 
 _DEFAULT_USER_DIRS = [
@@ -210,7 +234,7 @@ def _scan_directory(folder):
                     if not is_ignored(entry.name) and not _is_hidden_or_system_entry(entry):
                         yield from _scan_directory(entry.path)
                 elif entry.is_file():
-                    if _is_supported_file(entry.name):
+                    if is_indexable_document(entry.path):
                         try:
                             # entry.stat() is fast on Windows os.scandir
                             st = entry.stat()
@@ -248,7 +272,7 @@ def fast_scan_device(max_workers=8, roots=None):
                         if entry.is_dir() and not is_ignored(entry.name) and not entry.is_symlink():
                             if not _is_hidden_or_system_entry(entry):
                                 top_level_dirs.append(entry.path)
-                        elif entry.is_file() and _is_supported_file(entry.name):
+                        elif entry.is_file() and is_indexable_document(entry.path):
                             try:
                                 st = entry.stat()
                                 if _has_system_attrs(st):
@@ -268,7 +292,7 @@ def fast_scan_device(max_workers=8, roots=None):
             if base and is_ignored(base):
                 continue
             if os.path.isfile(root):
-                if _is_supported_file(root):
+                if is_indexable_document(root):
                     try:
                         st = os.stat(root)
                         if _has_system_attrs(st):

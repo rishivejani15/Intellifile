@@ -8,6 +8,7 @@
     "start": "concurrently \"npm run react-start\" \"npm run electron-start\"",
     "react-start": "react-scripts start",
     "build": "react-scripts build",
+    "test:node": "node --test tests/*.test.js",
     "pack": "electron-builder --dir",
     "electron-start": "wait-on http://localhost:3000 && electron .",
     "electron-dev": "electron .",
@@ -55,6 +56,8 @@
       "sync_engine.js",
       "listDirectoryCache.js",
       "file_lock_service.js",
+      "dateSearchParser.js",
+      "folderSearchParser.js",
       "public/**/*",
       "build/**/*",
       "!build/**/*.map"

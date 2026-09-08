@@ -1088,7 +1088,7 @@ export default function Settings({ theme, onThemeChange, onStartTour, initialTab
                   <div className="operation-card-row op-success">
                     <div>
                       <div className="settings-toggle-label">2. Re-create Embeddings</div>
-                      <div className="settings-toggle-desc">Re-generate vector embeddings for already extracted files</div>
+                      <div className="settings-toggle-desc">Re-generate vector embeddings for already extracted files. Run this after a search-engine update to apply improved embedding preprocessing.</div>
                     </div>
                     <button
                       className="settings-button secondary"

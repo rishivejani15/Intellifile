@@ -37,6 +37,15 @@ os.makedirs(_DATA_DIR, exist_ok=True)
 try:
     from core.db import init_db
     init_db()
+    # Remove stale rows for files the current scanner deliberately excludes
+    # (licenses, readmes, Android Studio artefacts, etc.).  This is index-only:
+    # no user file is deleted and existing embeddings are not regenerated.
+    from indexing.index_cleanup import purge_excluded_index_records
+    stale_chunk_ids = purge_excluded_index_records()
+    if stale_chunk_ids:
+        from indexing.update_faiss import update_faiss
+        update_faiss(stale_chunk_ids)
+        sys.stderr.write(f"[engine] Removed {len(stale_chunk_ids)} excluded index chunks\n")
     sys.stderr.write("[engine] SQLite database ready\n")
 except Exception as e:
     sys.stderr.write(f"[engine] DB init warning (non-fatal): {e}\n")
@@ -267,6 +276,37 @@ while True:
 
         if action == "search":
             try:
+                from core.db import log_analytics_event
+                folder_name = request.get("folder_name")
+                date_from = request.get("date_from")  # Unix timestamp or None
+                date_to = request.get("date_to")      # Unix timestamp or None
+                root_folder = request.get("root_folder")
+
+                # Exact folder listings are deterministic metadata queries and
+                # must remain usable even when the embedding model is offline.
+                if folder_name:
+                    from core.search import folder_search
+                    results = folder_search(
+                        folder_name,
+                        root_folder=root_folder,
+                        date_from=date_from,
+                        date_to=date_to,
+                    )
+                    log_analytics_event("folder_search_executed", {"folder_name": folder_name})
+                    print(json.dumps({
+                        "_id": req_id,
+                        "results": [
+                            {
+                                "path": r["path"],
+                                "score": round(float(r["score"]), 3),
+                                "created_time": r.get("created_time"),
+                                "methods": r.get("methods", []),
+                            }
+                            for r in results
+                        ],
+                    }), flush=True)
+                    continue
+
                 # Ensure embedding model is available before running semantic search
                 try:
                     from core.model import is_model_loaded, MODEL_LOAD_ERROR
@@ -279,13 +319,19 @@ while True:
                     print(json.dumps({"_id": req_id, "error": "Embedding model check failed"}), flush=True)
                     continue
 
-                from core.search import semantic_search
-                from core.db import log_analytics_event
+                from core.search import fuzzy_filename_search, semantic_search
                 query = request.get("query", "").strip()
-                date_from = request.get("date_from")  # Unix timestamp or None
-                date_to = request.get("date_to")      # Unix timestamp or None
-                root_folder = request.get("root_folder")
                 results = semantic_search(query, date_from=date_from, date_to=date_to, root_folder=root_folder)
+                # Fuzzy matching is an opt-in fallback by outcome: it is only
+                # considered after the normal hybrid pipeline has no result,
+                # so it cannot reorder or change confidence for existing hits.
+                if not results and query:
+                    results = fuzzy_filename_search(
+                        query,
+                        root_folder=root_folder,
+                        date_from=date_from,
+                        date_to=date_to,
+                    )
                 log_analytics_event("search_executed", {"query_length": len(query)})
                 response = {
                     "_id": req_id,
@@ -476,7 +522,8 @@ while True:
             try:
                 from indexing.migration_manager import upgrade_model_embeddings
 
-                target_version = request.get("target_version", "v2.0.0")
+                from core.model import EMBEDDING_PIPELINE_VERSION
+                target_version = request.get("target_version", EMBEDDING_PIPELINE_VERSION)
 
                 def _progress(phase, detail="", pct=None):
                     payload = {"_id": req_id, "type": "progress", "phase": phase, "detail": detail}
