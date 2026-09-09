@@ -1,4 +1,4 @@
-"""Regression tests for deterministic exact-folder result listings."""
+"""Regression tests for deterministic folder result listings."""
 
 import os
 import shutil
@@ -47,6 +47,13 @@ class FolderSearchTests(unittest.TestCase):
                 (path, os.path.basename(path), date, date, folder_path, folder_name),
             )
         conn.commit()
+        upsert_folder_catalog(cur, [
+            r"C:\docs\Statistical Analysis\tables.pdf",
+            r"C:\docs\Statistical Analysis\module 1\practice.csv",
+            r"C:\other\Statistical Analysis\summary.docx",
+            r"C:\docs\Statistical Analyses\different.pdf",
+        ])
+        conn.commit()
         conn.close()
 
     def test_exact_folder_name_returns_files_and_descendants_without_top_k(self):
@@ -61,6 +68,27 @@ class FolderSearchTests(unittest.TestCase):
 
     def test_missing_folder_returns_no_results(self):
         self.assertEqual(folder_search("not a real folder"), [])
+
+    def test_partial_and_compact_folder_names_match_separator_variants(self):
+        conn = get_connection()
+        cur = conn.cursor()
+        path = r"C:\docs\Project_Archive\final_report.pdf"
+        folder_path, folder_name = folder_metadata(path)
+        cur.execute(
+            """INSERT INTO files(
+                path, filename, modified_time, created_time, folder_path, folder_name
+            ) VALUES (?, ?, ?, ?, ?, ?)""",
+            (path, "final_report.pdf", 1, 1, folder_path, folder_name),
+        )
+        upsert_folder_catalog(cur, [path])
+        conn.commit()
+        conn.close()
+
+        expected = {path}
+        self.assertEqual({row["path"] for row in folder_search("project")}, expected)
+        self.assertEqual({row["path"] for row in folder_search("project archive")}, expected)
+        self.assertEqual({row["path"] for row in folder_search("projectarchive")}, expected)
+        self.assertEqual({row["path"] for row in folder_search("proj arch")}, expected)
 
     def test_ancestor_folder_returns_files_from_child_folders(self):
         """A folder with only subfolders must still be searchable by name."""

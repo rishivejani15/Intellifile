@@ -1,7 +1,9 @@
 import json
 import ntpath
 import os
+import re
 import sqlite3
+import unicodedata
 
 
 DEFAULT_SETTINGS = {
@@ -21,7 +23,20 @@ DEFAULT_SETTINGS = {
 # Resolve data directory relative to this file's location
 _BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _DB_PATH = os.path.join(os.getenv("IF_DATA_DIR", os.path.join(_BACKEND_DIR, 'data')), 'files.db')
-_FOLDER_CATALOG_VERSION = "v2"
+_FOLDER_CATALOG_VERSION = "v3"
+
+
+def normalized_search_key(value):
+    """Return a case- and separator-insensitive key for titles and folders."""
+    text = unicodedata.normalize("NFKD", str(value or "")).casefold()
+    return re.sub(r"[^a-z0-9]+", "", text)
+
+
+def search_tokens(value):
+    """Split a search title into lowercase terms, including CamelCase words."""
+    text = unicodedata.normalize("NFKD", str(value or ""))
+    text = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", text)
+    return re.findall(r"[a-z0-9]+", text.casefold())
 
 
 def folder_metadata(path):
@@ -61,17 +76,20 @@ def upsert_folder_catalog(cur, paths):
     rows = []
     seen = set()
     for path in paths:
-        for row in folder_ancestors(path):
-            key = row[0].lower()
+        for folder_path, folder_name, parent_path in folder_ancestors(path):
+            key = folder_path.lower()
             if key not in seen:
                 seen.add(key)
-                rows.append(row)
+                rows.append(
+                    (folder_path, folder_name, normalized_search_key(folder_name), parent_path)
+                )
     if rows:
         cur.executemany(
-            """INSERT INTO indexed_folders(folder_path, folder_name, parent_path)
-               VALUES (?, ?, ?)
+            """INSERT INTO indexed_folders(folder_path, folder_name, folder_key, parent_path)
+               VALUES (?, ?, ?, ?)
                ON CONFLICT(folder_path) DO UPDATE SET
                  folder_name = excluded.folder_name,
+                 folder_key = excluded.folder_key,
                  parent_path = excluded.parent_path""",
             rows,
         )
@@ -98,7 +116,8 @@ def init_db():
                     created_time INTEGER,
                     chunk_count INTEGER DEFAULT NULL,
                     folder_path TEXT,
-                    folder_name TEXT
+                    folder_name TEXT,
+                    filename_key TEXT
                 );
                 ''')
     cur.execute('''
@@ -115,6 +134,7 @@ def init_db():
                 CREATE TABLE IF NOT EXISTS indexed_folders (
                     folder_path TEXT PRIMARY KEY,
                     folder_name TEXT NOT NULL,
+                    folder_key TEXT,
                     parent_path TEXT
                 )
                 ''')
@@ -176,10 +196,10 @@ def init_db():
     except Exception:
         pass  # Column already exists
 
-    # Folder metadata enables exact folder listings without invoking text or
+    # Folder metadata enables deterministic folder listings without invoking text or
     # vector retrieval.  It is derived only from the already-indexed path, so
     # this migration does not extract text or recreate embeddings.
-    for column in ("folder_path", "folder_name"):
+    for column in ("folder_path", "folder_name", "filename_key"):
         try:
             cur.execute(f"ALTER TABLE files ADD COLUMN {column} TEXT")
         except Exception:
@@ -195,14 +215,31 @@ def init_db():
             [(*folder_metadata(path), file_id) for file_id, path in missing_folder_rows],
         )
 
+    # This metadata-only migration enables compact filename matching without
+    # recreating chunks or embeddings.
+    cur.execute("SELECT id, filename FROM files WHERE filename_key IS NULL")
+    missing_filename_keys = cur.fetchall()
+    if missing_filename_keys:
+        cur.executemany(
+            "UPDATE files SET filename_key = ? WHERE id = ?",
+            [(normalized_search_key(filename), file_id) for file_id, filename in missing_filename_keys],
+        )
+
+    try:
+        cur.execute("ALTER TABLE indexed_folders ADD COLUMN folder_key TEXT")
+    except Exception:
+        pass  # Column already exists
+
     # Indexes for fast lookups during incremental indexing
     cur.execute('CREATE INDEX IF NOT EXISTS idx_files_path ON files(path)')
     cur.execute('CREATE INDEX IF NOT EXISTS idx_chunks_file_id ON chunks(file_id)')
     cur.execute('CREATE INDEX IF NOT EXISTS idx_files_created ON files(created_time)')
     cur.execute('CREATE INDEX IF NOT EXISTS idx_files_chunk_count ON files(chunk_count)')
     cur.execute('CREATE INDEX IF NOT EXISTS idx_files_folder_name ON files(folder_name COLLATE NOCASE)')
+    cur.execute('CREATE INDEX IF NOT EXISTS idx_files_filename_key ON files(filename_key)')
     cur.execute('CREATE INDEX IF NOT EXISTS idx_files_folder_path ON files(folder_path)')
     cur.execute('CREATE INDEX IF NOT EXISTS idx_indexed_folders_name ON indexed_folders(folder_name COLLATE NOCASE)')
+    cur.execute('CREATE INDEX IF NOT EXISTS idx_indexed_folders_key ON indexed_folders(folder_key)')
     cur.execute('CREATE INDEX IF NOT EXISTS idx_sort_log_timestamp ON sort_log(timestamp)')
     cur.execute('CREATE INDEX IF NOT EXISTS idx_analytics_timestamp ON analytics_events(timestamp)')
 

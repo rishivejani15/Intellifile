@@ -10,6 +10,7 @@ from core.db import (
     folder_metadata,
     get_connection,
     init_db,
+    normalized_search_key,
     rebuild_fts,
     upsert_folder_catalog,
 )
@@ -112,7 +113,7 @@ def index_files_incremental(root_folder=None, progress_cb=None, allow_protected=
 
     # ── Determine which files actually need work ────────
     files_to_process = []      # (path, mtime, file_id_or_None)
-    new_files_data = []        # (path, filename, mtime, ctime, folder_path, folder_name)
+    new_files_data = []        # (path, filename, filename_key, mtime, ctime, folder_path, folder_name)
     modified_fids = []         # file_ids that changed
     modified_updates = []      # (mtime, file_id) for bulk update
     unchanged_files = 0
@@ -132,7 +133,15 @@ def index_files_incremental(root_folder=None, progress_cb=None, allow_protected=
             filename = os.path.basename(path)
             folder_path, folder_name = folder_metadata(path)
             new_files_data.append(
-                (path, filename, modified_time, created_time, folder_path, folder_name)
+                (
+                    path,
+                    filename,
+                    normalized_search_key(filename),
+                    modified_time,
+                    created_time,
+                    folder_path,
+                    folder_name,
+                )
             )
 
     # Bulk-delete old chunks for modified files
@@ -149,8 +158,8 @@ def index_files_incremental(root_folder=None, progress_cb=None, allow_protected=
     if new_files_data:
         cur.executemany(
             """INSERT INTO files(
-                   path, filename, modified_time, created_time, folder_path, folder_name
-               ) VALUES (?, ?, ?, ?, ?, ?)""",
+                   path, filename, filename_key, modified_time, created_time, folder_path, folder_name
+               ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
             new_files_data,
         )
         # Retrieve assigned IDs for new files
@@ -160,7 +169,7 @@ def index_files_incremental(root_folder=None, progress_cb=None, allow_protected=
             ph = ",".join("?" * len(batch))
             cur.execute(f"SELECT path, id FROM files WHERE path IN ({ph})", batch)
             path_to_id = {r[0]: r[1] for r in cur.fetchall()}
-            for p, _, mt, _, _, _ in new_files_data[i:i + 500]:
+            for p, _, _, mt, _, _, _ in new_files_data[i:i + 500]:
                 files_to_process.append((p, mt, path_to_id[p]))
 
         # Keep the separate ancestor catalog current for folder queries.  A

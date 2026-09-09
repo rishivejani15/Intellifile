@@ -8,6 +8,7 @@ from core.db import (
     folder_metadata,
     get_connection,
     init_db,
+    normalized_search_key,
     rebuild_fts,
     upsert_folder_catalog,
 )
@@ -88,16 +89,16 @@ def ingest_single_file(file_path: str, allow_protected: bool = False, force: boo
         cur.execute("DELETE FROM chunks WHERE file_id = ?", (file_id,))
         cur.execute(
             """UPDATE files
-               SET filename = ?, modified_time = ?, folder_path = ?, folder_name = ?
+               SET filename = ?, filename_key = ?, modified_time = ?, folder_path = ?, folder_name = ?
                WHERE id = ?""",
-            (filename, modified_time, folder_path, folder_name, file_id),
+            (filename, normalized_search_key(filename), modified_time, folder_path, folder_name, file_id),
         )
     else:
         cur.execute(
             """INSERT INTO files(
-                   path, filename, modified_time, created_time, folder_path, folder_name
-               ) VALUES (?, ?, ?, ?, ?, ?)""",
-            (abs_path, filename, modified_time, created_time, folder_path, folder_name),
+                   path, filename, filename_key, modified_time, created_time, folder_path, folder_name
+               ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (abs_path, filename, normalized_search_key(filename), modified_time, created_time, folder_path, folder_name),
         )
         file_id = cur.lastrowid
 

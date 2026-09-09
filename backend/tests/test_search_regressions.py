@@ -16,8 +16,8 @@ BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if BACKEND_DIR not in sys.path:
     sys.path.insert(0, BACKEND_DIR)
 
-from core.db import get_connection, init_db, rebuild_fts  # noqa: E402
-from core.search import _date_range_search, _fts5_search, semantic_search  # noqa: E402
+from core.db import get_connection, init_db, normalized_search_key, rebuild_fts  # noqa: E402
+from core.search import _date_range_search, _filename_search, _fts5_search, semantic_search  # noqa: E402
 
 
 def timestamp(year, month, day):
@@ -152,6 +152,28 @@ class SearchRegressionTests(unittest.TestCase):
         hit_ids = {chunk_id for chunk_id, _score in hits}
         self.assertIn(self.files["Proctoring project.docx"], hit_ids)
         self.assertNotIn(self.files["Student handbook.txt"], hit_ids)
+
+    @patch("core.search._faiss_search", return_value=[])
+    def test_filename_search_matches_compact_and_partial_separator_variants(self, _mock_faiss):
+        conn = get_connection()
+        cur = conn.cursor()
+        path = "C:/docs/Final_Project_Report_v2.pdf"
+        filename = os.path.basename(path)
+        cur.execute(
+            """INSERT INTO files(path, filename, filename_key, modified_time, created_time)
+               VALUES (?, ?, ?, ?, ?)""",
+            (path, filename, normalized_search_key(filename), 1, 1),
+        )
+        conn.commit()
+        conn.close()
+
+        compact_hits = {path for _, path in _filename_search("finalproject", top_k=10)}
+        partial_hits = {path for _, path in _filename_search("project rep", top_k=10)}
+        self.assertIn(path, compact_hits)
+        self.assertIn(path, partial_hits)
+
+        hybrid_hits = {row["path"] for row in semantic_search("finalproject", top_k=10)}
+        self.assertIn(path, hybrid_hits)
 
 
 if __name__ == "__main__":

@@ -4,7 +4,7 @@ import logging
 from collections import defaultdict
 from core.model import encode_query
 from core.faiss_manager import load_index
-from core.db import get_connection
+from core.db import get_connection, normalized_search_key, search_tokens
 
 # Reciprocal Rank Fusion constant (higher = more uniform blending)
 _RRF_K = 60
@@ -344,7 +344,7 @@ def _fts5_search(query, top_k, root_folder=None, date_from=None, date_to=None):
 
 
 def _filename_search(query, top_k, root_folder=None, date_from=None, date_to=None):
-    """Find exact and title-like filename matches without tokenising punctuation away."""
+    """Find title-like filename matches regardless of common separators."""
     conn = get_connection()
     try:
         cur = conn.cursor()
@@ -363,7 +363,11 @@ def _filename_search(query, top_k, root_folder=None, date_from=None, date_to=Non
             )
             return cur.fetchall()
 
-        patterns = [f"%{query}%"]
+        def escape_like(value):
+            return str(value).replace("^", "^^").replace("%", "^%").replace("_", "^_")
+
+        patterns = [f"%{escape_like(query)}%"]
+        compact_query = normalized_search_key(query)
         tokens = re.findall(r'[a-zA-Z0-9]+', query)
         content_tokens = [t.lower() for t in tokens if t.lower() not in _STOP_WORDS]
         for i in range(len(tokens) - 1):
@@ -376,8 +380,14 @@ def _filename_search(query, top_k, root_folder=None, date_from=None, date_to=Non
         where_parts = []
         pattern_params = []
         for p in patterns:
-            where_parts.append("(path LIKE ? OR filename LIKE ?)")
+            where_parts.append("(path LIKE ? ESCAPE '^' OR filename LIKE ? ESCAPE '^')")
             pattern_params.extend([p, p])
+
+        # Raw LIKE preserves normal substring behavior.  This complementary
+        # key covers omitted separators: finalproject -> Final_Project.pdf.
+        if compact_query:
+            where_parts.append("instr(COALESCE(filename_key, ''), ?) > 0")
+            pattern_params.append(compact_query)
 
         # A title such as "Attention Is All You Need" is commonly stored with
         # hyphens or underscores.  Requiring all meaningful terms lets SQLite
@@ -392,17 +402,15 @@ def _filename_search(query, top_k, root_folder=None, date_from=None, date_to=Non
 
         where_clause = " OR ".join(where_parts)
         cur.execute(
-            f"""SELECT id, path, filename, created_time FROM files
+            f"""SELECT id, path, filename, created_time, filename_key FROM files
                WHERE ({where_clause})
                """ + metadata_clause + """
                ORDER BY created_time DESC, modified_time DESC
                LIMIT ?""",
             [*pattern_params, *title_params, *metadata_params, top_k * 10],
         )
-        compact_query = re.sub(r"[^a-z0-9]+", "", query.lower())
-
         def filename_strength(row):
-            compact_name = re.sub(r"[^a-z0-9]+", "", row[2].lower())
+            compact_name = row[4] or normalized_search_key(row[2])
             if compact_query and compact_query in compact_name:
                 return 3
             if content_tokens and all(token in row[2].lower() for token in content_tokens):
@@ -555,37 +563,64 @@ def fuzzy_filename_search(query, top_k=20, root_folder=None, date_from=None, dat
 
 
 def folder_search(folder_name, root_folder=None, date_from=None, date_to=None):
-    """List every indexed file in an exact folder-name match.
+    """List every indexed file in a partial, separator-insensitive folder match.
 
     This is intentionally a metadata-only operation: it does not load FAISS,
     run FTS, or call the embedding model.  If several folders have the same
     name, their files are returned together and retain their full paths.
     """
     normalized_name = " ".join(str(folder_name or "").split())
-    if not normalized_name:
+    compact_name = normalized_search_key(normalized_name)
+    query_terms = search_tokens(normalized_name)
+    if not compact_name:
         return []
+
+    def folder_match_strength(candidate_name, candidate_key=None):
+        candidate_key = candidate_key or normalized_search_key(candidate_name)
+        if compact_name == candidate_key:
+            return 3
+        if len(compact_name) >= 3 and compact_name in candidate_key:
+            return 2
+
+        # Support useful abbreviations such as "proj arch" for
+        # "Project_Archive", but do not turn one- or two-letter terms into a
+        # broad directory listing.
+        candidate_terms = search_tokens(candidate_name)
+        if query_terms and all(
+            len(term) >= 3 and any(candidate.startswith(term) for candidate in candidate_terms)
+            for term in query_terms
+        ):
+            return 1
+        return 0
 
     conn = get_connection()
     try:
         cur = conn.cursor()
         root_folder = _normalize_root(root_folder)
         cur.execute(
-            """SELECT DISTINCT folder_path
-               FROM indexed_folders
-               WHERE folder_name = ? COLLATE NOCASE""",
-            (normalized_name,),
+            """SELECT folder_path, folder_name, folder_key
+               FROM indexed_folders"""
         )
-        folder_paths = [row[0] for row in cur.fetchall() if row[0]]
-        # Compatibility fallback for databases that have file rows but have
-        # not yet received the one-time ancestor-catalog migration.
-        if not folder_paths:
-            cur.execute(
-                """SELECT DISTINCT folder_path
-                   FROM files
-                   WHERE folder_name = ? COLLATE NOCASE""",
-                (normalized_name,),
-            )
-            folder_paths = [row[0] for row in cur.fetchall() if row[0]]
+        folder_candidates = {
+            row[0]: (row[1], row[2])
+            for row in cur.fetchall()
+            if row[0] and row[1]
+        }
+        # This compatibility fallback also covers a newly opened database
+        # before its metadata-only catalog migration completes.
+        cur.execute(
+            """SELECT DISTINCT folder_path, folder_name
+               FROM files
+               WHERE folder_path IS NOT NULL AND folder_name IS NOT NULL"""
+        )
+        for folder_path, candidate_name in cur.fetchall():
+            folder_candidates.setdefault(folder_path, (candidate_name, None))
+
+        folder_paths = [
+            folder_path
+            for folder_path, (candidate_name, candidate_key) in folder_candidates.items()
+            if folder_match_strength(candidate_name, candidate_key)
+        ]
         if not folder_paths:
             return []
 
