@@ -112,6 +112,7 @@ class SyncManager extends ChangeNotifier {
 
   // File watcher
   Timer? _watchTimer;
+  Timer? _discoveryTimer;
 
   Map<String, String> _lastLocalTree = {};
   bool _isProcessingSync = false;
@@ -219,14 +220,29 @@ class SyncManager extends ChangeNotifier {
     if (_connection?.isConnected ?? false) return;
     _mdns.start();
     _probeHotspotGateways();
+
+    _discoveryTimer?.cancel();
+    _discoveryTimer = Timer.periodic(const Duration(seconds: 4), (timer) {
+      if (_connectionProfile != _ConnectionProfile.lan || (_connection?.isConnected ?? false)) {
+        timer.cancel();
+        _discoveryTimer = null;
+        return;
+      }
+      _probeHotspotGateways();
+    });
   }
 
   Future<void> _probeHotspotGateways() async {
     if (_connectionProfile != _ConnectionProfile.lan) return;
     if (_connection?.isConnected ?? false) return;
 
-    // Common PC hotspot addresses (Windows Mobile Hotspot default is 192.168.137.1)
-    const probeCandidates = ['192.168.137.1:8765'];
+    // Common PC hotspot addresses + last known LAN address
+    final probeCandidates = <String>[];
+    if (_lastLanAddress != null && _lastLanAddress!.isNotEmpty) {
+      probeCandidates.add(_lastLanAddress!);
+    }
+    probeCandidates.addAll(['192.168.137.1:8765', '192.168.43.1:8765', '172.20.10.1:8765']);
+
     for (final candidate in probeCandidates) {
       if (_connection?.isConnected ?? false) return;
       try {
@@ -236,9 +252,9 @@ class SyncManager extends ChangeNotifier {
         final response = await request.close().timeout(const Duration(milliseconds: 1200));
         client.close();
         if (response.statusCode == 200) {
-          debugPrint('[sync] Hotspot probe found PC at $candidate');
+          debugPrint('[sync] Probe found PC at $candidate');
           if (!(_connection?.isConnected ?? false)) {
-            _addLog('Discovered PC Hotspot ($candidate)');
+            _addLog('Discovered PC ($candidate)');
             await connectManually(candidate);
             return;
           }
@@ -281,6 +297,8 @@ class SyncManager extends ChangeNotifier {
     debugPrint('[sync] Manual disconnect');
 
     // Stop auto-discovery so we don't reconnect immediately
+    _discoveryTimer?.cancel();
+    _discoveryTimer = null;
     await _mdns.stop();
 
     // Tear down the transport
@@ -983,6 +1001,8 @@ class SyncManager extends ChangeNotifier {
           _setStatus(SyncStatus.discovering, _disconnectedMessageForProfile());
           if (_connectionProfile == _ConnectionProfile.lan) {
             _connectedAddress = null;
+            _mdns.resetDiscovered();
+            _startLanDiscovery();
           }
           // Clear pending changes on disconnect — they're no longer valid
           _pendingChanges.clear();
@@ -992,6 +1012,8 @@ class SyncManager extends ChangeNotifier {
         case SyncConnectionState.connecting:
           _setStatus(SyncStatus.connecting, _connectingMessageForProfile());
         case SyncConnectionState.connected:
+          _discoveryTimer?.cancel();
+          _discoveryTimer = null;
           _setStatus(SyncStatus.syncing, _syncingMessageForProfile());
           _addLog('Connected to PC — performing handshake...');
       }
@@ -1028,6 +1050,7 @@ class SyncManager extends ChangeNotifier {
   @override
   void dispose() {
     _watchTimer?.cancel();
+    _discoveryTimer?.cancel();
     _mdns.dispose();
     _connectionStateSub?.cancel();
     _connection?.dispose();

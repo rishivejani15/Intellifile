@@ -24,6 +24,10 @@ class MdnsBrowser {
 
   Future<void> start() async {
     try {
+      if (_discovery != null) {
+        return;
+      }
+      _discoveredAddresses.clear();
       _discovery = await startDiscovery(_serviceType);
 
       debugPrint('[mdns] browsing for $_serviceType on LAN');
@@ -64,6 +68,10 @@ class MdnsBrowser {
     } catch (e) {
       debugPrint('[mdns] Stop error: $e');
     }
+    _discoveredAddresses.clear();
+  }
+
+  void resetDiscovered() {
     _discoveredAddresses.clear();
   }
 

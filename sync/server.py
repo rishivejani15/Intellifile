@@ -93,6 +93,7 @@ async def status():
             "device_ids": [did for _, did in connected_clients],
             "sync_folder": os.path.abspath(SYNC_FOLDER),
             "pending_changes": len(_pending_changes),
+            "mdns_active": _zeroconf is not None and _zeroconf_info is not None,
         })
     except Exception as exc:
         log.error("status endpoint failed: %s", exc, exc_info=True)
@@ -588,10 +589,17 @@ async def startup():
 
     def _start_mdns_background():
         global _zeroconf, _zeroconf_info
-        try:
-            _zeroconf, _zeroconf_info = start_mdns()
-        except Exception as exc:
-            log.warning("mDNS startup skipped: %s", exc)
+        max_attempts = 5
+        for attempt in range(1, max_attempts + 1):
+            try:
+                _zeroconf, _zeroconf_info = start_mdns()
+                if _zeroconf and _zeroconf_info:
+                    log.info("mDNS advertisement active (attempt %d)", attempt)
+                    return
+            except Exception as exc:
+                log.warning("mDNS startup attempt %d failed: %r", attempt, exc)
+                time.sleep(2)
+        log.error("Failed to start mDNS after %d attempts", max_attempts)
 
     threading.Thread(target=_start_mdns_background, daemon=True).start()
 

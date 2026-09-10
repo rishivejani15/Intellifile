@@ -2269,7 +2269,7 @@ function attemptStartSyncServer() {
 
     // Start polling health check /status
     let healthCheckAttempts = 0;
-    const maxHealthCheckAttempts = 10; // 10 attempts * 500ms = 5 seconds
+    const maxHealthCheckAttempts = 20; // 20 attempts * 500ms = 10 seconds (allows cold Python startup)
 
     healthCheckTimer = setInterval(() => {
       if (spawnedCompleted) {
@@ -2294,7 +2294,7 @@ function attemptStartSyncServer() {
           if (healthCheckAttempts >= maxHealthCheckAttempts) {
             clearInterval(healthCheckTimer);
             spawnedCompleted = true;
-            console.warn('[SyncServer] Health check timed out after 5 seconds.');
+            console.warn('[SyncServer] Health check timed out after 10 seconds.');
             appendLog('SyncServer', 'Health check timed out.', true);
 
             if (syncServerProcess && !syncServerProcess.killed) {
@@ -2317,21 +2317,57 @@ function attemptStartSyncServer() {
   }
 }
 
-function startSyncServer() {
+function killProcessOnPort(port) {
+  return new Promise((resolve) => {
+    try {
+      if (process.platform === 'win32') {
+        const { exec } = require('child_process');
+        exec(`netstat -ano | findstr :${port}`, (err, stdout) => {
+          if (err || !stdout) return resolve();
+          const lines = stdout.trim().split(/\r?\n/);
+          const pids = new Set();
+          for (const line of lines) {
+            const parts = line.trim().split(/\s+/);
+            const pid = parts[parts.length - 1];
+            if (pid && /^\d+$/.test(pid) && pid !== '0') {
+              pids.add(pid);
+            }
+          }
+          if (pids.size === 0) return resolve();
+          const cmd = Array.from(pids).map(pid => `taskkill /F /PID ${pid}`).join(' & ');
+          exec(cmd, () => resolve());
+        });
+      } else {
+        const { exec } = require('child_process');
+        exec(`lsof -ti:${port} | xargs kill -9`, () => resolve());
+      }
+    } catch (_) {
+      resolve();
+    }
+  });
+}
+
+async function startSyncServer() {
   try {
     if (syncServerProcess && !syncServerProcess.killed) {
       console.log('[SyncServer] already running');
-      return Promise.resolve();
+      return;
     }
 
-    return isPortOpen(SYNC_PORT, '127.0.0.1', 300).then((portOpen) => {
-      if (portOpen) {
-        console.log(`[SyncServer] port ${SYNC_PORT} already in use; assuming server is running`);
+    const portOpen = await isPortOpen(SYNC_PORT, '127.0.0.1', 300);
+    if (portOpen) {
+      const isHealthy = await checkSyncServerHealth();
+      if (isHealthy) {
+        console.log(`[SyncServer] port ${SYNC_PORT} already in use and healthy; server running`);
         return;
       }
+      console.warn(`[SyncServer] port ${SYNC_PORT} is in use but unresponsive. Terminating stale process...`);
+      appendLog('SyncServer', `Port ${SYNC_PORT} in use but unresponsive; cleaning up stale process...`, true, 'warning');
+      await killProcessOnPort(SYNC_PORT);
+      await new Promise(r => setTimeout(r, 600));
+    }
 
-      attemptStartSyncServer();
-    });
+    attemptStartSyncServer();
   } catch (err) {
     const errorMsg = err && err.message ? err.message : String(err);
     console.error('[SyncServer] Exception in startSyncServer:', errorMsg);
@@ -4799,8 +4835,10 @@ function registerIpcHandlers() {
         try { syncServerProcess.kill(); } catch (e) { /* ignore */ }
         syncServerProcess = null;
       }
+      await killProcessOnPort(SYNC_PORT);
+      await new Promise(r => setTimeout(r, 600));
       syncServerRetries = 0;
-      await startSyncServer();
+      attemptStartSyncServer();
       return { success: true };
     } catch (err) {
       const msg = err && err.message ? err.message : String(err);

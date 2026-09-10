@@ -114,10 +114,24 @@ def start_mdns() -> tuple[Zeroconf, ServiceInfo]:
         else:
             zeroconf = Zeroconf()
     except Exception as exc:
-        print(f"[mdns] fallback to default Zeroconf interface due to: {exc}")
+        print(f"[mdns] fallback to default Zeroconf interface due to: {exc!r}")
         zeroconf = Zeroconf()
 
-    zeroconf.register_service(info)
+    try:
+        zeroconf.register_service(info, allow_name_change=True, cooperating_responders=True)
+    except Exception as exc:
+        import os, time
+        unique_name = f"IntelliFile-{os.getpid()}-{int(time.time()) % 10000}.{SERVICE_TYPE}"
+        print(f"[mdns] collision or error with primary name ({exc!r}); registering unique name: {unique_name}")
+        info = ServiceInfo(
+            SERVICE_TYPE,
+            unique_name,
+            addresses=addresses,
+            port=PORT,
+            properties={"version": "1.0", "device": "pc"},
+        )
+        zeroconf.register_service(info, allow_name_change=True, cooperating_responders=True)
+
     print(f"[mdns] advertising IntelliFile at {all_ips}:{PORT}")
     return zeroconf, info
 
