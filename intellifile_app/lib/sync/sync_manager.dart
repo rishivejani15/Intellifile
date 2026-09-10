@@ -1,3 +1,4 @@
+
 // lib/sync/sync_manager.dart
 //
 // Core sync orchestrator — manages the entire sync lifecycle:
@@ -13,7 +14,6 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:math';
 import 'package:flutter/foundation.dart';
-import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
 import 'package:permission_handler/permission_handler.dart';
@@ -173,17 +173,14 @@ class SyncManager extends ChangeNotifier {
     _setStatus(SyncStatus.discovering, _disconnectedMessageForProfile());
 
     final hasSavedLan = _lastLanAddress != null && _lastLanAddress!.isNotEmpty;
-    if (_connectionProfile == _ConnectionProfile.lan && !hasSavedLan) {
+    if (_connectionProfile == _ConnectionProfile.lan) {
       _mdns.onPcFound.listen((address) async {
         if (_connectionProfile != _ConnectionProfile.lan) return;
         if (!(_connection?.isConnected ?? false)) {
           _connectedAddress = address;
           await _connection?.connect(LanConnectionTarget(address, deviceId: _deviceId));
-          // Handshake is initiated after receiving server's handshake message
         }
       });
-
-      await _mdns.start();
     }
 
     if (preferRemote &&
@@ -194,13 +191,21 @@ class SyncManager extends ChangeNotifier {
       connectRemotely(signalingUrl, sessionId, isInitiator).catchError((e) {
         debugPrint('[sync-error] Auto-connect failed: $e');
       });
-    } else if (!preferRemote &&
-        _lastLanAddress != null &&
-        _lastLanAddress!.isNotEmpty) {
-      _addLog('Found saved LAN address. Auto-connecting...');
+    } else if (!preferRemote && hasSavedLan) {
+      _addLog('Checking saved connection...');
       connectManually(_lastLanAddress!).catchError((e) {
         debugPrint('[sync-error] Auto-connect failed: $e');
+        _startLanDiscovery();
       });
+
+      // If saved LAN doesn't connect within 3.5s (e.g. user switched to hotspot), trigger discovery
+      Future.delayed(const Duration(milliseconds: 3500), () {
+        if (!(_connection?.isConnected ?? false)) {
+          _startLanDiscovery();
+        }
+      });
+    } else {
+      _startLanDiscovery();
     }
 
     // Start local file watcher (poll every 3 seconds)
@@ -209,10 +214,49 @@ class SyncManager extends ChangeNotifier {
     _addLog('Sync initialized, looking for PC...');
   }
 
+  void _startLanDiscovery() {
+    if (_connectionProfile != _ConnectionProfile.lan) return;
+    if (_connection?.isConnected ?? false) return;
+    _mdns.start();
+    _probeHotspotGateways();
+  }
+
+  Future<void> _probeHotspotGateways() async {
+    if (_connectionProfile != _ConnectionProfile.lan) return;
+    if (_connection?.isConnected ?? false) return;
+
+    // Common PC hotspot addresses (Windows Mobile Hotspot default is 192.168.137.1)
+    const probeCandidates = ['192.168.137.1:8765'];
+    for (final candidate in probeCandidates) {
+      if (_connection?.isConnected ?? false) return;
+      try {
+        final uri = Uri.parse('http://$candidate/status');
+        final client = HttpClient()..connectionTimeout = const Duration(milliseconds: 1200);
+        final request = await client.getUrl(uri);
+        final response = await request.close().timeout(const Duration(milliseconds: 1200));
+        client.close();
+        if (response.statusCode == 200) {
+          debugPrint('[sync] Hotspot probe found PC at $candidate');
+          if (!(_connection?.isConnected ?? false)) {
+            _addLog('Discovered PC Hotspot ($candidate)');
+            await connectManually(candidate);
+            return;
+          }
+        }
+      } catch (_) {
+        // Probe ignored if unreachable
+      }
+    }
+  }
+
   /// Connect to a specific address manually (fallback if mDNS fails).
   Future<void> connectManually(String address) async {
     _connectionProfile = _ConnectionProfile.lan;
     await _mdns.stop();
+
+    _setStatus(SyncStatus.connecting, 'Connecting to $address...');
+    _addLog('Connecting to $address...');
+
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('lan_address', address);
     await prefs.setString('last_connection_type', 'lan');
@@ -220,6 +264,8 @@ class SyncManager extends ChangeNotifier {
     _lastConnectionType = 'lan';
     await _rebindTransport(WsSyncTransport(onMessage: _handleRawMessage));
     _connectedAddress = address;
+
+    debugPrint('[sync] connectManually: attempting connection to $address');
     await _connection?.connect(LanConnectionTarget(address, deviceId: _deviceId));
   }
 
@@ -403,6 +449,7 @@ class SyncManager extends ChangeNotifier {
         case AckMessage():
           _addLog('PC confirmed: ${msg.filepath}');
           _pendingSyncs = (_pendingSyncs - 1).clamp(0, 999);
+          _setStatus(SyncStatus.synced, 'Synced: ${msg.filepath}');
           notifyListeners();
         case ChangePendingMessage():
           _handleChangePending(msg);
@@ -473,7 +520,18 @@ class SyncManager extends ChangeNotifier {
   }
 
   Future<void> _handleDelta(DeltaMessage msg) async {
-    _setStatus(SyncStatus.syncing, 'Syncing: ${msg.filepath}');
+    final isFinalChunk = msg.chunkIndex == null ||
+        msg.totalChunks == null ||
+        msg.chunkIndex! >= msg.totalChunks!;
+
+    if (msg.totalChunks != null && msg.totalChunks! > 1) {
+      _setStatus(
+        SyncStatus.syncing,
+        'Receiving: ${msg.filepath} (${msg.chunkIndex}/${msg.totalChunks})',
+      );
+    } else {
+      _setStatus(SyncStatus.syncing, 'Syncing: ${msg.filepath}');
+    }
 
     try {
       final localPath = p.join(_syncFolder, msg.filepath);
@@ -489,22 +547,24 @@ class SyncManager extends ChangeNotifier {
       } else {
         // Create parent directories
         await Directory(p.dirname(localPath)).create(recursive: true);
-        // Apply delta
+        // Apply delta chunk
         await applyDelta(localPath, msg.deltas, expectedSize: msg.size);
-        _addLog('Synced: ${msg.filepath}');
-        debugPrint('[sync-proof] FILE PHYSICALLY SAVED TO: $localPath');
       }
 
-      // Update vector clock
-      final vc = await VectorClockStore.loadClock(msg.filepath);
-      vc.merge(msg.clock);
-      await VectorClockStore.saveClock(msg.filepath, vc);
+      if (isFinalChunk) {
+        // Update vector clock on final chunk
+        final vc = await VectorClockStore.loadClock(msg.filepath);
+        vc.merge(msg.clock);
+        await VectorClockStore.saveClock(msg.filepath, vc);
 
-      // Send acknowledgment
-      await _connection?.send({'type': 'ack', 'filepath': msg.filepath});
+        // Send acknowledgment
+        await _connection?.send({'type': 'ack', 'filepath': msg.filepath});
+        _addLog('Synced: ${msg.filepath}');
+        debugPrint('[sync-proof] FILE PHYSICALLY SAVED TO: $localPath');
 
-      await _refreshFileList();
-      _setStatus(SyncStatus.synced, 'Sync complete');
+        await _refreshFileList();
+        _setStatus(SyncStatus.synced, 'Sync complete');
+      }
     } catch (e) {
       _addLog('Error syncing ${msg.filepath}: $e');
       debugPrint('[sync] Delta apply error: $e');
@@ -548,23 +608,65 @@ class SyncManager extends ChangeNotifier {
       final fileSize = await File(localPath).length();
       final vc = await VectorClockStore.loadClock(msg.filepath);
 
-      debugPrint('[delta] sending ${msg.filepath} size=${fileSize}b');
-
-      await _connection?.send({
-        'type': 'delta',
-        'filepath': msg.filepath,
-        'deltas': deltas.map((d) => d.toJson()).toList(),
-        'clock': vc.toJson(),
-        'change': 'modified',
-        'size': fileSize,
-      });
-
-      _pendingSyncs++;
-      notifyListeners();
-      _addLog('Sent to PC: ${msg.filepath}');
+      await _sendDeltaChunked(
+        filepath: msg.filepath,
+        deltas: deltas,
+        vc: vc,
+        change: 'modified',
+        fileSize: fileSize,
+      );
     } catch (e) {
       _addLog('Error sending ${msg.filepath}: $e');
     }
+  }
+
+  Future<void> _sendDeltaChunked({
+    required String filepath,
+    required List<BlockDelta> deltas,
+    required VectorClock vc,
+    required String change,
+    required int fileSize,
+  }) async {
+    const int chunkSize = 8; // 8 blocks of 128KB = ~1MB raw (2MB hex JSON)
+    final totalChunks = max(1, (deltas.length + chunkSize - 1) ~/ chunkSize);
+
+    debugPrint(
+      '[delta] sending $filepath in $totalChunks chunk(s) (total ${deltas.length} blocks, ${fileSize}b)',
+    );
+
+    for (int idx = 0; idx < totalChunks; idx++) {
+      final start = idx * chunkSize;
+      final end = min(start + chunkSize, deltas.length);
+      final chunkDeltas = deltas.sublist(start, end);
+
+      if (totalChunks > 1) {
+        final pct = ((idx + 1) / totalChunks * 100).round();
+        _setStatus(
+          SyncStatus.syncing,
+          'Sending: $filepath (${idx + 1}/$totalChunks - $pct%)',
+        );
+      }
+
+      await _connection?.send({
+        'type': 'delta',
+        'filepath': filepath,
+        'deltas': chunkDeltas.map((d) => d.toJson()).toList(),
+        'clock': vc.toJson(),
+        'change': change,
+        'size': fileSize,
+        'chunk_index': idx + 1,
+        'total_chunks': totalChunks,
+      });
+
+      // Pacing pause: 20ms yields event loop and lets network drain smoothly
+      if (idx + 1 < totalChunks) {
+        await Future.delayed(const Duration(milliseconds: 20));
+      }
+    }
+
+    _pendingSyncs++;
+    notifyListeners();
+    _addLog('Sent to PC: $filepath');
   }
 
   void _handleConflict(ConflictMessage msg) {
@@ -626,26 +728,22 @@ class SyncManager extends ChangeNotifier {
         return;
       }
 
-      // Otherwise send the full delta
+      // Otherwise send the chunked delta
       vc.tick();
       await VectorClockStore.saveClock(filepath, vc);
 
       final deltas = await computeDelta(localPath, {});
       final fileSize = await File(localPath).length();
 
-      debugPrint('[delta] sending ${msg.filepath} size=${fileSize}b');
-      await _connection?.send({
-        'type': 'delta',
-        'filepath': filepath,
-        'deltas': deltas.map((d) => d.toJson()).toList(),
-        'clock': vc.toJson(),
-        'change': 'modified',
-        'size': fileSize,
-      });
+      await _sendDeltaChunked(
+        filepath: filepath,
+        deltas: deltas,
+        vc: vc,
+        change: 'modified',
+        fileSize: fileSize,
+      );
 
-      _pendingSyncs++;
       _addLog('Sent approved change to PC: $filepath');
-      notifyListeners();
     } catch (e) {
       _addLog('Error sending approved change $filepath: $e');
     }
@@ -737,6 +835,7 @@ class SyncManager extends ChangeNotifier {
 
         // Send change_pending notification to PC instead of immediate delta
         _awaitingPcApproval[filepath] = _PendingApproval(changeType);
+        _setStatus(SyncStatus.syncing, 'Sending $filepath…');
         await _connection?.send({
           'type': 'change_pending',
           'filepath': filepath,
@@ -822,9 +921,38 @@ class SyncManager extends ChangeNotifier {
     }
 
     if (added > 0) {
+      _setStatus(SyncStatus.syncing, 'Staging added files…');
       await _refreshFileList();
+      unawaited(_checkLocalChanges());
     }
     return added;
+  }
+
+  /// Explicitly delete a file from the sync folder and notify PC with vector clock tick.
+  Future<void> deleteFile(String filepath) async {
+    final localPath = p.join(_syncFolder, filepath);
+    final file = File(localPath);
+    if (await file.exists()) {
+      try {
+        await file.delete();
+      } catch (_) {}
+    }
+
+    final vc = await VectorClockStore.loadClock(filepath);
+    vc.tick();
+    await VectorClockStore.saveClock(filepath, vc);
+
+    _lastLocalTree.remove(filepath);
+    await _refreshFileList();
+
+    await _connection?.send({
+      'type': 'delete',
+      'filepath': filepath,
+      'clock': vc.toJson(),
+    });
+
+    _addLog('Deleted locally and notified PC: $filepath');
+    notifyListeners();
   }
 
   void _setStatus(SyncStatus newStatus, String message) {
@@ -848,6 +976,7 @@ class SyncManager extends ChangeNotifier {
 
     _connection = transport;
     _connectionStateSub = _connection!.stateStream.listen((state) {
+      debugPrint('[sync] Transport state changed: $state');
       switch (state) {
         case SyncConnectionState.disconnected:
           _connectedDeviceName = null;
@@ -858,11 +987,13 @@ class SyncManager extends ChangeNotifier {
           // Clear pending changes on disconnect — they're no longer valid
           _pendingChanges.clear();
           _awaitingPcApproval.clear();
+          _addLog('Disconnected from PC');
           notifyListeners();
         case SyncConnectionState.connecting:
           _setStatus(SyncStatus.connecting, _connectingMessageForProfile());
         case SyncConnectionState.connected:
           _setStatus(SyncStatus.syncing, _syncingMessageForProfile());
+          _addLog('Connected to PC — performing handshake...');
       }
     });
   }
@@ -870,7 +1001,7 @@ class SyncManager extends ChangeNotifier {
   String _disconnectedMessageForProfile() {
     switch (_connectionProfile) {
       case _ConnectionProfile.lan:
-        return 'Searching for PC on WiFi...';
+        return 'Not connected — connect via Hotspot or Wi-Fi';
       case _ConnectionProfile.remote:
         return 'Waiting for remote peer...';
     }

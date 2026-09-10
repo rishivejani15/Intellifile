@@ -196,7 +196,7 @@ function computeDeltaStream(filepath, remoteChecksums, onChunk) {
 }
 
 /** Apply incoming delta blocks to a local file. */
-function applyDelta(filepath, deltasRaw, expectedSize) {
+function applyDelta(filepath, deltasRaw, expectedSize, isFinalChunk = false) {
   // Fix RAM bloat + Destructive overwrite
   console.log(`[sync-engine] applyDelta: processing ${deltasRaw.length} chunks for ${filepath}`);
 
@@ -214,7 +214,7 @@ function applyDelta(filepath, deltasRaw, expectedSize) {
       fs.writeSync(fd, buf, 0, buf.length, position);
     }
 
-    if (expectedSize !== undefined && expectedSize !== null) {
+    if (isFinalChunk && expectedSize !== undefined && expectedSize !== null) {
       fs.ftruncateSync(fd, expectedSize);
     }
 
@@ -330,14 +330,36 @@ class SyncEngine extends EventEmitter {
     this._iceRestartFailures = 0;
     this._usingRelay = false;       // true = fallback to WS relay mode
     this._webrtcAvailable = !!wrtc; // false if wrtc module not installed
+    this._activeIncomingFiles = new Set();
 
     // ensure sync folder exists
     if (!fs.existsSync(this.syncFolder)) {
       fs.mkdirSync(this.syncFolder, { recursive: true });
     }
+
+    // Clean up any stale .syncing marker files from interrupted sessions
+    try {
+      if (fs.existsSync(this.syncFolder)) {
+        for (const file of fs.readdirSync(this.syncFolder)) {
+          if (file.endsWith('.syncing')) {
+            try { fs.unlinkSync(path.join(this.syncFolder, file)); } catch (_) {}
+          }
+        }
+      }
+    } catch (_) {}
   }
 
   // ── Public API ──────────────────────────────────────────────────────
+
+  /** Returns true if a file is actively receiving chunks. */
+  isSyncingFile(filePath) {
+    if (!filePath) return false;
+    const norm = path.resolve(filePath).toLowerCase();
+    for (const p of this._activeIncomingFiles) {
+      if (norm === p || norm.startsWith(p)) return true;
+    }
+    return false;
+  }
 
   /**
    * Connect to the signaling server and join a session.
@@ -513,6 +535,9 @@ class SyncEngine extends EventEmitter {
   }
 
   _cleanup() {
+    if (this._activeIncomingFiles) {
+      this._activeIncomingFiles.clear();
+    }
     this._stopWatcher();
     if (this._reconnectTimer) {
       clearTimeout(this._reconnectTimer);
@@ -567,6 +592,37 @@ class SyncEngine extends EventEmitter {
     this._log(`Rejected all ${this._pendingChanges.length} pending changes`);
     this._pendingChanges = [];
     this._emitPending();
+  }
+
+  deleteFile(filepath) {
+    const localPath = path.join(this.syncFolder, filepath);
+    if (fs.existsSync(localPath)) {
+      try { fs.unlinkSync(localPath); } catch (_) {}
+    }
+    const lockPath = localPath + '.syncing';
+    if (fs.existsSync(lockPath)) {
+      try { fs.unlinkSync(lockPath); } catch (_) {}
+    }
+    if (this._activeIncomingFiles) {
+      this._activeIncomingFiles.delete(localPath.toLowerCase());
+    }
+
+    const vc = this._vcStore.tick(filepath);
+    delete this._lastLocalTree[filepath];
+
+    const entries = Object.entries(this._lastLocalTree)
+      .filter(([k]) => k !== '__root__')
+      .sort((a, b) => a[0].localeCompare(b[0]));
+    this._lastLocalTree['__root__'] = md5(Buffer.from(entries.map(([k, v]) => `${k}:${v}`).join('')));
+
+    this._sendSyncMessage({
+      type: 'delete',
+      filepath,
+      clock: vc,
+    });
+
+    this._emitFiles();
+    this._log(`Deleted locally and sent delete to peer: ${filepath}`);
   }
 
   getFiles() {
@@ -1024,14 +1080,29 @@ class SyncEngine extends EventEmitter {
 
     for (const [filepath, changeType] of changeEntries) {
       if (changeType === 'remote_only') {
-        // File exists on remote (mobile) but not locally — request it
-        this._log(`Requesting remote-only file from mobile: ${filepath}`);
-        const localCs = localBlockChecksums[filepath] || {};
-        this._sendSyncMessage({
-          type: 'request_delta',
-          filepath,
-          block_checksums: localCs,
-        });
+        // File exists on remote (mobile) but not locally
+        const localClock = this._vcStore.load(filepath);
+        const remoteClock = remoteClocks[filepath] || {};
+        const result = this._compareClock(localClock, remoteClock);
+
+        if (result === 'local_wins') {
+          // PC deleted this file more recently! Send delete to remote so it removes it too
+          this._log(`  ${filepath}: local delete wins → sending delete to remote`);
+          this._sendSyncMessage({
+            type: 'delete',
+            filepath,
+            clock: localClock,
+          });
+        } else {
+          // File was newly added or modified on mobile — request it
+          this._log(`Requesting remote-only file from mobile: ${filepath}`);
+          const localCs = localBlockChecksums[filepath] || {};
+          this._sendSyncMessage({
+            type: 'request_delta',
+            filepath,
+            block_checksums: localCs,
+          });
+        }
 
       } else if (changeType === 'modified') {
         // Both sides have it — use vector clocks to decide the winner
@@ -1074,22 +1145,38 @@ class SyncEngine extends EventEmitter {
         }
 
       } else if (changeType === 'local_only') {
-        // File exists locally but not on remote — push it
-        this._log(`Pushing local-only file to remote: ${filepath}`);
-        const localPath = path.join(this.syncFolder, filepath);
-        if (fs.existsSync(localPath)) {
-          const fileSize = fs.statSync(localPath).size;
-          const vc = this._vcStore.tick(filepath);
-          computeDeltaStream(localPath, {}, (deltasChunk) => {
-            this._sendSyncMessage({
-              type: 'delta',
-              filepath,
-              deltas: deltasChunk,
-              clock: vc,
-              change: 'added',
-              size: fileSize,
+        // File exists locally on PC but not on remote
+        const localClock = this._vcStore.load(filepath);
+        const remoteClock = remoteClocks[filepath] || {};
+        const result = this._compareClock(localClock, remoteClock);
+
+        if (result === 'remote_wins') {
+          // Remote deleted this file! Delete it locally on PC
+          const localPath = path.join(this.syncFolder, filepath);
+          if (fs.existsSync(localPath)) {
+            try { fs.unlinkSync(localPath); } catch (_) {}
+          }
+          this._vcStore.merge(filepath, remoteClock);
+          delete this._lastLocalTree[filepath];
+          this._log(`  ${filepath}: remote delete wins → removed locally`);
+        } else {
+          // File was newly added or modified locally — push it
+          this._log(`Pushing local-only file to remote: ${filepath}`);
+          const localPath = path.join(this.syncFolder, filepath);
+          if (fs.existsSync(localPath)) {
+            const fileSize = fs.statSync(localPath).size;
+            const vc = this._vcStore.tick(filepath);
+            computeDeltaStream(localPath, {}, (deltasChunk) => {
+              this._sendSyncMessage({
+                type: 'delta',
+                filepath,
+                deltas: deltasChunk,
+                clock: vc,
+                change: 'added',
+                size: fileSize,
+              });
             });
-          });
+          }
         }
       }
     }
@@ -1103,15 +1190,41 @@ class SyncEngine extends EventEmitter {
   // ── Delta handling ────────────────────────────────────────────────
 
   async _handleDelta(msg) {
-    const { filepath, deltas, clock, change, size } = msg;
-    this._emit('status', { status: 'syncing', message: `Syncing: ${filepath}` });
+    const { filepath, deltas, clock, change, size, chunk_index, total_chunks } = msg;
+    const isFinalChunk = (chunk_index == null) || (total_chunks == null) || (chunk_index >= total_chunks);
+    const progressPct = (chunk_index != null && total_chunks != null && total_chunks > 0)
+      ? Math.round((chunk_index / total_chunks) * 100)
+      : null;
+
+    const localPath = path.join(this.syncFolder, filepath);
+    const lockPath = localPath + '.syncing';
+
+    if (!isFinalChunk) {
+      this._activeIncomingFiles.add(localPath.toLowerCase());
+      try {
+        if (!fs.existsSync(lockPath)) {
+          fs.writeFileSync(lockPath, '');
+        }
+      } catch (_) {}
+    }
+
+    this._emit('status', {
+      status: 'syncing',
+      message: (total_chunks && total_chunks > 1)
+        ? `Receiving ${filepath} (${chunk_index}/${total_chunks})`
+        : `Syncing: ${filepath}`,
+      progress: progressPct,
+      filename: filepath,
+      isIncoming: true,
+      chunkIndex: chunk_index,
+      totalChunks: total_chunks,
+    });
 
     // Guard watcher — prevent it from re-announcing what we just wrote
     this._processingSync = true;
     try {
       if (change === 'deleted') {
         // Mobile is telling us a file was deleted on their side — delete it here too
-        const localPath = path.join(this.syncFolder, filepath);
         if (fs.existsSync(localPath)) {
           fs.unlinkSync(localPath);
           this._log(`Deleted (remote requested): ${filepath}`);
@@ -1119,36 +1232,42 @@ class SyncEngine extends EventEmitter {
           this._log(`Delete: file already absent: ${filepath}`);
         }
       } else {
-        const localPath = path.join(this.syncFolder, filepath);
         const dir = path.dirname(localPath);
         if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-        // Pass the authoritative file size so applyDelta can truncate correctly
-        // when the incoming version is shorter than what we have locally.
-        applyDelta(localPath, deltas || [], size);
+        applyDelta(localPath, deltas || [], size, isFinalChunk);
+      }
+
+      if (isFinalChunk) {
+        this._activeIncomingFiles.delete(localPath.toLowerCase());
+        try {
+          if (fs.existsSync(lockPath)) {
+            fs.unlinkSync(lockPath);
+          }
+        } catch (_) {}
+
+        if (clock) {
+          this._vcStore.merge(filepath, clock);
+        }
+
+        // Update the Merkle snapshot for this one file on the final chunk
+        if (change === 'deleted' || !fs.existsSync(localPath)) {
+          delete this._lastLocalTree[filepath];
+        } else {
+          this._lastLocalTree[filepath] = md5File(localPath);
+        }
+
+        // Recompute the root hash so the watcher snapshot stays accurate
+        const entries = Object.entries(this._lastLocalTree)
+          .filter(([k]) => k !== '__root__')
+          .sort((a, b) => a[0].localeCompare(b[0]));
+        this._lastLocalTree['__root__'] = md5(Buffer.from(entries.map(([k, v]) => `${k}:${v}`).join('')));
+
+        this.emit('file-synced', { filepath, localPath });
+        this._sendSyncMessage({ type: 'ack', filepath });
+        this._emitFiles();
+        this._emit('status', { status: 'synced', message: `Synced ${filepath}`, progress: 100 });
         this._log(`Synced: ${filepath} (${size != null ? size + 'b' : 'size unknown'})`);
       }
-
-      if (clock) {
-        this._vcStore.merge(filepath, clock);
-      }
-
-      // Update the Merkle snapshot for this one file rather than rebuilding the
-      // whole tree — avoids O(n) full-walk after every incoming delta.
-      const localPath = path.join(this.syncFolder, filepath);
-      if (change === 'deleted' || !fs.existsSync(localPath)) {
-        delete this._lastLocalTree[filepath];
-      } else {
-        this._lastLocalTree[filepath] = md5File(localPath);
-      }
-      // Recompute the root hash so the watcher snapshot stays accurate
-      const entries = Object.entries(this._lastLocalTree)
-        .filter(([k]) => k !== '__root__')
-        .sort((a, b) => a[0].localeCompare(b[0]));
-      this._lastLocalTree['__root__'] = md5(Buffer.from(entries.map(([k, v]) => `${k}:${v}`).join('')));
-
-      this._sendSyncMessage({ type: 'ack', filepath });
-      this._emitFiles();
-      this._emit('status', { status: 'synced', message: 'Sync complete' });
     } catch (e) {
       this._log(`Error syncing ${filepath}: ${e.message}`);
     } finally {
@@ -1216,6 +1335,26 @@ class SyncEngine extends EventEmitter {
   _handleChangePending(msg) {
     const filepath = msg.filepath;
     const changeType = msg.change_type || 'modified';
+
+    const localPath = path.join(this.syncFolder, filepath);
+    const lockPath = localPath + '.syncing';
+    this._activeIncomingFiles.add(localPath.toLowerCase());
+    try {
+      if (!fs.existsSync(lockPath)) {
+        fs.writeFileSync(lockPath, '');
+      }
+    } catch (_) {}
+
+    // Emit loading state right away so PC UI displays the loading banner immediately!
+    this._emit('status', {
+      status: 'syncing',
+      message: `Receiving ${filepath}…`,
+      progress: 0,
+      filename: filepath,
+      isIncoming: true,
+      chunkIndex: 0,
+      totalChunks: null,
+    });
 
     // Track in _pendingMobileChanges so _handleSyncApproved can look it up
     this._pendingMobileChanges[filepath] = { changeType };

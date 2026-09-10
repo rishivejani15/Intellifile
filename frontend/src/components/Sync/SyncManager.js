@@ -96,28 +96,46 @@ const SyncManager = () => {
   const [activeTab, setActiveTab] = useState('files'); // 'files' | 'devices' | 'activity'
   const [localAddress, setLocalAddress] = useState('');
   const [localAddressError, setLocalAddressError] = useState('');
+  const [candidates, setCandidates] = useState([]);
+  const [selectedIp, setSelectedIp] = useState('');
   const [connectedDevices, setConnectedDevices] = useState([]);
   const [showFilePicker, setShowFilePicker] = useState(false);
   const isConnected = ['synced', 'syncing', 'waiting', 'reconnecting', 'connected_p2p', 'connected_relay'].includes(syncStatus.status);
 
+  const activeCandidate = candidates.find(c => c.address === selectedIp) || candidates[0];
+  const isHotspot = activeCandidate?.isHotspot || false;
+
   const qrValue = localAddress
-    ? (localAddress.startsWith('http') ? localAddress : `http://${localAddress}`)
+    ? `intellifile://connect?addr=${encodeURIComponent(localAddress)}&v=1`
     : '';
+
+  const handleSelectCandidate = (addr) => {
+    setSelectedIp(addr);
+    const port = (localAddress && localAddress.includes(':')) ? localAddress.split(':')[1] : '8765';
+    setLocalAddress(`${addr}:${port}`);
+  };
 
   const loadLocalAddress = useCallback(async () => {
     try {
       if (!window.intellifile?.getLocalSyncAddress) return;
       const res = await window.intellifile.getLocalSyncAddress();
       if (res && res.success && res.address) {
+        const cList = res.candidates || [];
+        setCandidates(cList);
+        setSelectedIp(prev => {
+          const match = cList.find(c => c.address === prev);
+          return match ? prev : res.ip;
+        });
         setLocalAddress(res.address);
         setLocalAddressError('');
       } else {
+        setCandidates([]);
         setLocalAddress('');
-        setLocalAddressError('Could not detect a LAN IPv4 address.');
+        setLocalAddressError('Could not detect a local network or hotspot address.');
       }
     } catch (e) {
       setLocalAddress('');
-      setLocalAddressError('Failed to read LAN address.');
+      setLocalAddressError('Failed to read network address.');
     }
   }, []);
 
@@ -600,6 +618,34 @@ const SyncManager = () => {
         </div>
       )}
 
+      {/* ── Active Transfer / Loader Banner ───────────────────────────── */}
+      {syncStatus.status === 'syncing' && (
+        <div className="sync-active-transfer-banner">
+          <div className="transfer-icon-pulse">
+            <FiDownload size={18} className="transfer-spin-icon" />
+          </div>
+          <div className="transfer-details">
+            <div className="transfer-header-row">
+              <span className="transfer-title">
+                {syncStatus.isIncoming ? '📥 Receiving from Mobile' : '🔄 Synchronizing Files'}
+              </span>
+              <span className="transfer-pct">
+                {syncStatus.progress != null ? `${syncStatus.progress}%` : 'In Progress…'}
+              </span>
+            </div>
+            <div className="transfer-filename">
+              {syncStatus.message || 'Transferring chunks…'}
+            </div>
+            <div className="transfer-progress-track">
+              <div
+                className="transfer-progress-fill"
+                style={{ width: `${syncStatus.progress != null ? Math.min(100, Math.max(8, syncStatus.progress)) : 100}%` }}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── Main Content Body ─────────────────────────────────────────── */}
       <div className="vault-content-body sync-content-body">
         {/* ── TAB 1: SYNCED FILES ────────────────────────────────────── */}
@@ -776,15 +822,36 @@ const SyncManager = () => {
         {activeTab === 'devices' && (
           <div className="sync-devices-tab-view">
             <div className="sync-devices-layout-grid" data-tour="sync-overview">
-              {/* Left Card: High-Impact LAN Wi-Fi QR Code */}
+              {/* Left Card: High-Impact Direct Hotspot / LAN QR Code */}
               <div className="vault-card sync-qr-showcase-card" data-tour="sync-qr-code">
                 <div className="showcase-header">
                   <div className="showcase-title-row">
                     <FiWifi className="showcase-icon" size={20} />
-                    <span className="showcase-title">LAN Wi-Fi Instant Pair</span>
+                    <span className="showcase-title">
+                      {isHotspot ? '🔥 Hotspot Direct Pair' : 'Direct Hotspot & LAN Pair'}
+                    </span>
                   </div>
-                  <span className="showcase-tag">Direct P2P</span>
+                  <span className="showcase-tag">
+                    {isHotspot ? 'Hotspot Active' : 'Offline Ready'}
+                  </span>
                 </div>
+
+                {candidates.length > 1 && (
+                  <div className="showcase-network-select">
+                    <span className="ip-label" style={{ fontSize: '11px' }}>Network:</span>
+                    <select
+                      value={selectedIp || (candidates[0] && candidates[0].address)}
+                      onChange={(e) => handleSelectCandidate(e.target.value)}
+                      className="network-select-input"
+                    >
+                      {candidates.map(c => (
+                        <option key={c.address} value={c.address}>
+                          {c.isHotspot ? '🔥 ' : '📶 '}{c.label || `${c.name} (${c.address})`}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
 
                 <div className="showcase-qr-stage">
                   <div className="showcase-qr-box">
@@ -798,7 +865,7 @@ const SyncManager = () => {
 
                 <div className="showcase-info-box">
                   <div className="showcase-ip-row">
-                    <span className="ip-label">LAN Address:</span>
+                    <span className="ip-label">{isHotspot ? 'Hotspot IP:' : 'Sync IP:'}</span>
                     <span className={`ip-val ${!localAddress && localAddressError ? 'ip-val-error' : ''}`}>
                       {localAddress || localAddressError || 'Detecting address…'}
                     </span>
@@ -809,7 +876,9 @@ const SyncManager = () => {
                     )}
                   </div>
                   <p className="showcase-instruction">
-                    Open IntelliFile on your mobile device connected to the same Wi-Fi network and scan the QR code above.
+                    {isHotspot
+                      ? 'Connected via Hotspot (no internet needed). Open the IntelliFile app on your phone and scan the QR code.'
+                      : 'Connect phone and PC via Hotspot or Wi-Fi (no internet needed) and scan this QR code.'}
                   </p>
                 </div>
               </div>

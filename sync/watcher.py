@@ -21,7 +21,7 @@ log = logging.getLogger("intellifil.watcher")
 
 # Debounce window in seconds — rapid successive events on the same file are
 # coalesced into a single callback after this quiet period.
-DEBOUNCE_SECONDS = 0.5
+DEBOUNCE_SECONDS = 1.5
 
 
 class _DebouncedHandler(FileSystemEventHandler):
@@ -59,9 +59,12 @@ class _DebouncedHandler(FileSystemEventHandler):
             # Can happen on Windows when drive letters differ
             return
 
-        # Ignore hidden/temp files
+        # Ignore hidden/temp/active sync files
         basename = os.path.basename(abs_path)
-        if basename.startswith(".") or basename.endswith(".tmp"):
+        if basename.startswith(".") or basename.endswith(".tmp") or basename.endswith(".syncing"):
+            return
+
+        if os.path.exists(abs_path + ".syncing"):
             return
 
         with self._lock:
@@ -85,10 +88,14 @@ class _DebouncedHandler(FileSystemEventHandler):
             self._pending.pop(rel_path, None)
 
         try:
+            abs_path = os.path.join(self._sync_folder, rel_path)
+            if os.path.exists(abs_path + ".syncing"):
+                # Active sync in progress — do not hash or trigger
+                return
+
             cached_tree = load_merkle_cache(self._db_path)
 
             if event_type != "deleted":
-                abs_path = os.path.join(self._sync_folder, rel_path)
                 if not os.path.exists(abs_path):
                     return  # File disappeared before we could process it
 

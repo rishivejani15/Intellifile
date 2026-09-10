@@ -1429,6 +1429,8 @@ app.on('will-quit', () => {
 
 function triggerFileVersionSave(filePath) {
   if (!filePath || _isTransientFile(filePath)) return;
+  if (filePath.endsWith('.syncing') || fs.existsSync(filePath + '.syncing')) return;
+  if (syncEngine && typeof syncEngine.isSyncingFile === 'function' && syncEngine.isSyncingFile(filePath)) return;
   const normP = filePath.toLowerCase().replace(/\//g, '\\');
   if (_recentlyDeletedPaths.has(normP)) return;
 
@@ -1442,8 +1444,16 @@ function triggerFileVersionSave(filePath) {
 
     try {
       if (!fs.existsSync(filePath)) return;
+      const stat = fs.statSync(filePath);
       const extP = path.extname(filePath).toLowerCase();
-      const isBinaryP = ['.docx', '.xlsx', '.pdf', '.zip', '.pptx', '.pptm', '.ppt'].includes(extP);
+      const binaryExts = new Set([
+        '.docx', '.xlsx', '.pdf', '.zip', '.pptx', '.pptm', '.ppt',
+        '.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm', '.m4v',
+        '.mp3', '.wav', '.flac', '.aac', '.ogg', '.m4a',
+        '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp', '.ico', '.tiff',
+        '.exe', '.dll', '.bin', '.iso', '.tar', '.gz', '.7z', '.rar'
+      ]);
+      const isBinaryP = binaryExts.has(extP) || (stat && stat.size > 2 * 1024 * 1024);
 
       let currentVal = '';
       if (!isBinaryP) {
@@ -1454,7 +1464,7 @@ function triggerFileVersionSave(filePath) {
         }
       } else {
         try {
-          currentVal = fs.statSync(filePath).mtimeMs.toString();
+          currentVal = stat.mtimeMs.toString();
         } catch (_) {
           return;
         }
@@ -1507,6 +1517,9 @@ function startWatchingFile(filePath) {
     });
 
     watcher.on('change', (p) => {
+      if (_isTransientFile(p)) return;
+      if (p.endsWith('.syncing') || fs.existsSync(p + '.syncing')) return;
+      if (syncEngine && typeof syncEngine.isSyncingFile === 'function' && syncEngine.isSyncingFile(p)) return;
       console.log(`[Watcher] Raw Change detected: ${p}`);
       triggerFileVersionSave(p);
       sendToPython({
@@ -1615,6 +1628,7 @@ const _TRANSIENT_PATTERNS = [
   /\.aria2$/i,               // aria2 download temp
   /:Zone\.Identifier$/i,     // Windows ADS zone identifier
   /\.lnk$/i,                 // Windows shortcuts (spurious events)
+  /\.syncing$/i,             // Active sync marker file
 ];
 
 function _isTransientFile(filePath) {
@@ -1652,6 +1666,8 @@ function startWatchingDirectory(directoryPath) {
     watcher.on('add', (filePath) => {
       // Skip transient/temp files and recently-deleted paths
       if (_isTransientFile(filePath)) return;
+      if (filePath.endsWith('.syncing') || fs.existsSync(filePath + '.syncing')) return;
+      if (syncEngine && typeof syncEngine.isSyncingFile === 'function' && syncEngine.isSyncingFile(filePath)) return;
       if (_recentlyDeletedPaths.has(filePath.toLowerCase())) return;
       const item = buildDirectoryItem(filePath);
       if (item) {
@@ -1675,6 +1691,8 @@ function startWatchingDirectory(directoryPath) {
 
     watcher.on('change', (filePath) => {
       if (_isTransientFile(filePath)) return;
+      if (filePath.endsWith('.syncing') || fs.existsSync(filePath + '.syncing')) return;
+      if (syncEngine && typeof syncEngine.isSyncingFile === 'function' && syncEngine.isSyncingFile(filePath)) return;
       if (_recentlyDeletedPaths.has(filePath.toLowerCase())) return;
       const item = buildDirectoryItem(filePath);
       if (item) {
@@ -1979,7 +1997,7 @@ function isPortOpen(port, host = '127.0.0.1', timeout = 500) {
 
 function getLocalIpv4() {
   const nets = require('os').networkInterfaces();
-  const candidates = [];
+  const rawCandidates = [];
   const linkLocalCandidates = [];
   let loopbackAddress = '127.0.0.1';
 
@@ -1993,34 +2011,56 @@ function getLocalIpv4() {
       }
       if (net.address) {
         if (net.address.startsWith('169.254.')) {
-          linkLocalCandidates.push({ name, address: net.address });
+          linkLocalCandidates.push({ name, address: net.address, type: 'link-local', label: `${name} (Link-Local)` });
         } else {
-          candidates.push({ name, address: net.address });
+          rawCandidates.push({ name, address: net.address });
         }
       }
     }
   }
 
-  const privateRanges = [
-    /^10\./,
-    /^192\.168\./,
-    /^172\.(1[6-9]|2\d|3[0-1])\./,
-  ];
-
-  for (const range of privateRanges) {
-    const match = candidates.find((candidate) => range.test(candidate.address));
-    if (match) return { address: match.address, candidates };
+  // Score candidate: hotspot subnets get highest priority (0..2), standard LAN next (3..5)
+  function scoreCandidate(candidate) {
+    const ip = candidate.address;
+    const lowerName = (candidate.name || '').toLowerCase();
+    if (ip.startsWith('192.168.137.')) return { score: 0, type: 'hotspot', label: 'PC Mobile Hotspot (192.168.137.x)' };
+    if (ip.startsWith('192.168.43.')) return { score: 1, type: 'hotspot', label: 'Phone Hotspot - Android (192.168.43.x)' };
+    if (ip.startsWith('172.20.10.')) return { score: 2, type: 'hotspot', label: 'Phone Hotspot - iPhone (172.20.10.x)' };
+    if (lowerName.includes('hotspot') || lowerName.includes('wi-fi direct') || lowerName.includes('direct')) {
+      return { score: 3, type: 'hotspot', label: `${candidate.name} (Direct / Hotspot)` };
+    }
+    if (ip.startsWith('192.168.')) return { score: 4, type: 'lan', label: `${candidate.name} (${ip})` };
+    if (ip.startsWith('10.')) return { score: 5, type: 'lan', label: `${candidate.name} (${ip})` };
+    if (/^172\.(1[6-9]|2\d|3[0-1])\./.test(ip)) return { score: 6, type: 'lan', label: `${candidate.name} (${ip})` };
+    return { score: 7, type: 'other', label: `${candidate.name} (${ip})` };
   }
 
-  if (candidates.length > 0) {
-    return { address: candidates[0].address, candidates };
+  const scoredCandidates = rawCandidates.map(c => {
+    const info = scoreCandidate(c);
+    return {
+      name: c.name,
+      address: c.address,
+      type: info.type,
+      label: info.label,
+      score: info.score,
+      isHotspot: info.type === 'hotspot',
+    };
+  });
+
+  scoredCandidates.sort((a, b) => a.score - b.score);
+
+  if (scoredCandidates.length > 0) {
+    return { address: scoredCandidates[0].address, candidates: scoredCandidates };
   }
 
   if (linkLocalCandidates.length > 0) {
     return { address: linkLocalCandidates[0].address, candidates: linkLocalCandidates };
   }
 
-  return { address: loopbackAddress, candidates: [{ name: 'loopback', address: loopbackAddress }] };
+  return {
+    address: loopbackAddress,
+    candidates: [{ name: 'loopback', address: loopbackAddress, type: 'loopback', label: 'Loopback', isHotspot: false }],
+  };
 }
 
 function checkInternetConnectivity(timeoutMs = 3000) {
@@ -2372,6 +2412,18 @@ function ensureSyncEngine() {
   syncEngine.on('pending', (changes) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('sync-pending', changes);
+    }
+  });
+
+  syncEngine.on('file-synced', ({ filepath, localPath }) => {
+    if (localPath && fs.existsSync(localPath)) {
+      console.log(`[Sync] File finalized: ${filepath}, triggering single version save & index`);
+      triggerFileVersionSave(localPath);
+      sendToPython({
+        action: 'index_file',
+        file_path: localPath,
+        allow_protected: getAllowProtectedIndexing()
+      }).catch(() => {});
     }
   });
 
@@ -5272,8 +5324,16 @@ function registerIpcHandlers() {
     try {
       const syncDir = path.join(__dirname, '..', 'sync', 'intellifil_files');
       const target = path.join(syncDir, fileName);
-      if (fs.existsSync(target)) fs.unlinkSync(target);
-      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('sync-files', walkSyncFiles(syncDir));
+
+      if (syncEngine && typeof syncEngine.deleteFile === 'function') {
+        syncEngine.deleteFile(fileName);
+      } else {
+        if (fs.existsSync(target)) fs.unlinkSync(target);
+      }
+
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('sync-files', walkSyncFiles(syncDir));
+      }
       return { success: true };
     } catch (err) {
       console.error('[Sync] remove-sync-file error:', err && err.message ? err.message : err);

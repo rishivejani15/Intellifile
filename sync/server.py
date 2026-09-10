@@ -333,21 +333,43 @@ async def _handle_mobile_message(ws: WebSocket, data: dict):
         local_path = os.path.join(SYNC_FOLDER, filepath)
         os.makedirs(os.path.dirname(local_path), exist_ok=True)
 
-        expected_size = data.get("size")
+        chunk_index  = data.get("chunk_index")
+        total_chunks = data.get("total_chunks")
+        is_final_chunk = (chunk_index is None) or (total_chunks is None) or (chunk_index >= total_chunks)
+
+        lock_path = local_path + ".syncing"
+        if not is_final_chunk:
+            if not os.path.exists(lock_path):
+                try:
+                    open(lock_path, "wb").close()
+                except Exception:
+                    pass
+
+        # Only truncate to final expected size on the final chunk
+        expected_size = data.get("size") if is_final_chunk else None
         apply_delta(local_path, data.get("deltas", []), expected_size)
 
-        vc = load_clock(DB_PATH, filepath)
-        vc.merge(data.get("clock", {}))
-        save_clock(DB_PATH, filepath, vc)
+        if is_final_chunk:
+            if os.path.exists(lock_path):
+                try:
+                    os.remove(lock_path)
+                except Exception:
+                    pass
 
-        # Update Merkle cache so watcher ignores this change
-        cached_tree = load_merkle_cache(DB_PATH)
-        if os.path.exists(local_path):
-            cached_tree[filepath] = file_checksum(local_path)
-        save_merkle_cache(DB_PATH, cached_tree)
+            vc = load_clock(DB_PATH, filepath)
+            vc.merge(data.get("clock", {}))
+            save_clock(DB_PATH, filepath, vc)
 
-        log.info("Applied delta from mobile: %s", filepath)
-        await ws.send_json({"type": "ack", "filepath": filepath})
+            # Update Merkle cache so watcher ignores this change
+            cached_tree = load_merkle_cache(DB_PATH)
+            if os.path.exists(local_path):
+                cached_tree[filepath] = file_checksum(local_path)
+            save_merkle_cache(DB_PATH, cached_tree)
+
+            log.info("Applied full delta from mobile: %s", filepath)
+            await ws.send_json({"type": "ack", "filepath": filepath})
+        else:
+            log.info("Applied chunk %s/%s from mobile: %s", chunk_index, total_chunks, filepath)
 
     elif msg_type == "handshake":
         mobile_tree = data.get("tree", {})
@@ -513,22 +535,27 @@ async def send_delta_chunked(
 ):
     try:
         deltas = compute_delta(local_path, remote_cs)
-        total_chunks = max(1, (len(deltas) + 49) // 50)
+        chunk_size = 8  # 8 blocks of 128KB = ~1MB raw, ~2MB hex JSON
+        total_chunks = max(1, (len(deltas) + chunk_size - 1) // chunk_size)
         size = os.path.getsize(local_path)
 
         for idx in range(total_chunks):
-            start = idx * 50
-            end = start + 50
+            start = idx * chunk_size
+            end = min(start + chunk_size, len(deltas))
             chunk = deltas[start:end]
-            log.info("[chunked-delta] sending chunk %d/%d for %s per chunk", idx + 1, total_chunks, filepath)
+            log.info("[chunked-delta] sending chunk %d/%d for %s", idx + 1, total_chunks, filepath)
             await ws.send_json({
-                "type":     "delta",
-                "filepath": filepath,
-                "deltas":   chunk,
-                "clock":    clock,
-                "change":   change,
-                "size":     size,
+                "type":         "delta",
+                "filepath":     filepath,
+                "deltas":       chunk,
+                "clock":        clock,
+                "change":       change,
+                "size":         size,
+                "chunk_index":  idx + 1,
+                "total_chunks": total_chunks,
             })
+            if idx + 1 < total_chunks:
+                await asyncio.sleep(0.015)
     except Exception as exc:
         log.error("Chunked delta send failed for %s: %s", filepath, exc, exc_info=True)
         raise
@@ -586,4 +613,4 @@ async def shutdown():
 
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8765, reload=False)
+    uvicorn.run(app, host="0.0.0.0", port=8765, reload=False, ws_max_size=64 * 1024 * 1024)

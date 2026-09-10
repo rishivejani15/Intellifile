@@ -58,13 +58,18 @@ class _HomeScreenState extends State<HomeScreen>
     final trimmed = raw.trim();
     if (trimmed.isEmpty) return null;
 
+    // 1. Custom scheme: intellifile://connect?addr=IP:PORT&v=1
     final uri = Uri.tryParse(trimmed);
-    if (uri != null) {
-      if (uri.scheme == 'intellifile') {
-        final addr = uri.queryParameters['addr'];
-        if (addr != null && addr.isNotEmpty) return addr;
+    if (uri != null && uri.scheme == 'intellifile') {
+      final addr = uri.queryParameters['addr'];
+      if (addr != null && addr.isNotEmpty) {
+        debugPrint('[qr] Parsed intellifile:// addr=$addr');
+        return addr;
       }
+    }
 
+    // 2. Legacy http:// format: http://IP:PORT
+    if (uri != null && (uri.scheme == 'http' || uri.scheme == 'https')) {
       final host = uri.host;
       if (host.isNotEmpty) {
         final port = uri.hasPort ? uri.port : 8765;
@@ -72,8 +77,13 @@ class _HomeScreenState extends State<HomeScreen>
       }
     }
 
+    // 3. Raw IP:PORT
     final ipPort = RegExp(r'^(\d{1,3}\.){3}\d{1,3}:\d{2,5}$');
     if (ipPort.hasMatch(trimmed)) return trimmed;
+
+    // 4. Raw IP without port
+    final ipOnly = RegExp(r'^(\d{1,3}\.){3}\d{1,3}$');
+    if (ipOnly.hasMatch(trimmed)) return '$trimmed:8765';
 
     return null;
   }
@@ -83,6 +93,7 @@ class _HomeScreenState extends State<HomeScreen>
       context,
     ).push<String>(MaterialPageRoute(builder: (_) => const QrScanScreen()));
     if (raw == null) return null;
+    debugPrint('[qr] Raw QR value: $raw');
     return _extractLanAddress(raw);
   }
 
@@ -681,13 +692,24 @@ class _HomeScreenState extends State<HomeScreen>
                                     if (!context.mounted) return;
                                     ScaffoldMessenger.of(context).showSnackBar(
                                       const SnackBar(
-                                        content: Text('Invalid QR code'),
+                                        content: Text('Could not read a valid address from QR code'),
+                                        backgroundColor: Colors.redAccent,
                                       ),
                                     );
                                     return;
                                   }
 
                                   _manualIpController.text = address;
+
+                                  if (!context.mounted) return;
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text('Connecting to $address...'),
+                                      backgroundColor: const Color(0xFF3FA372),
+                                      duration: const Duration(seconds: 2),
+                                    ),
+                                  );
+
                                   try {
                                     await widget.syncManager.connectManually(
                                       address,
@@ -695,11 +717,13 @@ class _HomeScreenState extends State<HomeScreen>
                                     if (context.mounted) {
                                       Navigator.pop(context);
                                     }
-                                  } catch (_) {
+                                  } catch (e) {
                                     if (!context.mounted) return;
                                     ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(
-                                        content: Text('Connection failed'),
+                                      SnackBar(
+                                        content: Text('Connection failed: ${e.toString().length > 80 ? '${e.toString().substring(0, 80)}…' : e}'),
+                                        backgroundColor: Colors.redAccent,
+                                        duration: const Duration(seconds: 4),
                                       ),
                                     );
                                   }
@@ -812,8 +836,9 @@ class _HomeScreenState extends State<HomeScreen>
                                     final sessionId = _sessionIdController.text
                                         .trim();
                                     if (signalingUri.isEmpty ||
-                                        sessionId.isEmpty)
+                                        sessionId.isEmpty) {
                                       return;
+                                    }
                                     await widget.syncManager.connectRemotely(
                                       signalingUri,
                                       sessionId,

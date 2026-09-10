@@ -21,6 +21,8 @@ SyncMessage parseSyncMessage(Map<String, dynamic> json) {
         clock: Map<String, dynamic>.from(json['clock'] as Map),
         change: json['change'] as String,
         size: (json['size'] as num?)?.toInt(),
+        chunkIndex: (json['chunk_index'] as num?)?.toInt(),
+        totalChunks: (json['total_chunks'] as num?)?.toInt(),
       );
     case 'delete':
       return DeleteMessage(
@@ -81,12 +83,16 @@ class DeltaMessage extends SyncMessage {
   final Map<String, dynamic> clock;
   final String change;
   final int? size;
+  final int? chunkIndex;
+  final int? totalChunks;
   const DeltaMessage({
     required this.filepath,
     required this.deltas,
     required this.clock,
     required this.change,
     this.size,
+    this.chunkIndex,
+    this.totalChunks,
   });
 }
 

@@ -281,6 +281,32 @@
   letter-spacing: 0.05em;
 }
 
+.showcase-network-select {
+  width: 100%;
+  margin-bottom: var(--sp-3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.network-select-input {
+  background: var(--s-elev);
+  border: 1px solid var(--bo-light);
+  color: var(--t-primary);
+  border-radius: var(--rd-md);
+  padding: 4px 10px;
+  font-size: var(--text-xs);
+  font-family: inherit;
+  cursor: pointer;
+  max-width: 250px;
+  outline: none;
+}
+
+.network-select-input:focus {
+  border-color: var(--color-primary);
+}
+
 .showcase-qr-stage {
   padding: var(--sp-2);
   display: flex;
@@ -802,3 +828,88 @@
 .sync-notif-close:hover {
   color: var(--t-primary);
 }
+
+/* ── Active Transfer / Loader Banner ─────────────────── */
+.sync-active-transfer-banner {
+  margin: var(--sp-3) var(--sp-6) 0 var(--sp-6);
+  background: linear-gradient(135deg, rgba(63, 163, 114, 0.12), rgba(13, 148, 136, 0.08));
+  border: 1px solid rgba(63, 163, 114, 0.35);
+  border-radius: var(--rd-lg);
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  animation: fadeIn 0.25s ease-out;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.06);
+}
+
+.transfer-icon-pulse {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: var(--c-brand-soft);
+  color: var(--color-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.transfer-spin-icon {
+  animation: bounce 1.2s infinite;
+}
+
+@keyframes bounce {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-3px); }
+}
+
+.transfer-details {
+  flex: 1;
+  min-width: 0;
+}
+
+.transfer-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 3px;
+}
+
+.transfer-title {
+  font-size: var(--text-sm);
+  font-weight: 700;
+  color: var(--t-primary);
+}
+
+.transfer-pct {
+  font-size: var(--text-xs);
+  font-weight: 700;
+  color: var(--color-primary);
+  font-family: var(--font-mono, monospace);
+}
+
+.transfer-filename {
+  font-size: var(--text-xs);
+  color: var(--t-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-bottom: 6px;
+}
+
+.transfer-progress-track {
+  width: 100%;
+  height: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: var(--rd-full);
+  overflow: hidden;
+}
+
+.transfer-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--color-primary), #10b981);
+  border-radius: var(--rd-full);
+  transition: width 0.15s ease-out;
+}
+

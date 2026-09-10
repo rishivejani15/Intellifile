@@ -399,11 +399,14 @@ class FileListTile extends StatelessWidget {
     if (confirmed == true) {
       try {
         final relPath = p.relative(absPath, from: syncFolder);
-        final file = File(absPath);
-        if (await file.exists()) {
-          await file.delete();
+        if (syncManager != null) {
+          await syncManager?.deleteFile(relPath);
+        } else {
+          final file = File(absPath);
+          if (await file.exists()) {
+            await file.delete();
+          }
         }
-        syncManager?.refreshFiles();
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(

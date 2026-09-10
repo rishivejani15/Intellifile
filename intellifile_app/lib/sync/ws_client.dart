@@ -82,6 +82,8 @@ class WsClient {
         }
       }
 
+      final target = '$host:$port';
+
       final queryParams = _deviceId != null ? {'device_id': _deviceId!} : null;
       final uri = Uri(
         scheme: 'ws',
@@ -95,15 +97,23 @@ class WsClient {
 
       _channel = IOWebSocketChannel.connect(
         uri,
-        pingInterval: const Duration(seconds: 15),
+        pingInterval: const Duration(seconds: 30),
+        connectTimeout: const Duration(seconds: 15),
       );
 
-      // Wait for the connection to be ready
-      await _channel!.ready;
+      // Wait for the connection to be ready (with timeout)
+      await _channel!.ready.timeout(
+        const Duration(seconds: 10),
+        onTimeout: () {
+          throw TimeoutException(
+            'Connection timed out after 10s — is the PC reachable at $target?',
+          );
+        },
+      );
 
       _setState(WsConnectionState.connected);
       _reconnectAttempts = 0;
-      debugPrint('[ws] Connected to PC');
+      debugPrint('[ws] Connected to PC at $target');
 
       // Flush any pending messages
       await _flushPendingMessages();
@@ -127,6 +137,10 @@ class WsClient {
           _handleDisconnect();
         },
       );
+    } on TimeoutException catch (e) {
+      debugPrint('[ws] Connection timed out: $e');
+      _channel = null;
+      _handleDisconnect();
     } catch (e) {
       debugPrint('[ws] Connection failed: $e');
       _handleDisconnect();

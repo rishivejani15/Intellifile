@@ -645,7 +645,15 @@ while True:
             from core.versioning.snapshot_manager import get_last_version, compute_file_hash, get_version_content
             import os
             ext = os.path.splitext(file_path)[1].lower() if file_path else ""
-            is_binary = ext in [".docx", ".xlsx", ".pdf", ".zip", ".pptx", ".pptm", ".ppt"]
+            binary_exts = {
+                ".docx", ".xlsx", ".pdf", ".zip", ".pptx", ".pptm", ".ppt",
+                ".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm", ".m4v",
+                ".mp3", ".wav", ".flac", ".aac", ".ogg", ".m4a",
+                ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".ico", ".tiff",
+                ".exe", ".dll", ".bin", ".iso", ".tar", ".gz", ".7z", ".rar"
+            }
+            file_size = os.path.getsize(file_path) if file_path and os.path.exists(file_path) else 0
+            is_binary = ext in binary_exts or file_size > 2 * 1024 * 1024
             
             # Auto-read current disk content for external file changes if new_content was omitted/empty
             if file_path and os.path.exists(file_path) and (new_content == "" or new_content is None):

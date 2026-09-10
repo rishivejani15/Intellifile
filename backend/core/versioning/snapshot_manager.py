@@ -206,7 +206,9 @@ def save_snapshot(file_path: str, content_or_path: Any, metadata: dict, custom_t
                         if os.path.exists(potential_file):
                             existing_file = potential_file
                             metadata["reused_snapshot"] = existing_ts
-                            print(f"[Storage] Deduplication hit! Reusing {existing_ts} for {timestamp}")
+                            import sys
+                            sys.stderr.write(f"[Storage] Deduplication hit! Reusing {existing_ts} for {timestamp}\n")
+                            sys.stderr.flush()
                             break
             except Exception:
                 continue
@@ -226,7 +228,9 @@ def save_snapshot(file_path: str, content_or_path: Any, metadata: dict, custom_t
             # Block-Based Deduplication: Split into small pieces
             chunk_hashes = save_file_as_chunks(source_path)
             metadata["chunk_hashes"] = chunk_hashes
-            print(f"[Storage] Lego-Block Deduplication: Saved {len(chunk_hashes)} chunks.")
+            import sys
+            sys.stderr.write(f"[Storage] Lego-Block Deduplication: Saved {len(chunk_hashes)} chunks.\n")
+            sys.stderr.flush()
         else:
             # Fallback for memory-based binary (rare)
             with open(version_file, "wb") as f:

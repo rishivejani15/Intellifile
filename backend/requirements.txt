@@ -16,6 +16,7 @@ fastapi
 python-multipart
 requests
 uvicorn
+websockets
 pydantic-settings
 pydantic
 sentence-transformers[onnx] 
