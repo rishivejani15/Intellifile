@@ -177,7 +177,7 @@ function FileList({
     );
   }
 
-  const isDrivesView = items.length > 0 && items.every(i => i.type === 'drive' || i.type === 'portable' || i.isPortable);
+  const isDrivesView = items.length > 0 && items.every(i => (i.type === 'drive' || i.type === 'portable') && i.type !== 'file' && i.type !== 'folder');
 
   if (isDrivesView) {
     return (

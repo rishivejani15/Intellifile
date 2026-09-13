@@ -1,7 +1,7 @@
 .dfm-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(15, 23, 42, 0.45);
+  background: rgba(0, 0, 0, 0.70);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -134,13 +134,13 @@
 }
 
 .dfm-confirm {
-  background: var(--color-primary, #3b82f6);
+  background: var(--color-primary, #10b981);
   color: var(--t-inverse, #ffffff);
   border-color: transparent;
-  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.3);
+  box-shadow: 0 2px 8px rgba(16, 185, 129, 0.3);
 }
 
 .dfm-confirm:hover {
   opacity: 0.92;
-  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
+  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
 }

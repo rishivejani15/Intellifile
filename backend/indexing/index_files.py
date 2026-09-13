@@ -17,7 +17,22 @@ from core.db import (
 
 
 # ── Parallel text extraction ────────────────────────────
-_EXTRACT_WORKERS = min(8, (os.cpu_count() or 4))
+# Dynamically scale extraction workers, guaranteeing at least 50% CPU headroom
+def get_optimal_extraction_workers(cpu_count=None):
+    if cpu_count is None:
+        cpu_count = os.cpu_count() or 4
+    if cpu_count <= 2:
+        return 1
+    elif cpu_count <= 4:
+        return 2
+    elif cpu_count <= 8:
+        return max(2, cpu_count // 2)
+    else:
+        # Cap multi-process extraction at 8 workers to prevent disk I/O bottleneck
+        return min(8, max(4, cpu_count // 2))
+
+_cpu_count = os.cpu_count() or 4
+_EXTRACT_WORKERS = get_optimal_extraction_workers(_cpu_count)
 _BATCH_SIZE = 500          # files per commit batch
 _BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -232,6 +247,7 @@ def index_files_incremental(root_folder=None, progress_cb=None, allow_protected=
                 batch_data.clear()
 
             if processed % 10 == 0 or processed == total_to_extract:
+                time.sleep(0.001)  # Yield CPU slice to OS and UI scheduler
                 pct = int(processed / total_to_extract * 100) if total_to_extract else 100
                 _progress("extract", f"Extracted {processed}/{total_to_extract} files", pct=pct)
                 print(f"  … extracted {processed}/{total_to_extract} files", flush=True)

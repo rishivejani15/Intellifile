@@ -570,7 +570,6 @@ export default function Settings({ theme, onThemeChange, onStartTour, initialTab
   useEffect(() => {
     loadSettings();
     loadRecent();
-    loadStorageSummary();
     const unsub = ipc?.onAutoSortNotification?.(() => loadRecent());
     return () => { if (typeof unsub === 'function') unsub(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -763,6 +762,12 @@ export default function Settings({ theme, onThemeChange, onStartTour, initialTab
       loadAnalytics();
     }
   }, [telemetryEnabled, activeTab]);
+
+  useEffect(() => {
+    if (activeTab === 'storage' && !storageSummary) {
+      loadStorageSummary();
+    }
+  }, [activeTab, storageSummary]);
 
 
 

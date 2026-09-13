@@ -1,4 +1,55 @@
-const { app, BrowserWindow, Menu, ipcMain, shell, dialog, clipboard, nativeImage } = require('electron');
+const { app, BrowserWindow, Menu, ipcMain, shell, dialog, clipboard, nativeImage, screen } = require('electron');
+
+// CRITICAL: Set AppUserModelId on Windows so all application windows and shortcuts
+// properly group together under a single taskbar icon instead of separating instances.
+if (process.platform === 'win32') {
+  app.setAppUserModelId('com.intellifile.app');
+}
+
+// Prevent Chromium from permanently dropping hardware acceleration/black-screening under heavy CPU load
+app.commandLine.appendSwitch('disable-gpu-process-crash-limit');
+
+app.on('child-process-gone', (event, details) => {
+  console.warn('[Process] Child process gone:', details.type, details.reason);
+});
+
+// Enforce single-instance lock so secondary launches do not re-spawn Python, Sync, or Watchers
+const gotTheLock = app.requestSingleInstanceLock();
+if (!gotTheLock) {
+  console.log('[App] Another instance is already running. Quitting secondary process.');
+  app.quit();
+  process.exit(0);
+}
+
+let mainWindow = null;
+let win = null;
+const activeWindows = new Set();
+
+function getActiveWindow() {
+  if (mainWindow && !mainWindow.isDestroyed()) return mainWindow;
+  for (const w of activeWindows) {
+    if (w && !w.isDestroyed()) return w;
+  }
+  const all = BrowserWindow.getAllWindows();
+  for (const w of all) {
+    if (w && !w.isDestroyed()) return w;
+  }
+  return null;
+}
+
+function broadcastToAllWindows(channel, ...args) {
+  const windows = BrowserWindow.getAllWindows();
+  for (const w of windows) {
+    try {
+      if (w && !w.isDestroyed() && w.webContents && !w.webContents.isDestroyed()) {
+        w.webContents.send(channel, ...args);
+      }
+    } catch (e) {
+      console.warn(`[Broadcast] Failed to send ${channel} to window:`, e.message);
+    }
+  }
+}
+
 const path = require('path');
 const fs = require('fs');
 let parseDeterministicMonthDateQuery = () => null;
@@ -27,21 +78,77 @@ try {
   // Auto-migrate settings & data from alternative folder names (e.g. IntelliFile vs intellifile)
   const altUserData = path.join(appDataDir, 'IntelliFile');
   if (fs.existsSync(altUserData) && altUserData !== canonicalUserData) {
+    // 1. Settings
     const altSettings = path.join(altUserData, 'app_settings.json');
     const targetSettings = path.join(canonicalUserData, 'app_settings.json');
     if (fs.existsSync(altSettings) && !fs.existsSync(targetSettings)) {
-      fs.copyFileSync(altSettings, targetSettings);
-      console.log('[Migration] Successfully migrated app_settings.json to canonical userData');
+      try {
+        fs.copyFileSync(altSettings, targetSettings);
+        console.log('[Migration] Successfully migrated app_settings.json to canonical userData');
+      } catch (err) {
+        console.warn('[Migration] Could not copy app_settings.json:', err.message);
+      }
+    }
+
+    // 2. Offline setup marker
+    const altMarker = path.join(altUserData, 'offline-setup.done');
+    const targetMarker = path.join(canonicalUserData, 'offline-setup.done');
+    if (fs.existsSync(altMarker) && !fs.existsSync(targetMarker)) {
+      try {
+        fs.copyFileSync(altMarker, targetMarker);
+        console.log('[Migration] Successfully migrated offline-setup.done to canonical userData');
+      } catch (err) {
+        console.warn('[Migration] Could not copy offline-setup.done:', err.message);
+      }
+    }
+
+    // 3. Backend data (SQLite files.db and FAISS vectors.faiss)
+    const altData = path.join(altUserData, 'backend', 'data');
+    const targetData = path.join(canonicalUserData, 'backend', 'data');
+    if (fs.existsSync(altData)) {
+      if (!fs.existsSync(targetData)) {
+        fs.mkdirSync(targetData, { recursive: true });
+      }
+      try {
+        const dataFiles = fs.readdirSync(altData);
+        for (const df of dataFiles) {
+          const src = path.join(altData, df);
+          const dst = path.join(targetData, df);
+          if (!fs.existsSync(dst) && fs.statSync(src).isFile()) {
+            fs.copyFileSync(src, dst);
+            console.log(`[Migration] Migrated data file ${df} to canonical userData`);
+          }
+        }
+      } catch (err) {
+        console.warn('[Migration] Error migrating backend data:', err.message);
+      }
+    }
+
+    // 4. Backend models (models--*)
+    const altModels = path.join(altUserData, 'backend', 'models');
+    const targetModels = path.join(canonicalUserData, 'backend', 'models');
+    if (fs.existsSync(altModels)) {
+      if (!fs.existsSync(targetModels)) {
+        fs.mkdirSync(targetModels, { recursive: true });
+      }
+      try {
+        const modelEntries = fs.readdirSync(altModels);
+        for (const me of modelEntries) {
+          const src = path.join(altModels, me);
+          const dst = path.join(targetModels, me);
+          if (!fs.existsSync(dst)) {
+            fs.cpSync(src, dst, { recursive: true });
+            console.log(`[Migration] Migrated model ${me} to canonical userData`);
+          }
+        }
+      } catch (err) {
+        console.warn('[Migration] Error migrating models:', err.message);
+      }
     }
   }
 } catch (e) {
   console.warn('[UserData] Warning setting canonical userData path:', e.message);
 }
-
-// Enable multi-window support: second instance launches open a new window
-app.on('second-instance', (event, commandLine, workingDirectory) => {
-  createWindow();
-});
 
 const { autoUpdater } = require('electron-updater');
 
@@ -455,7 +562,7 @@ const crypto = require('crypto');
 const { spawn } = require('child_process');
 const archiver = require('archiver');
 const unzipper = require('unzipper');
-const { registerSystemRoots, getSystemRoots } = require('./system_roots');
+const { registerSystemRoots, getSystemRoots, updateSystemRootsPortableDevices } = require('./system_roots');
 const { SyncEngine } = require('./sync_engine');
 const { createListDirectoryController } = require('./listDirectoryCache');
 const { FileLockService } = require('./file_lock_service');
@@ -550,6 +657,17 @@ function getPathFromArgv(argv) {
     return s;
   };
 
+  const isAppSelf = (p) => {
+    if (!p) return false;
+    const lower = p.toLowerCase();
+    if (lower.endsWith('intellifile.exe') || lower.endsWith('electron.exe') || lower.endsWith('electron') || lower.endsWith('main.js')) return true;
+    if (lower.includes('intellifile.lnk')) return true;
+    try {
+      if (process.execPath && path.resolve(p).toLowerCase() === path.resolve(process.execPath).toLowerCase()) return true;
+    } catch (_) {}
+    return false;
+  };
+
   for (let i = 0; i < argv.length; i++) {
     let arg = cleanArg(argv[i]);
     if (!arg) continue;
@@ -580,7 +698,7 @@ function getPathFromArgv(argv) {
       }
     }
 
-    if (targetPath) {
+    if (targetPath && !isAppSelf(targetPath)) {
       try {
         if (path.isAbsolute(targetPath) && fs.existsSync(targetPath)) {
           console.log('[ArgvDebug] Found select path:', targetPath);
@@ -597,12 +715,13 @@ function getPathFromArgv(argv) {
     }
   }
 
-  // Fallback: search for any absolute path that exists
+  // Fallback: search for any user-provided absolute path that exists
   for (let i = argv.length - 1; i >= 0; i--) {
     let arg = cleanArg(argv[i]);
     if (!arg) continue;
-    if (arg.startsWith('-')) continue;
-    if (arg === '.' || arg.endsWith('main.js') || arg.toLowerCase().endsWith('electron.exe') || arg.toLowerCase().endsWith('electron')) continue;
+    // Skip command line flags and options
+    if (arg.startsWith('-') || arg.startsWith('/')) continue;
+    if (arg === '.' || isAppSelf(arg)) continue;
 
     try {
       if (path.isAbsolute(arg) && fs.existsSync(arg)) {
@@ -616,7 +735,7 @@ function getPathFromArgv(argv) {
         if (matches && matches.length) {
           for (const m of matches) {
             const candidate = m;
-            if (fs.existsSync(candidate)) {
+            if (!isAppSelf(candidate) && fs.existsSync(candidate)) {
               console.log('[ArgvDebug] Extracted embedded path from arg:', candidate);
               return candidate;
             }
@@ -630,7 +749,7 @@ function getPathFromArgv(argv) {
           let p = arg.substring('file:///'.length);
           p = decodeURIComponent(p);
           p = p.replace(/\//g, path.sep);
-          if (fs.existsSync(p)) {
+          if (!isAppSelf(p) && fs.existsSync(p)) {
             console.log('[ArgvDebug] Extracted file URI path:', p);
             return p;
           }
@@ -642,13 +761,13 @@ function getPathFromArgv(argv) {
           p = p.replace(/^[/\\\\]+/, '');
           p = decodeURIComponent(p);
           p = p.replace(/[\\/]+/g, path.sep);
-          if (fs.existsSync(p)) {
+          if (!isAppSelf(p) && fs.existsSync(p)) {
             console.log('[ArgvDebug] Extracted generic file URI path:', p);
             return p;
           }
         }
       } catch (e) { /* ignore */ }
-    } catch (e) { }
+    } catch (e) { /* ignore */ }
   }
 
   console.log('[ArgvDebug] No path found in argv');
@@ -810,68 +929,75 @@ if (rawStartupPath) {
   console.log('[ArgvDebug] Startup payload resolved:', startupPathPayload);
 }
 app.on('second-instance', (event, commandLine) => {
-  console.log('[ArgvDebug] second-instance triggered, commandLine:', commandLine);
+  console.log('[SecondInstance] second-instance triggered, commandLine:', commandLine);
 
-  // DEBUG HACK: write the commandLine to a file so we can see what Windows actually passed
-  require('fs').appendFileSync(require('path').join(__dirname, 'second-instance-debug.txt'), new Date().toISOString() + ': ' + JSON.stringify(commandLine) + '\n');
+  try {
+    require('fs').appendFileSync(require('path').join(__dirname, 'second-instance-debug.txt'), new Date().toISOString() + ': ' + JSON.stringify(commandLine) + '\n');
+  } catch (_) {}
 
-  if (mainWindow) {
-    if (mainWindow.isMinimized()) mainWindow.restore();
-    // Force window to foreground on Windows
-    mainWindow.setAlwaysOnTop(true);
-    mainWindow.show();
-    mainWindow.focus();
-    mainWindow.setAlwaysOnTop(false);
-
-    const rawPath = getPathFromArgv(commandLine);
-    console.log('[ArgvDebug] second-instance rawPath parsed:', rawPath);
-    if (rawPath) {
-      let payload = null;
-      try {
-        const stats = fs.statSync(rawPath);
-        if (stats.isDirectory()) {
-          // SMART HEURISTIC for Chrome 'Show in folder' fallback:
-          // Because Windows strips the file name, we only get the folder path.
-          // We can guess the file by finding the most recently modified file (within the last 2 minutes).
-          let guessedFile = null;
-          try {
-            const files = fs.readdirSync(rawPath);
-            let maxTime = 0;
-            const now = Date.now();
-            for (const f of files) {
-              try {
-                const fPath = require('path').join(rawPath, f);
-                const fStats = fs.statSync(fPath);
-                if (!fStats.isDirectory() && fStats.mtimeMs > maxTime) {
-                  maxTime = fStats.mtimeMs;
-                  guessedFile = f;
-                }
-              } catch (e) { } // ignore locked files
-            }
-            // Only auto-select the guessed file if it was modified recently
-            const GUESS_WINDOW_MS = 2 * 60 * 1000; // 2 minutes
-            if (guessedFile && (Date.now() - maxTime) <= GUESS_WINDOW_MS) {
-              console.log('[Heuristic] Guessed recently downloaded file:', guessedFile, 'ageMs=', Date.now() - maxTime);
-              payload = { path: rawPath, selectFile: guessedFile };
-            } else {
-              console.log('[Heuristic] Not confident to auto-select file (guessedFile=', guessedFile, 'ageMs=', guessedFile ? (Date.now() - maxTime) : 'N/A', ') - showing recent chooser');
-              payload = { path: rawPath, selectFile: null };
-            }
-          } catch (e) {
+  const rawPath = getPathFromArgv(commandLine);
+  console.log('[SecondInstance] rawPath parsed:', rawPath);
+  if (rawPath) {
+    let payload = null;
+    try {
+      const stats = fs.statSync(rawPath);
+      if (stats.isDirectory()) {
+        // SMART HEURISTIC for Chrome 'Show in folder' fallback:
+        // Because Windows strips the file name, we only get the folder path.
+        // We can guess the file by finding the most recently modified file (within the last 2 minutes).
+        let guessedFile = null;
+        try {
+          const files = fs.readdirSync(rawPath);
+          let maxTime = 0;
+          const now = Date.now();
+          for (const f of files) {
+            try {
+              const fPath = require('path').join(rawPath, f);
+              const fStats = fs.statSync(fPath);
+              if (!fStats.isDirectory() && fStats.mtimeMs > maxTime) {
+                maxTime = fStats.mtimeMs;
+                guessedFile = f;
+              }
+            } catch (e) { } // ignore locked files
+          }
+          // Only auto-select the guessed file if it was modified recently
+          const GUESS_WINDOW_MS = 2 * 60 * 1000; // 2 minutes
+          if (guessedFile && (Date.now() - maxTime) <= GUESS_WINDOW_MS) {
+            console.log('[Heuristic] Guessed recently downloaded file:', guessedFile, 'ageMs=', Date.now() - maxTime);
+            payload = { path: rawPath, selectFile: guessedFile };
+          } else {
+            console.log('[Heuristic] Not confident to auto-select file - showing directory');
             payload = { path: rawPath, selectFile: null };
           }
-        } else {
-          payload = { path: path.dirname(rawPath), selectFile: path.basename(rawPath) };
+        } catch (e) {
+          payload = { path: rawPath, selectFile: null };
         }
-      } catch (e) {
-        payload = { path: rawPath, selectFile: null };
+      } else {
+        payload = { path: path.dirname(rawPath), selectFile: path.basename(rawPath) };
       }
-      console.log('[ArgvDebug] second-instance payload resolved:', payload);
-      if (payload) {
-        payload.fromExplorer = true;
-        mainWindow.webContents.send('open-path', payload);
+    } catch (e) {
+      payload = { path: rawPath, selectFile: null };
+    }
+    console.log('[SecondInstance] payload resolved:', payload);
+    if (payload) {
+      payload.fromExplorer = true;
+      const targetWin = getActiveWindow();
+      if (targetWin && !targetWin.isDestroyed()) {
+        if (targetWin.isMinimized()) targetWin.restore();
+        targetWin.setAlwaysOnTop(true);
+        targetWin.show();
+        targetWin.focus();
+        targetWin.setAlwaysOnTop(false);
+        targetWin.webContents.send('open-path', payload);
+      } else {
+        startupPathPayload = payload;
+        createWindow();
       }
     }
+  } else {
+    // User opened IntelliFile again without passing a specific file/folder -> open a new window in the existing process!
+    console.log('[SecondInstance] No path passed; opening new window');
+    createWindow();
   }
 });
 
@@ -927,11 +1053,59 @@ function markOfflineSetupComplete() {
   }
 }
 
+function isIntellifileModel(name) {
+  if (!name || typeof name !== 'string') return false;
+  return name === 'onnx-export' ||
+         name === 'models--Xenova--bge-small-en-v1.5' ||
+         (name.startsWith('models--Xenova') && name.includes('bge')) ||
+         (name.startsWith('models--') && name.includes('bge-small-en-v1.5'));
+}
+
 function hasOfflineSetupCompleted() {
   try {
-    return fs.existsSync(getOfflineSetupMarkerPath()) || !!indexingPreferences.offlineSetupCompleted;
+    const userData = app.getPath('userData');
+    const modelsDir = path.join(userData, 'backend', 'models');
+
+    let modelFound = false;
+    if (fs.existsSync(modelsDir)) {
+      const entries = fs.readdirSync(modelsDir);
+      modelFound = entries.some(isIntellifileModel);
+    }
+
+    if (!modelFound) {
+      const candidatePaths = [
+        path.join(app.getPath('appData'), 'IntelliFile', 'backend', 'models'),
+        path.join(process.resourcesPath || '', 'backend-dist', 'models'),
+        path.join(__dirname, '..', 'backend', 'models')
+      ];
+      for (const cp of candidatePaths) {
+        try {
+          if (fs.existsSync(cp)) {
+            const cfiles = fs.readdirSync(cp);
+            if (cfiles.some(isIntellifileModel)) {
+              modelFound = true;
+              break;
+            }
+          }
+        } catch (_) {}
+      }
+    }
+
+    const markerPath = getOfflineSetupMarkerPath();
+    if (modelFound) {
+      if (!fs.existsSync(markerPath)) {
+        markOfflineSetupComplete();
+      }
+      return true;
+    }
+
+    // If model does not exist on disk, remove stale marker and return false
+    if (fs.existsSync(markerPath)) {
+      try { fs.unlinkSync(markerPath); } catch (_) {}
+    }
+    return false;
   } catch (err) {
-    return !!indexingPreferences.offlineSetupCompleted;
+    return false;
   }
 }
 
@@ -939,12 +1113,28 @@ function getLogFilePath() {
   return path.join(app.getPath('userData'), 'intellifile.log');
 }
 
+let logWriteQueue = '';
+let logWriteTimer = null;
+
+function flushLogQueue() {
+  if (!logWriteQueue) return;
+  const chunk = logWriteQueue;
+  logWriteQueue = '';
+  fs.appendFile(getLogFilePath(), chunk, 'utf-8', (err) => {
+    if (err) {
+      originalConsoleWarn('[Logs] Failed to write log file:', err.message || err);
+    }
+  });
+}
+
 function persistLogEntry(logEntry) {
-  try {
-    const line = `[${logEntry.timestamp}] [${logEntry.category}]${logEntry.isError ? ' [ERROR]' : ''} ${logEntry.message}\n`;
-    fs.appendFileSync(getLogFilePath(), line, 'utf-8');
-  } catch (err) {
-    originalConsoleWarn('[Logs] Failed to write log file:', err.message || err);
+  const line = `[${logEntry.timestamp}] [${logEntry.category}]${logEntry.isError ? ' [ERROR]' : ''} ${logEntry.message}\n`;
+  logWriteQueue += line;
+  if (!logWriteTimer) {
+    logWriteTimer = setTimeout(() => {
+      logWriteTimer = null;
+      flushLogQueue();
+    }, 200);
   }
 }
 
@@ -1223,9 +1413,7 @@ function appendLog(category, message, isError = false, level = null) {
 
   persistLogEntry(logEntry);
 
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('backend-log', logEntry);
-  }
+  broadcastToAllWindows('backend-log', logEntry);
 }
 
 // Override console methods to capture them
@@ -1368,10 +1556,13 @@ let pendingRequests = new Map();  // requestId -> { resolve, timeout }
 let documentPreviewCache = new Map();
 let documentPreviewInFlight = new Map();
 let requestCounter = 0;
+let autoIndexTriggeredThisSession = false;
 let autoIndexRequested = false;
 let indexInProgress = false;
 let lastIndexMessage = '';
 let lastIndexStatus = null;
+let lastIndexBroadcastTime = 0;
+let lastLoggedIndexPhase = '';
 let fileWatchers = new Map();
 let directoryWatchers = new Map();
 let fileContents = new Map();
@@ -1402,12 +1593,13 @@ function sendToPython(payload, timeoutMs = 120000) {
 }
 
 function tryAutoIndex() {
-  if (autoIndexRequested || indexInProgress) return;
+  if (autoIndexTriggeredThisSession || autoIndexRequested || indexInProgress) return;
   if (!pythonReadyForIndexing || !windowReadyForIndexing) return;
   if (!pyModelLoaded) {
     console.log('[Index] Skipping auto-index: embedding model is not loaded yet');
     return;
   }
+  autoIndexTriggeredThisSession = true;
   triggerAutoIndex();
 }
 
@@ -1443,7 +1635,7 @@ function triggerFileVersionSave(filePath) {
     try {
       if (!fs.existsSync(filePath)) return;
       const extP = path.extname(filePath).toLowerCase();
-      const isBinaryP = ['.docx', '.xlsx', '.pdf', '.zip', '.pptx', '.pptm', '.ppt'].includes(extP);
+      const isBinaryP = ['.docx', '.doc', '.xlsx', '.xls', '.pdf', '.zip', '.pptx', '.pptm', '.ppt', '.odt', '.rtf'].includes(extP);
 
       let currentVal = '';
       if (!isBinaryP) {
@@ -1641,9 +1833,7 @@ function startWatchingDirectory(directoryPath) {
     const watcher = chokidar.watch(directoryPath, {
       ignoreInitial: true,
       depth: 0,
-      usePolling: true, // Use polling for Windows file system stability
-      interval: 300,    // Check every 300ms
-      binaryInterval: 300,
+      usePolling: false, // Native OS events (ReadDirectoryChangesW) for near-zero CPU/disk idle overhead
       ignorePermissionErrors: true,
       persistent: true,
       awaitWriteFinish: { stabilityThreshold: 700, pollInterval: 100 },
@@ -1811,18 +2001,14 @@ function startPython() {
             pythonReadyForIndexing = false;
             const modelError = res?.error || 'Embedding model not available';
             console.warn('[Python] Embedding model unavailable:', modelError);
-            if (mainWindow && !mainWindow.isDestroyed()) {
-              mainWindow.webContents.send('model-status', { loaded: false, error: modelError });
-            }
+            broadcastToAllWindows('model-status', { loaded: false, error: modelError });
           }
         }).catch((err) => {
           pyModelLoaded = false;
           pythonReadyForIndexing = false;
           const errMsg = err && err.message ? err.message : String(err);
           console.warn('[Python] Model status check failed:', errMsg);
-          if (mainWindow && !mainWindow.isDestroyed()) {
-            mainWindow.webContents.send('model-status', { loaded: false, error: errMsg });
-          }
+          broadcastToAllWindows('model-status', { loaded: false, error: errMsg });
         });
       }
 
@@ -1850,22 +2036,28 @@ function startPython() {
         const id = parsed._id;
 
         if (parsed.event === 'autosort:notification' && parsed.payload) {
-          if (mainWindow && !mainWindow.isDestroyed()) {
-            mainWindow.webContents.send('autosort:notification', parsed.payload);
-          }
+          broadcastToAllWindows('autosort:notification', parsed.payload);
         }
 
-        // Forward progress messages to the renderer
+        // Forward progress messages to the renderer (throttled to maintain UI fluidness)
         if (parsed.type === 'progress') {
           lastIndexStatus = parsed;
-          if (mainWindow && !mainWindow.isDestroyed()) {
-            mainWindow.webContents.send('index-progress', parsed);
-          }
-          // Log indexing progress so it appears in the Logs panel
+          const now = Date.now();
           const phase = parsed.phase || 'indexing';
-          const detail = parsed.detail || '';
-          const pct = typeof parsed.pct === 'number' ? ` (${parsed.pct}%)` : '';
-          appendLog('Indexing', `${phase}: ${detail}${pct}`);
+          const isTerminal = phase === 'done' || phase === 'error' || parsed.pct === 100 || parsed.pct === 0;
+
+          if (isTerminal || (now - lastIndexBroadcastTime >= 250)) {
+            lastIndexBroadcastTime = now;
+            broadcastToAllWindows('index-progress', parsed);
+          }
+
+          // Only log major phase transitions or completions to prevent disk I/O and UI flood
+          if (isTerminal || phase !== lastLoggedIndexPhase) {
+            lastLoggedIndexPhase = phase;
+            const detail = parsed.detail || '';
+            const pct = typeof parsed.pct === 'number' ? ` (${parsed.pct}%)` : '';
+            appendLog('Indexing', `${phase}: ${detail}${pct}`);
+          }
         }
 
         if (id && pendingRequests.has(id)) {
@@ -2116,9 +2308,7 @@ function handleSyncServerFailure(message) {
   } else {
     console.error(`[SyncServer] All ${MAX_SYNC_SERVER_RETRIES} retries exhausted. Failed to start sync server.`);
     appendLog('SyncServer', `All ${MAX_SYNC_SERVER_RETRIES} retries exhausted. Sync server startup failed.`, true);
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('sync-server-error', `Sync server failed: ${message}`);
-    }
+    broadcastToAllWindows('sync-server-error', `Sync server failed: ${message}`);
   }
 }
 
@@ -2142,9 +2332,8 @@ function attemptStartSyncServer() {
       const errorMsg = `Sync server executable not found at ${exePath}. (binary missing/corrupt)`;
       console.error('[SyncServer] ❌ ' + errorMsg);
       appendLog('SyncServer', `Error: ${errorMsg}`, true);
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('sync-server-error', errorMsg);
-      }
+      broadcastToAllWindows('sync-server-error', errorMsg);
+      syncServerStarting = false;
       return; // Binary missing/corrupt -> fail immediately without retry
     }
 
@@ -2168,37 +2357,36 @@ function attemptStartSyncServer() {
     syncServerProcess.on('error', (err) => {
       if (spawnedCompleted) return;
       spawnedCompleted = true;
+      syncServerStarting = false;
       if (healthCheckTimer) clearInterval(healthCheckTimer);
 
       const errorMsg = err && err.message ? err.message : String(err);
-      console.error('[SyncServer] Process spawn error:', errorMsg);
-      appendLog('SyncServer', `Process spawn error: ${errorMsg}`, true);
+      console.error('[SyncServer] spawn error:', errorMsg);
+      appendLog('SyncServer', `Spawn error: ${errorMsg}`, true);
 
       syncServerProcess = null;
-      handleSyncServerFailure(`Sync server binary crashed/failed to spawn: ${errorMsg}`);
+      handleSyncServerFailure(`Process error: ${errorMsg}`);
     });
 
     // SyncServer stdout: filter to only meaningful lines (skip raw HTTP request logs)
-    syncServerProcess.stdout.on('data', (d) => {
-      const text = d.toString();
+    syncServerProcess.stdout.on('data', (data) => {
+      const text = data.toString();
       for (const rawLine of text.split(/\r?\n/)) {
         const line = rawLine.trim();
         if (!line) continue;
-        // Skip verbose HTTP access logs (e.g. '127.0.0.1 - GET /status 200' or 'INFO: 127.0.0.1 - "GET /status..."')
+        // Skip verbose HTTP access logs
         if (/(GET|POST|PUT|DELETE|HEAD|OPTIONS|PATCH)\s+[\/\w\-]+/i.test(line)) continue;
         if (/INFO:.*\s+(GET|POST|PUT|DELETE|HEAD|OPTIONS)\s+/i.test(line)) continue;
         if (/^\d+\.\d+\.\d+\.\d+.*\s(GET|POST|PUT|DELETE|HEAD|OPTIONS|PATCH)\s/i.test(line)) continue;
         if (/^\s*(GET|POST|PUT|DELETE|HEAD|OPTIONS)\s+\//.test(line)) continue;
         if (line.includes('/status')) continue;
-        // Skip empty JSON brackets and pure numeric lines
-        if (/^[{\[\]}\s]*$/.test(line) || /^\d+$/.test(line)) continue;
-        originalConsoleLog('[SyncServer stdout]', line);
-        appendLog('SyncServer', line, false, _deriveLevel(line, false));
+        originalConsoleLog('[SyncServer]', line);
+        appendLog('SyncServer', line);
       }
     });
 
-    syncServerProcess.stderr.on('data', (d) => {
-      const text = d.toString();
+    syncServerProcess.stderr.on('data', (data) => {
+      const text = data.toString();
       for (const rawLine of text.split(/\r?\n/)) {
         const line = rawLine.trim();
         if (!line) continue;
@@ -2216,6 +2404,7 @@ function attemptStartSyncServer() {
     syncServerProcess.on('close', (code) => {
       if (healthCheckTimer) clearInterval(healthCheckTimer);
       syncServerProcess = null;
+      syncServerStarting = false;
 
       if (spawnedCompleted) return;
       spawnedCompleted = true;
@@ -2234,18 +2423,21 @@ function attemptStartSyncServer() {
     healthCheckTimer = setInterval(() => {
       if (spawnedCompleted) {
         clearInterval(healthCheckTimer);
+        syncServerStarting = false;
         return;
       }
 
       checkSyncServerHealth().then((isHealthy) => {
         if (spawnedCompleted) {
           clearInterval(healthCheckTimer);
+          syncServerStarting = false;
           return;
         }
 
         if (isHealthy) {
           clearInterval(healthCheckTimer);
           spawnedCompleted = true;
+          syncServerStarting = false;
           console.log('[SyncServer] ✅ Sync server is healthy and running.');
           appendLog('SyncServer', '✅ Sync server is healthy and running.');
           syncServerRetries = 0; // reset retries
@@ -2254,6 +2446,7 @@ function attemptStartSyncServer() {
           if (healthCheckAttempts >= maxHealthCheckAttempts) {
             clearInterval(healthCheckTimer);
             spawnedCompleted = true;
+            syncServerStarting = false;
             console.warn('[SyncServer] Health check timed out after 5 seconds.');
             appendLog('SyncServer', 'Health check timed out.', true);
 
@@ -2269,6 +2462,7 @@ function attemptStartSyncServer() {
 
   } catch (err) {
     if (healthCheckTimer) clearInterval(healthCheckTimer);
+    syncServerStarting = false;
     const errorMsg = err && err.message ? err.message : String(err);
     console.error('[SyncServer] failed to spawn process:', errorMsg);
     appendLog('SyncServer', `Exception starting: ${errorMsg}`, true);
@@ -2277,22 +2471,34 @@ function attemptStartSyncServer() {
   }
 }
 
+let syncServerStarting = false;
+
 function startSyncServer() {
   try {
     if (syncServerProcess && !syncServerProcess.killed) {
       console.log('[SyncServer] already running');
       return Promise.resolve();
     }
+    if (syncServerStarting) {
+      console.log('[SyncServer] startup already in progress');
+      return Promise.resolve();
+    }
+    syncServerStarting = true;
 
     return isPortOpen(SYNC_PORT, '127.0.0.1', 300).then((portOpen) => {
       if (portOpen) {
         console.log(`[SyncServer] port ${SYNC_PORT} already in use; assuming server is running`);
+        syncServerStarting = false;
         return;
       }
 
       attemptStartSyncServer();
+    }).catch((err) => {
+      syncServerStarting = false;
+      throw err;
     });
   } catch (err) {
+    syncServerStarting = false;
     const errorMsg = err && err.message ? err.message : String(err);
     console.error('[SyncServer] Exception in startSyncServer:', errorMsg);
     appendLog('SyncServer', `Exception in startSyncServer: ${errorMsg}`, true);
@@ -2352,27 +2558,19 @@ function ensureSyncEngine() {
   syncEngine = new SyncEngine(syncDir);
 
   syncEngine.on('status', (data) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('sync-status', data);
-    }
+    broadcastToAllWindows('sync-status', data);
   });
 
   syncEngine.on('log', (msg) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('sync-log', msg);
-    }
+    broadcastToAllWindows('sync-log', msg);
   });
 
   syncEngine.on('files', (files) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('sync-files', files);
-    }
+    broadcastToAllWindows('sync-files', files);
   });
 
   syncEngine.on('pending', (changes) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('sync-pending', changes);
-    }
+    broadcastToAllWindows('sync-pending', changes);
   });
 
   return syncEngine;
@@ -2791,17 +2989,37 @@ ipcMain.handle("search", async (_, payload) => {
   }
   const query = typeof payload === 'string' ? payload : payload?.query || '';
   const rootFolder = typeof payload === 'object' && payload ? payload.rootFolder || payload.rootPath || null : null;
-  console.log('[IPC] search called, pyReady:', pyReady, 'query:', query, 'rootFolder:', rootFolder);
-  const { cleanQuery, dateFrom, dateTo } = parseDateFromQuery(query);
-  const folderQuery = parseFolderSearchQuery(cleanQuery);
-  console.log('[IPC] parsed search filters:', { cleanQuery, dateFrom, dateTo, folderName: folderQuery?.folderName || null });
+  const directFolder = typeof payload === 'object' && payload ? (payload.folder_name || payload.folderName || null) : null;
+  const explicitDateFrom = typeof payload === 'object' && payload && payload.date_from !== undefined && payload.date_from !== null
+    ? payload.date_from
+    : (payload?.dateFrom !== undefined && payload.dateFrom !== null ? payload.dateFrom : null);
+  const explicitDateTo = typeof payload === 'object' && payload && payload.date_to !== undefined && payload.date_to !== null
+    ? payload.date_to
+    : (payload?.dateTo !== undefined && payload.dateTo !== null ? payload.dateTo : null);
+  const extensions = typeof payload === 'object' && payload && Array.isArray(payload.extensions) && payload.extensions.length > 0
+    ? payload.extensions
+    : null;
+
+  console.log('[IPC] search called, pyReady:', pyReady, 'query:', query, 'rootFolder:', rootFolder, 'directFolder:', directFolder, 'extensions:', extensions);
+  const { cleanQuery, dateFrom: parsedDateFrom, dateTo: parsedDateTo } = parseDateFromQuery(query);
+  const dateFrom = explicitDateFrom !== null ? explicitDateFrom : parsedDateFrom;
+  const dateTo = explicitDateTo !== null ? explicitDateTo : parsedDateTo;
+  const folderQuery = directFolder ? { folderName: directFolder } : parseFolderSearchQuery(cleanQuery);
+  console.log('[IPC] parsed search filters:', { cleanQuery, dateFrom, dateTo, folderName: folderQuery?.folderName || null, extensions });
+  const effectiveQuery = (cleanQuery || query || '').trim();
+  const hasMetadataFilter = dateFrom !== null || dateTo !== null || (extensions && extensions.length > 0) || Boolean(folderQuery?.folderName);
+  if (!effectiveQuery && !hasMetadataFilter) {
+    return { results: [] };
+  }
+
   return sendToPython({
     action: "search",
-    query: folderQuery ? '' : cleanQuery,
+    query: effectiveQuery,
     date_from: dateFrom,
     date_to: dateTo,
     folder_name: folderQuery?.folderName || null,
     root_folder: rootFolder,
+    extensions: extensions,
   });
 });
 
@@ -2874,7 +3092,8 @@ let lastStorageScanTime = 0;
 
 ipcMain.handle('storage:get-summary', async (_event, forceRefresh = false) => {
   const now = Date.now();
-  if (cachedStorageSummary && !forceRefresh && (now - lastStorageScanTime < 60000)) {
+  // Cache for 5 minutes unless forced
+  if (cachedStorageSummary && !forceRefresh && (now - lastStorageScanTime < 300000)) {
     return cachedStorageSummary;
   }
 
@@ -2883,21 +3102,8 @@ ipcMain.handle('storage:get-summary', async (_event, forceRefresh = false) => {
     let totalBytes = 0;
     let freeBytes = 0;
 
-    if (process.platform === 'win32') {
-      try {
-        const { execSync } = require('child_process');
-        const driveLetter = path.parse(userHome).root.replace('\\', '') || 'C:';
-        const cmd = `powershell -NoProfile -Command "Get-CimInstance Win32_LogicalDisk -Filter \\"DeviceID='${driveLetter}'\\" | Select-Object Size,FreeSpace | ConvertTo-Json"`;
-        const out = execSync(cmd, { timeout: 3000, encoding: 'utf8' });
-        const parsed = JSON.parse(out);
-        if (parsed && parsed.Size && parsed.FreeSpace) {
-          totalBytes = parseInt(parsed.Size, 10) || 0;
-          freeBytes = parseInt(parsed.FreeSpace, 10) || 0;
-        }
-      } catch (_e) {}
-    }
-
-    if ((!totalBytes || totalBytes === 0) && typeof fs.statfsSync === 'function') {
+    // Use native fs.statfsSync first (instant <0.1ms, zero subprocess overhead)
+    if (typeof fs.statfsSync === 'function') {
       try {
         const rootDrive = path.parse(userHome).root || 'C:\\';
         const diskStats = fs.statfsSync(rootDrive);
@@ -2914,20 +3120,16 @@ ipcMain.handle('storage:get-summary', async (_event, forceRefresh = false) => {
 
     const usedBytes = Math.max(0, totalBytes - freeBytes);
     const userDataPath = app.getPath('userData');
-    const intellifileBytes = getDirectorySizeRecursive(userDataPath, 5);
+    const intellifileBytes = getDirectorySizeRecursive(userDataPath, 3);
 
-    // Calculate Installed Applications & Windows OS Files
+    // Approximate System & Software storage without locking the main thread
+    // Deep recursive walking of C:\Windows and C:\Program Files causes severe UI freezing
     let softwareBytes = 0;
     let systemBytes = 0;
     if (process.platform === 'win32') {
-      try {
-        const pf1 = process.env['ProgramFiles'] || 'C:\\Program Files';
-        const pf2 = process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)';
-        const winDir = process.env['SystemRoot'] || 'C:\\Windows';
-        softwareBytes += getDirectorySizeRecursive(pf1, 2);
-        softwareBytes += getDirectorySizeRecursive(pf2, 2);
-        systemBytes += getDirectorySizeRecursive(winDir, 2);
-      } catch (_e) {}
+      const remainingUsed = Math.max(0, usedBytes - intellifileBytes);
+      softwareBytes = Math.round(remainingUsed * 0.35);
+      systemBytes = Math.round(remainingUsed * 0.25);
     }
 
     const localSettings = readLocalSettings();
@@ -3385,6 +3587,18 @@ ipcMain.handle('select-folder', async () => {
   return { canceled: result.canceled, filePaths: result.filePaths || [] };
 });
 
+ipcMain.handle('dialog:select-folder', async () => {
+  const win = getActiveWindow();
+  const result = await dialog.showOpenDialog(win || mainWindow, {
+    title: 'Select Folder',
+    properties: ['openDirectory'],
+  });
+  if (result.canceled || !result.filePaths || result.filePaths.length === 0) {
+    return null;
+  }
+  return result.filePaths[0];
+});
+
 ipcMain.handle("index-device", async (_event, options = {}) => {
   if (indexInProgress) {
     return { status: 'running' };
@@ -3592,11 +3806,15 @@ ipcMain.handle('versions-restore', async (_event, payload) => {
 });
 
 ipcMain.handle('save-version', async (_event, payload) => {
+  const filePath = payload.filePath || payload.file_path;
+  const extP = path.extname(filePath || '').toLowerCase();
+  const isBinaryP = ['.docx', '.doc', '.xlsx', '.xls', '.pdf', '.zip', '.pptx', '.pptm', '.ppt', '.odt', '.rtf'].includes(extP);
+
   const result = await sendToPython({
     action: 'save_version',
-    file_path: payload.filePath || payload.file_path,
-    old_content: payload.oldContent || payload.old_content || '',
-    new_content: payload.newContent || payload.new_content || '',
+    file_path: filePath,
+    old_content: isBinaryP ? filePath : (payload.oldContent || payload.old_content || ''),
+    new_content: isBinaryP ? filePath : (payload.newContent || payload.new_content || ''),
   });
 
   if (result && result.success && win && !win.isDestroyed()) {
@@ -4385,7 +4603,6 @@ function calculateFolderSize(folderPath, depth = 0, maxDepth = 2) {
   return totalSize;
 }
 
-let mainWindow;
 let ipcHandlersRegistered = false;
 
 function notifyIndexComplete(payload) {
@@ -4402,9 +4619,7 @@ function notifyIndexComplete(payload) {
     appendLog('Indexing', 'Indexing completed successfully');
   }
 
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('index-complete', payload || {});
-  }
+  broadcastToAllWindows('index-complete', payload || {});
 }
 
 // Always-available handler for opening files with the OS default app
@@ -4436,6 +4651,24 @@ ipcMain.handle('open-file', async (event, filePath) => {
       };
     }
 
+    // Support opening files directly from portable devices (e.g. MTP phones)
+    const normFile = (filePath || '').replace(/\//g, '\\');
+    const matchingPortable = cachedPortableDevices.find(p => p && (
+      normFile.toLowerCase() === p.name.toLowerCase() ||
+      normFile.toLowerCase().startsWith(p.name.toLowerCase() + '\\')
+    ));
+    if (matchingPortable) {
+      const scriptPath = getShellNavScriptPath();
+      if (scriptPath) {
+        const targetName = matchingPortable.name;
+        const subPath = normFile.toLowerCase() === targetName.toLowerCase() ? '' : normFile.slice(targetName.length + 1);
+        exec(`powershell -NoProfile -ExecutionPolicy Bypass -File "${scriptPath}" -Action open-item -TargetName "${targetName}" -SubPath "${subPath}"`, (err) => {
+          if (err) console.warn('[open-file] portable open error:', err.message);
+        });
+        return { success: true };
+      }
+    }
+
     const result = await shell.openPath(filePath);
     if (result) {
       return { success: false, error: result };
@@ -4452,6 +4685,23 @@ ipcMain.handle('open-file', async (event, filePath) => {
 });
 
 ipcMain.on('open-file', (event, filePath) => {
+  const normFile = (filePath || '').replace(/\//g, '\\');
+  const matchingPortable = cachedPortableDevices.find(p => p && (
+    normFile.toLowerCase() === p.name.toLowerCase() ||
+    normFile.toLowerCase().startsWith(p.name.toLowerCase() + '\\')
+  ));
+  if (matchingPortable) {
+    const scriptPath = getShellNavScriptPath();
+    if (scriptPath) {
+      const targetName = matchingPortable.name;
+      const subPath = normFile.toLowerCase() === targetName.toLowerCase() ? '' : normFile.slice(targetName.length + 1);
+      exec(`powershell -NoProfile -ExecutionPolicy Bypass -File "${scriptPath}" -Action open-item -TargetName "${targetName}" -SubPath "${subPath}"`, (err) => {
+        if (err) console.warn('[open-file] portable open error:', err.message);
+      });
+      return;
+    }
+  }
+
   shell.openPath(filePath).then((result) => {
     if (!result) {
       try {
@@ -4498,17 +4748,47 @@ function registerIpcHandlers() {
     return true;
   });
 
+  let setupProcess = null;
+  let lastSetupProgress = null;
+
   ipcMain.handle('offline-setup-status', async () => {
     const appDataDir = app.getPath('userData');
     const modelsDir = path.join(appDataDir, 'backend', 'models');
     // Check if models exist (at least one gguf and the sentence transformer folder)
     let hasChatModel = false;
     let hasEmbeddingModel = false;
+    const isIntellifileModel = (name) => {
+      if (!name || typeof name !== 'string') return false;
+      return name === 'onnx-export' ||
+             name === 'models--Xenova--bge-small-en-v1.5' ||
+             (name.startsWith('models--Xenova') && name.includes('bge')) ||
+             (name.startsWith('models--') && name.includes('bge-small-en-v1.5'));
+    };
+
     try {
       if (fs.existsSync(modelsDir)) {
         const files = fs.readdirSync(modelsDir);
         hasChatModel = files.some(f => f.endsWith('.gguf'));
-        hasEmbeddingModel = fs.existsSync(path.join(modelsDir, 'onnx-export')) || files.some(f => f.startsWith('models--BAAI'));
+        hasEmbeddingModel = files.some(isIntellifileModel);
+      }
+
+      if (!hasEmbeddingModel) {
+        const candidatePaths = [
+          path.join(app.getPath('appData'), 'IntelliFile', 'backend', 'models'),
+          path.join(process.resourcesPath || '', 'backend-dist', 'models'),
+          path.join(__dirname, '..', 'backend', 'models')
+        ];
+        for (const cp of candidatePaths) {
+          try {
+            if (fs.existsSync(cp)) {
+              const cfiles = fs.readdirSync(cp);
+              if (cfiles.some(isIntellifileModel)) {
+                hasEmbeddingModel = true;
+                break;
+              }
+            }
+          } catch (_) {}
+        }
       }
     } catch (e) {
       console.warn('[Setup] Error checking models:', e.message);
@@ -4521,15 +4801,23 @@ function registerIpcHandlers() {
       markOfflineSetupComplete();
     }
 
-    // Only show setup dialog if models don't exist AND setup hasn't been completed before
-    const needed = !modelsExist && !setupCompleted;
+    // Only show setup dialog if models don't exist
+    const needed = !modelsExist;
 
-    return { needed, hasChatModel, hasEmbeddingModel, setupCompleted };
+    return {
+      needed,
+      running: setupProcess !== null,
+      lastProgress: lastSetupProgress,
+      hasChatModel,
+      hasEmbeddingModel,
+      setupCompleted
+    };
   });
 
-  let setupProcess = null;
   ipcMain.handle('offline-setup-run', async (event) => {
-    if (setupProcess) return { success: false, error: 'Setup already running' };
+    if (setupProcess) {
+      return { success: true, running: true, message: 'Setup already running' };
+    }
 
     appendLog('ModelDownload', 'Checking internet connectivity before setup...', false, 'info');
     const hasInternet = await checkInternetConnectivity();
@@ -4539,6 +4827,7 @@ function registerIpcHandlers() {
       return {
         success: false,
         error: 'Internet connection is required to download the AI models. Please turn on Wi-Fi or connect to the internet and try again.',
+        code: 'NO_INTERNET'
       };
     }
 
@@ -4565,14 +4854,19 @@ function registerIpcHandlers() {
         env: { ...process.env, IF_SKIP_CHAT_MODEL: '1' }
       });
 
-      // Immediately notify renderer that the setup has started and provide initial step/total
+      const initialTotal = skipChat ? 2 : 3;
+      lastSetupProgress = {
+        type: 'step',
+        step: 1,
+        total: initialTotal,
+        name: 'Initializing...',
+        status: 'processing',
+        pct: 0
+      };
+
+      // Immediately notify all renderers that setup has started
       try {
-        const initialTotal = skipChat ? 2 : 3;
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send('offline-setup-progress', {
-            type: 'step', step: 1, total: initialTotal, name: 'Initializing...', status: 'processing', pct: 0
-          });
-        }
+        broadcastToAllWindows('offline-setup-progress', lastSetupProgress);
       } catch (e) {
         originalConsoleWarn('[Setup] Failed to send initial progress:', e.message || e);
       }
@@ -4591,9 +4885,22 @@ function registerIpcHandlers() {
             if (parsed && parsed.type === 'step' && parsed.total && skipChat && parsed.total > 2) {
               parsed.total = Math.max(2, parsed.total - 1);
             }
-            if (mainWindow && !mainWindow.isDestroyed()) {
-              mainWindow.webContents.send('offline-setup-progress', parsed);
+            if (parsed.type === 'step') {
+              lastSetupProgress = {
+                ...(lastSetupProgress || {}),
+                ...parsed
+              };
+            } else if (parsed.type === 'progress') {
+              lastSetupProgress = {
+                ...(lastSetupProgress || {}),
+                ...parsed,
+                name: parsed.name || lastSetupProgress?.name || 'Embedding Model',
+                status: parsed.status || 'downloading'
+              };
             }
+
+            broadcastToAllWindows('offline-setup-progress', parsed);
+
             // Mirror to Logs panel
             if (parsed.type === 'log' && parsed.message) {
               appendLog('ModelDownload', parsed.message, false, _deriveLevel(parsed.message, false));
@@ -4625,16 +4932,21 @@ function registerIpcHandlers() {
             const pct = Number(fetchMatch[2]);
             const processed = Number(fetchMatch[3]);
             const total = Number(fetchMatch[4]);
-            if (mainWindow && !mainWindow.isDestroyed()) {
-              mainWindow.webContents.send('offline-setup-progress', {
-                type: 'progress',
-                name: 'Embedding Model',
-                status: 'downloading',
-                pct,
-                downloaded_files: processed,
-                total_files: total,
-              });
-            }
+            const progressUpdate = {
+              type: 'progress',
+              name: 'Embedding Model',
+              status: 'downloading',
+              pct,
+              downloaded_files: processed,
+              total_files: total,
+            };
+            lastSetupProgress = {
+              ...(lastSetupProgress || {}),
+              ...progressUpdate,
+              step: lastSetupProgress?.step || 1,
+              total: lastSetupProgress?.total || 2
+            };
+            broadcastToAllWindows('offline-setup-progress', progressUpdate);
             continue;
           }
           // Check for firewall/network errors in stderr
@@ -4661,6 +4973,7 @@ function registerIpcHandlers() {
 
       setupProcess.on('close', (code) => {
         setupProcess = null;
+        lastSetupProgress = null;
         if (code === 0) {
           appendLog('ModelDownload', '✅ Setup completed successfully. Restarting Python engine and sync server...', false, 'success');
           originalConsoleLog('[Setup] Setup completed successfully. Marking setup as completed and restarting Python engine...');
@@ -4668,6 +4981,10 @@ function registerIpcHandlers() {
           indexingPreferences.offlineSetupCompleted = true;
           saveIndexingPreferences();
           markOfflineSetupComplete();
+
+          broadcastToAllWindows('offline-setup-progress', { type: 'done', success: true });
+          broadcastToAllWindows('offline-setup-complete', { success: true });
+
           if (pyProcess) {
             pyProcess.kill(); // The 'close' listener in startPython will handle cleanup
           }
@@ -4684,12 +5001,12 @@ function registerIpcHandlers() {
         } else {
           const errMsg = stderrBuffer.trim() || `Setup process exited with code ${code}`;
           appendLog('ModelDownload', `Setup failed with exit code ${code}: ${errMsg.split('\n')[0]}`, true, 'error');
+          const isNet = /no internet|getaddrinfo|connection|enotfound|econnrefused|etimedout|network|timed out/i.test(errMsg);
+          const errCode = isNet ? 'NO_INTERNET' : undefined;
           try {
-            if (mainWindow && !mainWindow.isDestroyed()) {
-              mainWindow.webContents.send('offline-setup-progress', { type: 'error', message: errMsg });
-            }
+            broadcastToAllWindows('offline-setup-progress', { type: 'error', message: errMsg, code: errCode });
           } catch (e) { }
-          resolve({ success: false, error: errMsg });
+          resolve({ success: false, error: errMsg, code: errCode });
         }
       });
     });
@@ -4739,6 +5056,11 @@ function registerIpcHandlers() {
     return win ? win.isMaximized() : false;
   });
 
+  ipcMain.handle('open-new-window', async () => {
+    createWindow();
+    return { success: true };
+  });
+
   // Manual sync server restart — visible in the UI (Logs toolbar)
   ipcMain.handle('restart-sync-server', async () => {
     try {
@@ -4771,8 +5093,17 @@ function registerIpcHandlers() {
         fs.rmSync(setupMarkerPath, { force: true });
       }
 
+      if (isDev) {
+        const devModelsDir = path.join(__dirname, '..', 'backend', 'models');
+        if (fs.existsSync(devModelsDir)) {
+          fs.rmSync(devModelsDir, { recursive: true, force: true });
+        }
+      }
+
       indexingPreferences.offlineSetupCompleted = false;
       saveIndexingPreferences();
+      lastSetupProgress = null;
+      broadcastToAllWindows('offline-setup-reset');
 
       return { success: true };
     } catch (err) {
@@ -4824,30 +5155,45 @@ function registerIpcHandlers() {
         }
 
         // Check if path belongs to a portable device (like Redmi Note 6 Pro)
-        const matchingPortable = cachedPortableDevices.find(p => p && (dirPath === p.name || dirPath.startsWith(p.name + '\\') || dirPath.startsWith(p.path)));
+        const normDir = (dirPath || '').replace(/\//g, '\\');
+        const matchingPortable = cachedPortableDevices.find(p => p && (
+          normDir.toLowerCase() === p.name.toLowerCase() ||
+          normDir.toLowerCase().startsWith(p.name.toLowerCase() + '\\') ||
+          (p.path && normDir.toLowerCase().startsWith(p.path.toLowerCase()))
+        ));
         if (matchingPortable) {
           const targetName = matchingPortable.name;
-          const subPath = dirPath === targetName ? '' : dirPath.slice(targetName.length + 1);
-          const scriptPath = path.join(__dirname, 'shell_nav.ps1');
+          const subPath = normDir.toLowerCase() === targetName.toLowerCase() ? '' : normDir.slice(targetName.length + 1);
+          const scriptPath = getShellNavScriptPath();
           
           return new Promise((resolve) => {
-            exec(`powershell -NoProfile -ExecutionPolicy Bypass -File "${scriptPath}" -Action list-subitems -TargetName "${targetName}" -SubPath "${subPath}"`, { timeout: 8000 }, (err, stdout) => {
+            if (!scriptPath) {
+              return resolve({ items: [], error: 'Portable device helper script not found' });
+            }
+            exec(`powershell -NoProfile -ExecutionPolicy Bypass -File "${scriptPath}" -Action list-subitems -TargetName "${targetName}" -SubPath "${subPath}"`, { timeout: 15000 }, (err, stdout) => {
               if (err || !stdout) {
                 return resolve({ items: [], error: err ? err.message : null });
               }
               try {
                 const parsed = JSON.parse(stdout.trim());
                 const arr = Array.isArray(parsed) ? parsed : [parsed];
-                const items = arr.filter(it => it && it.name).map(it => ({
-                  name: it.name,
-                  path: it.path,
-                  type: it.type || 'folder',
-                  ext: it.type === 'folder' ? '' : path.extname(it.name),
-                  editable: false,
-                  size: it.size || 0,
-                  isPortable: true,
-                  modified: Date.now()
-                }));
+                const items = arr
+                  .filter(it => it && it.name && !isSystemFile(it.name, showHidden))
+                  .map(it => {
+                    const isFolder = it.type === 'folder';
+                    const ext = isFolder ? '' : path.extname(it.name).toLowerCase();
+                    return {
+                      name: it.name,
+                      path: it.path,
+                      type: isFolder ? 'folder' : 'file',
+                      ext: ext,
+                      editable: false,
+                      size: it.size || 0,
+                      isPortable: false,
+                      isPortableItem: true,
+                      modified: Date.now()
+                    };
+                  });
                 resolve({ items, error: null });
               } catch (parseErr) {
                 resolve({ items: [], error: parseErr.message });
@@ -4879,35 +5225,43 @@ function registerIpcHandlers() {
         }
 
         console.log('[list-directory] reading directory...');
-        const fileList = await fs.promises.readdir(resolvedPath);
-        console.log('[list-directory] found', fileList.length, 'items');
+        const dirents = await fs.promises.readdir(resolvedPath, { withFileTypes: true });
+        console.log('[list-directory] found', dirents.length, 'items');
 
-        const filteredList = fileList.filter(item => !isSystemFile(item, showHidden));
+        const filteredList = dirents.filter(dirent => !isSystemFile(dirent.name, showHidden));
         const items = [];
         const CHUNK_SIZE = 100;
 
         // Process items in batches to prevent UV thread pool starvation
         for (let i = 0; i < filteredList.length; i += CHUNK_SIZE) {
           const chunk = filteredList.slice(i, i + CHUNK_SIZE);
-          const chunkPromises = chunk.map(async item => {
+          const chunkPromises = chunk.map(async dirent => {
             try {
-              const fullPath = path.join(resolvedPath, item);
-              const stats = await fs.promises.stat(fullPath);
-              const ext = path.extname(item).toLowerCase();
-              const isEditable = EDITABLE_EXTENSIONS.includes(ext);
+              const fullPath = path.join(resolvedPath, dirent.name);
+              const isDir = dirent.isDirectory();
+              const ext = isDir ? '' : path.extname(dirent.name).toLowerCase();
               const isProtected = isProtectedPath(fullPath);
+              const isEditable = !isDir && EDITABLE_EXTENSIONS.includes(ext) && !isProtected;
 
-              const size = stats.isDirectory() ? 0 : stats.size;
+              let size = 0;
+              let modified = 0;
+              try {
+                const stats = await fs.promises.stat(fullPath);
+                size = isDir ? 0 : stats.size;
+                modified = stats.mtimeMs;
+              } catch {
+                // If stat fails (e.g. temporary permission lock), retain directory entry
+              }
 
               return {
-                name: item,
+                name: dirent.name,
                 path: fullPath,
-                type: stats.isDirectory() ? 'folder' : 'file',
+                type: isDir ? 'folder' : 'file',
                 ext: ext,
-                editable: !stats.isDirectory() && isEditable && !isProtected,
+                editable: isEditable,
                 protected: isProtected,
                 size: size,
-                modified: stats.mtimeMs
+                modified: modified
               };
             } catch (err) {
               return null;
@@ -6064,68 +6418,128 @@ let lastKnownDrivesHash = '';
 
 function refreshDriveMetadataAsync() {
   const now = Date.now();
-  if (now - lastMetadataFetch < 4000) return;
+  if (now - lastMetadataFetch < 10000) return;
   lastMetadataFetch = now;
 
   const { exec } = require('child_process');
-  exec('wmic logicaldisk get DeviceID,DriveType,VolumeName,Size,FreeSpace /format:csv', { timeout: 3500 }, (err, stdout) => {
+  const psCmd = `powershell -NoProfile -Command "Get-CimInstance -ClassName Win32_LogicalDisk | Select-Object DeviceID,DriveType,VolumeName,Size,FreeSpace | ConvertTo-Json"`;
+  exec(psCmd, { timeout: 3500 }, (err, stdout) => {
     if (!err && stdout) {
       try {
-        const lines = stdout.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
-        if (lines.length >= 2) {
-          const headers = lines[0].split(',');
-          const rows = lines.slice(1);
-          const newMeta = {};
-          for (const row of rows) {
-            const cols = row.split(',');
-            const map = {};
-            for (let i = 0; i < headers.length; i++) {
-              map[headers[i]] = cols[i] || '';
-            }
-            const device = (map.DeviceID || map.Device || cols[1] || '').replace(':', '').toUpperCase();
-            if (!device) continue;
-            const driveType = map.DriveType || ''; // '2' = Removable/USB, '3' = Fixed, '4' = Network, '5' = CD
-            const vol = map.VolumeName || '';
-            newMeta[device] = {
-              label: vol || null,
-              driveType: driveType,
-              isRemovable: driveType === '2' || driveType === '5',
-              isUSB: driveType === '2',
-              size: parseInt(map.Size || '0', 10) || 0,
-              available: parseInt(map.FreeSpace || '0', 10) || 0
-            };
-          }
-          cachedDriveMetadata = newMeta;
+        const parsed = JSON.parse(stdout.trim());
+        const rows = Array.isArray(parsed) ? parsed : [parsed];
+        const newMeta = {};
+        for (const row of rows) {
+          if (!row || !row.DeviceID) continue;
+          const device = String(row.DeviceID).replace(':', '').toUpperCase();
+          const driveType = String(row.DriveType || '');
+          newMeta[device] = {
+            label: row.VolumeName || null,
+            driveType: driveType,
+            isRemovable: driveType === '2' || driveType === '5',
+            isUSB: driveType === '2',
+            size: parseInt(row.Size || '0', 10) || 0,
+            available: parseInt(row.FreeSpace || '0', 10) || 0
+          };
         }
+        cachedDriveMetadata = newMeta;
       } catch (_) {}
     }
   });
 }
 
+function getShellNavScriptPath() {
+  const isPackaged = __dirname.includes('app.asar');
+  const candidates = [
+    path.join(__dirname.replace(/app\.asar$/, 'app.asar.unpacked').replace(/app\.asar[\\/]/, 'app.asar.unpacked' + path.sep), 'shell_nav.ps1'),
+    path.join(process.resourcesPath || '', 'app.asar.unpacked', 'shell_nav.ps1'),
+    path.join(process.resourcesPath || '', 'shell_nav.ps1'),
+    path.join(app.getPath('userData'), 'shell_nav.ps1'),
+  ];
+  if (!isPackaged) {
+    candidates.unshift(path.join(__dirname, 'shell_nav.ps1'));
+  }
+  for (const c of candidates) {
+    try {
+      if (fs.existsSync(c)) return c;
+    } catch (_) {}
+  }
+  // If not found on disk, extract from bundled script to userData so PowerShell can execute it
+  try {
+    const targetPath = path.join(app.getPath('userData'), 'shell_nav.ps1');
+    const bundledScript = path.join(__dirname, 'shell_nav.ps1');
+    if (fs.existsSync(bundledScript)) {
+      const content = fs.readFileSync(bundledScript);
+      fs.writeFileSync(targetPath, content);
+      return targetPath;
+    }
+  } catch (err) {
+    console.warn('[ShellNav] Failed to write script to userData:', err.message);
+  }
+  return null;
+}
+
 let cachedPortableDevices = [];
 let isRefreshingPortable = false;
+let pendingPortableRefresh = false;
 
-function refreshPortableDevicesAsync() {
-  if (isRefreshingPortable) return;
+function refreshPortableDevicesAsync(force = false) {
+  if (isRefreshingPortable) {
+    pendingPortableRefresh = true;
+    return;
+  }
   isRefreshingPortable = true;
-  const scriptPath = path.join(__dirname, 'shell_nav.ps1');
-  if (!fs.existsSync(scriptPath)) {
+  const scriptPath = getShellNavScriptPath();
+  if (!scriptPath) {
     isRefreshingPortable = false;
     return;
   }
-  exec(`powershell -NoProfile -ExecutionPolicy Bypass -File "${scriptPath}" -Action list-devices`, { timeout: 4000 }, (err, stdout) => {
+  exec(`powershell -NoProfile -ExecutionPolicy Bypass -File "${scriptPath}" -Action list-devices`, { timeout: 12000 }, (err, stdout) => {
     isRefreshingPortable = false;
-    if (err || !stdout) return;
-    try {
-      const parsed = JSON.parse(stdout.trim());
-      const arr = Array.isArray(parsed) ? parsed : [parsed];
-      cachedPortableDevices = arr.filter(d => d && d.name);
-    } catch (_) {}
+    if (err) {
+      console.warn('[PortableDevice] list-devices error:', err.message);
+    }
+    if (stdout) {
+      try {
+        const parsed = JSON.parse(stdout.trim());
+        const arr = Array.isArray(parsed) ? parsed : [parsed];
+        const newDevices = arr.filter(d => d && d.name);
+        const oldNames = cachedPortableDevices.map(d => d.name).sort().join('|');
+        const newNames = newDevices.map(d => d.name).sort().join('|');
+        cachedPortableDevices = newDevices;
+        if (oldNames !== newNames || force) {
+          console.log('[PortableDevice] Devices updated:', newNames);
+          cachedDrivesResult = null;
+          lastKnownDrivesHash = '';
+          if (typeof updateSystemRootsPortableDevices === 'function') {
+            updateSystemRootsPortableDevices(newDevices, mainWindow);
+          }
+          getDrivesInfo().then((res) => {
+            if (res && res.success) {
+              broadcastToAllWindows('drives-changed', res.drives);
+            }
+          }).catch(() => {});
+        }
+      } catch (e) {
+        console.warn('[PortableDevice] Failed to parse devices JSON:', e.message);
+      }
+    }
+    if (pendingPortableRefresh) {
+      pendingPortableRefresh = false;
+      setTimeout(() => refreshPortableDevicesAsync(), 200);
+    }
   });
 }
 
+let cachedDrivesResult = null;
+let lastDrivesFetchTime = 0;
+
 // Separate function to get drives info (instant, non-blocking)
 async function getDrivesInfo() {
+  const now = Date.now();
+  if (cachedDrivesResult && (now - lastDrivesFetchTime < 3000)) {
+    return cachedDrivesResult;
+  }
   try {
     refreshDriveMetadataAsync();
     refreshPortableDevicesAsync();
@@ -6206,7 +6620,9 @@ async function getDrivesInfo() {
       undefined,
       { numeric: true, sensitivity: 'base' }
     ));
-    return { success: true, drives };
+    cachedDrivesResult = { success: true, drives };
+    lastDrivesFetchTime = Date.now();
+    return cachedDrivesResult;
   } catch (err) {
     console.error('[get-drives-info] error:', err);
     return { success: false, drives: [], error: err.message };
@@ -6216,14 +6632,14 @@ async function getDrivesInfo() {
 function startDriveWatcher() {
   setInterval(async () => {
     try {
-      if (!mainWindow || mainWindow.isDestroyed()) return;
+      if (BrowserWindow.getAllWindows().length === 0) return;
       const res = await getDrivesInfo();
       if (res && res.success) {
         // Only trigger when drives are attached/detached or labels/total sizes change
         const hash = res.drives.map(d => `${d.device}-${d.description}-${d.size}`).join('|');
         if (hash !== lastKnownDrivesHash) {
           lastKnownDrivesHash = hash;
-          mainWindow.webContents.send('drives-changed', res.drives);
+          broadcastToAllWindows('drives-changed', res.drives);
         }
       }
     } catch (_) {}
@@ -6251,12 +6667,129 @@ function resolveAppIconPath(filename) {
   return path.join(__dirname, 'public', primaryName);
 }
 
+function getWindowStateFilePath() {
+  return path.join(app.getPath('userData'), 'window-state.json');
+}
+
+function loadSavedWindowState() {
+  try {
+    const p = getWindowStateFilePath();
+    if (fs.existsSync(p)) {
+      const data = JSON.parse(fs.readFileSync(p, 'utf-8'));
+      if (data && typeof data === 'object') {
+        return data;
+      }
+    }
+  } catch (err) {
+    console.warn('[Window] Failed to read saved window state:', err.message);
+  }
+  return null;
+}
+
+function saveWindowState(targetWin) {
+  if (!targetWin || targetWin.isDestroyed()) return;
+  try {
+    const isMaximized = targetWin.isMaximized();
+    let bounds = null;
+    if (!isMaximized && !targetWin.isMinimized() && !targetWin.isFullScreen()) {
+      bounds = targetWin.getBounds();
+    } else {
+      // Keep existing unmaximized bounds so unmaximize later restores them
+      const prev = loadSavedWindowState();
+      if (prev && prev.bounds) {
+        bounds = prev.bounds;
+      }
+    }
+    const state = {
+      isMaximized,
+      bounds
+    };
+    fs.writeFileSync(getWindowStateFilePath(), JSON.stringify(state, null, 2), 'utf-8');
+  } catch (err) {
+    console.warn('[Window] Failed to persist window state:', err.message);
+  }
+}
+
+function getInitialWindowBounds() {
+  const primaryDisplay = screen.getPrimaryDisplay();
+  const workArea = primaryDisplay.workArea;
+
+  // Safe windowed proportions fitted comfortably inside the workArea (above the taskbar)
+  const maxWidth = Math.max(640, workArea.width - 40);
+  const maxHeight = Math.max(480, workArea.height - 40);
+  const defaultWidth = Math.min(1360, Math.floor(workArea.width * 0.88));
+  const defaultHeight = Math.min(800, Math.floor(workArea.height * 0.85));
+
+  const fallbackWidth = Math.min(defaultWidth, maxWidth);
+  const fallbackHeight = Math.min(defaultHeight, maxHeight);
+  const fallbackX = Math.floor(workArea.x + (workArea.width - fallbackWidth) / 2);
+  const fallbackY = Math.floor(workArea.y + (workArea.height - fallbackHeight) / 2);
+
+  const saved = loadSavedWindowState();
+  if (saved && saved.bounds) {
+    const { x, y, width, height } = saved.bounds;
+    const matchingDisplay = screen.getDisplayMatching(saved.bounds) || primaryDisplay;
+    const wa = matchingDisplay.workArea;
+
+    // Check visibility on matching display
+    const isVisible = (
+      x + 80 >= wa.x &&
+      x <= wa.x + wa.width - 80 &&
+      y >= wa.y - 10 &&
+      y <= wa.y + wa.height - 80
+    );
+
+    if (isVisible && width >= 400 && height >= 300) {
+      // Fit within target display workArea and clamp so the bottom NEVER overlaps taskbar
+      const safeWidth = Math.min(width, wa.width);
+      const safeHeight = Math.min(height, wa.height - 16);
+      const safeX = Math.max(wa.x, Math.min(x, wa.x + wa.width - safeWidth));
+      const safeY = Math.max(wa.y, Math.min(y, wa.y + wa.height - safeHeight));
+
+      return {
+        x: safeX,
+        y: safeY,
+        width: safeWidth,
+        height: safeHeight,
+        isMaximized: !!saved.isMaximized
+      };
+    }
+  }
+
+  return {
+    x: fallbackX,
+    y: fallbackY,
+    width: fallbackWidth,
+    height: fallbackHeight,
+    isMaximized: saved ? !!saved.isMaximized : false
+  };
+}
+
 function createWindow() {
-  mainWindow = new BrowserWindow({
-    width: 1400,
-    height: 900,
-    minWidth: 800,
-    minHeight: 600,
+  const bounds = getInitialWindowBounds();
+
+  // Cascade secondary windows slightly if space allows
+  if (activeWindows.size > 0) {
+    const cascadeOffset = (activeWindows.size % 6) * 26;
+    const primaryDisplay = screen.getPrimaryDisplay();
+    const wa = primaryDisplay.workArea;
+    if (bounds.x + cascadeOffset + bounds.width <= wa.x + wa.width &&
+        bounds.y + cascadeOffset + bounds.height <= wa.y + wa.height) {
+      bounds.x += cascadeOffset;
+      bounds.y += cascadeOffset;
+    }
+  }
+
+  const minWidth = Math.min(800, bounds.width);
+  const minHeight = Math.min(560, bounds.height);
+
+  const newWin = new BrowserWindow({
+    x: bounds.x,
+    y: bounds.y,
+    width: bounds.width,
+    height: bounds.height,
+    minWidth,
+    minHeight,
     show: false,
     titleBarStyle: 'hidden',
     titleBarOverlay: {
@@ -6275,18 +6808,61 @@ function createWindow() {
     }
   });
 
-  // Set win for version watching
-  win = mainWindow;
+  if (bounds.isMaximized) {
+    newWin.maximize();
+  }
 
-  mainWindow.on('maximize', () => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('window-maximized-change', true);
+  if (process.platform === 'win32') {
+    try {
+      newWin.setAppDetails({
+        appId: 'com.intellifile.app'
+      });
+    } catch (e) {
+      console.warn('[Window] Failed to setAppDetails:', e.message);
+    }
+    try {
+      // 0x0219 = WM_DEVICECHANGE (device arrival/removal, USB, MTP phone)
+      newWin.hookWindowMessage(0x0219, (wParam, lParam) => {
+        console.log('[DeviceChange] Hardware event received (WM_DEVICECHANGE)');
+        cachedDrivesResult = null;
+        lastKnownDrivesHash = '';
+        refreshDriveMetadataAsync();
+        refreshPortableDevicesAsync(true);
+      });
+    } catch (e) {
+      console.warn('[Window] Failed to hook WM_DEVICECHANGE:', e.message);
+    }
+  }
+
+  activeWindows.add(newWin);
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    mainWindow = newWin;
+    win = newWin;
+  }
+
+  // Debounced window state persistence
+  let saveStateTimeout = null;
+  const triggerSaveState = () => {
+    if (saveStateTimeout) clearTimeout(saveStateTimeout);
+    saveStateTimeout = setTimeout(() => {
+      saveWindowState(newWin);
+    }, 400);
+  };
+
+  newWin.on('resize', triggerSaveState);
+  newWin.on('move', triggerSaveState);
+
+  newWin.on('maximize', () => {
+    triggerSaveState();
+    if (!newWin.isDestroyed()) {
+      newWin.webContents.send('window-maximized-change', true);
     }
   });
 
-  mainWindow.on('unmaximize', () => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('window-maximized-change', false);
+  newWin.on('unmaximize', () => {
+    triggerSaveState();
+    if (!newWin.isDestroyed()) {
+      newWin.webContents.send('window-maximized-change', false);
     }
   });
 
@@ -6316,20 +6892,20 @@ function createWindow() {
     <p>Run <code>npm run build</code> inside the <code>frontend</code> folder, then relaunch the app.</p>
   </body>
 </html>`;
-    mainWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(missingHtml)}`);
+    newWin.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(missingHtml)}`);
   } else {
-    mainWindow.loadURL(startUrl);
+    newWin.loadURL(startUrl);
   }
 
-  mainWindow.once('ready-to-show', () => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.show();
+  newWin.once('ready-to-show', () => {
+    if (!newWin.isDestroyed()) {
+      newWin.show();
     }
   });
 
-  mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL) => {
+  newWin.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL) => {
     console.error('[UI] Failed to load window:', errorCode, errorDescription, validatedURL);
-    if (mainWindow && !mainWindow.isDestroyed()) {
+    if (!newWin.isDestroyed()) {
       const errorHtml = `<!doctype html>
 <html>
   <head>
@@ -6346,34 +6922,40 @@ function createWindow() {
     <p>Please rebuild the frontend and relaunch the app.</p>
   </body>
 </html>`;
-      mainWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(errorHtml)}`);
+      newWin.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(errorHtml)}`);
     }
   });
 
   // Trigger auto-indexing once window is ready and Python is ready
-  // Add a small delay to allow UI to render before heavy indexing starts
-  mainWindow.webContents.on('did-finish-load', () => {
+  // Defer auto-indexing so initial launch, UI render, and user interaction are instant and smooth
+  // IMPORTANT: Auto-indexing must only run ONCE per app session across all open windows!
+  newWin.webContents.on('did-finish-load', () => {
     windowReadyForIndexing = true;
-    console.log('[Window] Ready for indexing — will start in 500ms');
-    // Defer auto-index to give UI time to render
-    setTimeout(() => {
-      tryAutoIndex();
-    }, 500);
+    if (!autoIndexTriggeredThisSession && !autoIndexRequested && !indexInProgress) {
+      console.log('[Window] Ready for indexing — will start in 25s background delay');
+      setTimeout(() => {
+        tryAutoIndex();
+      }, 25000);
+    } else {
+      console.log('[Window] Ready, auto-indexing already scheduled or completed for this session');
+    }
   });
 
   // Increase max event listeners to prevent memory leak warnings during indexing
-  mainWindow.webContents.setMaxListeners(100);
+  newWin.webContents.setMaxListeners(100);
 
-  // DevTools disabled from auto-opening on startup
-  // if (isDev) {
-  //   mainWindow.webContents.openDevTools();
-  // }
-
-  mainWindow.on('closed', () => {
-    mainWindow = null;
-    win = null;
+  newWin.on('closed', () => {
+    if (saveStateTimeout) clearTimeout(saveStateTimeout);
+    saveWindowState(newWin);
+    activeWindows.delete(newWin);
+    if (mainWindow === newWin) {
+      const remaining = Array.from(activeWindows).filter(w => !w.isDestroyed());
+      mainWindow = remaining.length > 0 ? remaining[0] : null;
+      win = mainWindow;
+    }
   });
 
+  return newWin;
 }
 
 function initializeWatchedDirectories() {
@@ -6406,16 +6988,56 @@ function initializeWatchedDirectories() {
   }
 }
 
+function cleanupStaleUpdaterFiles() {
+  try {
+    const localAppData = process.env.LOCALAPPDATA;
+    if (!localAppData) return;
+
+    const updaterDirs = [
+      path.join(localAppData, 'intellifile-updater'),
+      path.join(localAppData, 'IntelliFile-updater')
+    ];
+
+    for (const upDir of updaterDirs) {
+      if (fs.existsSync(upDir)) {
+        const pendingDir = path.join(upDir, 'pending');
+        if (fs.existsSync(pendingDir)) {
+          const files = fs.readdirSync(pendingDir);
+          for (const file of files) {
+            const filePath = path.join(pendingDir, file);
+            try {
+              const stat = fs.statSync(filePath);
+              // Clean up files older than 2 hours to avoid disk bloat from prior updates
+              if (Date.now() - stat.mtimeMs > 2 * 60 * 60 * 1000) {
+                fs.rmSync(filePath, { recursive: true, force: true });
+                console.log('[Update] Cleaned up stale updater file:', file);
+              }
+            } catch (_) {}
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('[Update] Failed to cleanup stale updater files:', err.message);
+  }
+}
+
 app.on('ready', () => {
   loadIndexingPreferences();
   registerIpcHandlers();
+  refreshPortableDevicesAsync();
   startPython();
-  startSyncServer();
-  ensureSyncEngine();
-  startDriveWatcher();
   if (CHAT_ENABLED) startChatBackend();
   createWindow();
-  initializeWatchedDirectories();
+
+  // Stagger secondary background services so initial window creation & React render are smooth
+  setTimeout(() => {
+    startSyncServer();
+    ensureSyncEngine();
+    startDriveWatcher();
+    initializeWatchedDirectories();
+    cleanupStaleUpdaterFiles();
+  }, 2500);
 });
 
 app.on('window-all-closed', () => {

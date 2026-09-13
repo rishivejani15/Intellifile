@@ -147,6 +147,12 @@ class SearchRegressionTests(unittest.TestCase):
     def test_no_evidence_returns_no_results(self, _mock_faiss):
         self.assertEqual(semantic_search("qxzvnonexistenttoken", top_k=10), [])
 
+    def test_empty_query_without_filters_returns_empty(self):
+        """An empty or whitespace-only query without metadata filters must return [] immediately."""
+        self.assertEqual(semantic_search("", top_k=10), [])
+        self.assertEqual(semantic_search("   ", top_k=10), [])
+        self.assertEqual(semantic_search(None, top_k=10), [])
+
     def test_adjacent_terms_are_fts_phrases_not_joined_tokens(self):
         hits = _fts5_search("student proctoring system", top_k=10)
         hit_ids = {chunk_id for chunk_id, _score in hits}
@@ -174,6 +180,46 @@ class SearchRegressionTests(unittest.TestCase):
 
         hybrid_hits = {row["path"] for row in semantic_search("finalproject", top_k=10)}
         self.assertIn(path, hybrid_hits)
+
+    @patch("core.search._faiss_search", return_value=[])
+    def test_extension_filtering_metadata_and_hybrid(self, _mock_faiss):
+        # 1. Metadata-only search with extensions
+        pdf_only = _date_range_search(None, extensions=[".pdf"])
+        pdf_names = {os.path.basename(row["path"]) for row in pdf_only}
+        self.assertIn("Attention-Is-All-You-Need.pdf", pdf_names)
+        self.assertNotIn("August design.txt", pdf_names)
+        self.assertNotIn("Proctoring project.docx", pdf_names)
+
+        # 2. Hybrid search with query and extensions
+        results = semantic_search("handbook", top_k=10, extensions=[".txt"])
+        names = {os.path.basename(row["path"]) for row in results}
+        self.assertIn("Student handbook.txt", names)
+
+        # 3. Filtering by conflicting extension returns no hits
+        no_pdf = semantic_search("handbook", top_k=10, extensions=[".pdf"])
+        names_no_pdf = {os.path.basename(row["path"]) for row in no_pdf}
+        self.assertNotIn("Student handbook.txt", names_no_pdf)
+
+    @patch("core.search._faiss_search", return_value=[])
+    def test_root_folder_slash_variations(self, _mock_faiss):
+        """Root folder scoping must match whether paths use forward slashes or backslashes."""
+        # Query with forward-slash root
+        fwd_results = semantic_search("handbook", root_folder="C:/docs")
+        self.assertTrue(any("Student handbook.txt" in r["path"] for r in fwd_results))
+
+        # Query with backslash root
+        back_results = semantic_search("handbook", root_folder="C:\\docs")
+        self.assertTrue(any("Student handbook.txt" in r["path"] for r in back_results))
+
+        # Query in unrelated folder should return 0 results
+        other_results = semantic_search("handbook", root_folder="C:/other_folder")
+        self.assertEqual(len(other_results), 0)
+
+    @patch("core.search._faiss_search", return_value=[])
+    def test_folder_query_fallback_to_semantic_search(self, _mock_faiss):
+        """When query matches folder pattern (e.g. 'files ...') but folder is not found, fallback to search."""
+        results = semantic_search("files Attention Is All You Need")
+        self.assertTrue(any("Attention-Is-All-You-Need.pdf" in r["path"] for r in results))
 
 
 if __name__ == "__main__":

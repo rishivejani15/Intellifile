@@ -185,6 +185,37 @@ def main():
                 current = next_exc
             return False
 
+        def _is_network_error(exc):
+            """Walk the full exception chain to detect network connection/DNS failures."""
+            _NET_FINGERPRINTS = (
+                "getaddrinfo failed",
+                "nameresolutionerror",
+                "failed to establish a new connection",
+                "maxretryerror",
+                "connectionerror",
+                "network is unreachable",
+                "connection refused",
+                "connection timed out",
+                "timed out",
+                "timeouterror",
+                "temporary failure in name resolution",
+                "not connected to the internet",
+                "enotfound",
+                "econnrefused",
+                "etimedout",
+                "cannot reach huggingface.co",
+            )
+            visited = set()
+            current = exc
+            while current is not None and id(current) not in visited:
+                visited.add(id(current))
+                curr_str = str(current).lower()
+                if any(fp in curr_str for fp in _NET_FINGERPRINTS):
+                    return True
+                next_exc = getattr(current, '__cause__', None) or getattr(current, '__context__', None)
+                current = next_exc
+            return False
+
         for _attempt in range(1, _MAX_RETRIES + 1):
             try:
                 old_stderr = sys.stderr
@@ -193,8 +224,8 @@ def main():
                     snapshot_download(
                         repo_id=model_name,
                         cache_dir=_MODELS_DIR,
-                        allow_patterns=["*.onnx", "*.json", "tokenizer*"],
-                        ignore_patterns=["*model_fp16*", "*model_int8*", "*model_quantized*"]
+                        allow_patterns=["onnx/model.onnx", "*.json", "tokenizer*"],
+                        ignore_patterns=["*model_bnb4*", "*model_uint8*", "*model_q4*", "*model_fp16*", "*model_int8*", "*model_quantized*"]
                     )
                 finally:
                     sys.stderr = old_stderr
@@ -265,13 +296,19 @@ def main():
         # manually place model files — core/model.py will auto-detect them on
         # the next launch via glob, so no re-download is needed.
         _manual_path = os.path.join(_MODELS_DIR, f"models--{model_name.replace('/', '--')}")
-        _log(f"      [ERROR] Failed to setup embedding model: {e}")
+        _is_net = _is_network_error(e)
+        _code = "NO_INTERNET" if _is_net else None
+        _user_msg = (
+            "Internet connection is required to download the AI models. Please turn on Wi-Fi or connect to the internet and try again."
+            if _is_net else str(e)
+        )
+        _log(f"      [ERROR] Failed to setup embedding model: {_user_msg}")
         _log(f"      ")
         _log(f"      As a workaround, you can manually place the model files in:")
         _log(f"        {_manual_path}")
         _log(f"      Download from: https://huggingface.co/{model_name}")
         _log(f"      The app will detect the model automatically on next launch.")
-        _emit_json("error", message=str(e), manual_install_path=_manual_path)
+        _emit_json("error", message=_user_msg, code=_code, manual_install_path=_manual_path)
         sys.exit(1)
 
     # ── Step 2: Qwen chat model (GGUF) ───────────────────────────────

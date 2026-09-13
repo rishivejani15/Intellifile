@@ -1,0 +1,299 @@
+/* =====================================================
+   IntelliFile Rollback Confirmation Modal
+   Theme: Obsidian & Emerald Glassmorphic (Neutral Overlay)
+   ===================================================== */
+
+.rollback-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.72) !important;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10001;
+  animation: rollbackOverlayIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes rollbackOverlayIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.rollback-modal-container {
+  background: #18181b;
+  color: var(--t-primary, #fafafa);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 16px;
+  width: 480px;
+  max-width: calc(100% - 32px);
+  box-shadow: 0 24px 50px rgba(0, 0, 0, 0.65), 0 0 1px rgba(255, 255, 255, 0.2), 0 0 35px rgba(16, 185, 129, 0.12);
+  overflow: hidden;
+  font-family: inherit;
+  animation: rollbackModalPop 0.25s cubic-bezier(0.34, 1.4, 0.64, 1);
+}
+
+@keyframes rollbackModalPop {
+  from {
+    opacity: 0;
+    transform: scale(0.94) translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+/* Header */
+.rollback-modal-header {
+  padding: 18px 22px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.rollback-modal-header-left {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.rollback-modal-icon-badge {
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(16, 185, 129, 0.14);
+  border: 1px solid rgba(16, 185, 129, 0.35);
+  color: #10b981;
+  font-size: 22px;
+  box-shadow: 0 0 18px rgba(16, 185, 129, 0.2);
+  flex-shrink: 0;
+}
+
+.rollback-modal-title-group h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: #fafafa;
+  letter-spacing: -0.2px;
+}
+
+.rollback-modal-title-group p {
+  margin: 2px 0 0 0;
+  font-size: 12px;
+  color: #a1a1aa;
+}
+
+.rollback-modal-close-btn {
+  background: transparent;
+  border: none;
+  color: #71717a;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 18px;
+  transition: all 0.15s ease;
+}
+
+.rollback-modal-close-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #fafafa;
+}
+
+/* Body */
+.rollback-modal-body {
+  padding: 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.rollback-target-card {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.rollback-file-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.rollback-file-icon {
+  font-size: 18px;
+  color: #10b981;
+  flex-shrink: 0;
+}
+
+.rollback-file-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: #fafafa;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rollback-meta-grid {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.rollback-version-pill {
+  font-family: 'JetBrains Mono', 'Consolas', monospace;
+  font-size: 12px;
+  font-weight: 600;
+  background: rgba(16, 185, 129, 0.12);
+  color: #34d399;
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  padding: 4px 10px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.rollback-date-pill {
+  font-size: 12px;
+  color: #a1a1aa;
+  background: rgba(255, 255, 255, 0.04);
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.rollback-intent-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 8px;
+  border-radius: 6px;
+  text-transform: capitalize;
+  background: rgba(255, 255, 255, 0.06);
+  color: #d4d4d8;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.rollback-intent-badge.intent-addition {
+  background: rgba(16, 185, 129, 0.15);
+  color: #34d399;
+  border-color: rgba(16, 185, 129, 0.3);
+}
+
+.rollback-intent-badge.intent-deletion {
+  background: rgba(239, 68, 68, 0.15);
+  color: #f87171;
+  border-color: rgba(239, 68, 68, 0.3);
+}
+
+.rollback-intent-badge.intent-baseline {
+  background: rgba(59, 130, 246, 0.15);
+  color: #60a5fa;
+  border-color: rgba(59, 130, 246, 0.3);
+}
+
+/* Safety note */
+.rollback-safety-box {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 12px 14px;
+  background: rgba(16, 185, 129, 0.07);
+  border: 1px solid rgba(16, 185, 129, 0.22);
+  border-radius: 10px;
+}
+
+.rollback-safety-icon {
+  color: #10b981;
+  font-size: 20px;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.rollback-safety-text {
+  font-size: 12px;
+  line-height: 1.5;
+  color: #a1a1aa;
+}
+
+.rollback-safety-text strong {
+  color: #34d399;
+}
+
+/* Footer */
+.rollback-modal-footer {
+  padding: 16px 22px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.rollback-btn-cancel {
+  padding: 9px 18px;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 600;
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  color: #a1a1aa;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.rollback-btn-cancel:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: #fafafa;
+  border-color: rgba(255, 255, 255, 0.25);
+}
+
+.rollback-btn-confirm {
+  padding: 9px 20px;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 600;
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  color: #ffffff;
+  border: none;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(16, 185, 129, 0.35);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  transition: all 0.15s ease;
+}
+
+.rollback-btn-confirm:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgba(16, 185, 129, 0.5);
+  opacity: 0.96;
+}
+
+.rollback-btn-confirm:active {
+  transform: translateY(0);
+  box-shadow: 0 2px 8px rgba(16, 185, 129, 0.3);
+}

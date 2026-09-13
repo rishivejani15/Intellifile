@@ -1,10 +1,9 @@
 const os = require('os');
 const path = require('path');
 const fs = require('fs');
-const { execSync } = require('child_process');
+const { exec } = require('child_process');
 
 function mapDriveType(code) {
-  // WMIC DriveType codes
   switch (String(code)) {
     case '0': return 'Unknown';
     case '1': return 'NoRoot';
@@ -36,7 +35,7 @@ function getSpecialFolders() {
   const oneDrive = process.env.OneDrive || process.env.OneDriveCommercial || process.env.OneDriveConsumer || path.join(home, 'OneDrive');
   addIfExists('onedrive', 'OneDrive', oneDrive);
 
-  // Recycle Bin (virtual) - expose path to $Recycle.Bin if present
+  // Recycle Bin (virtual)
   const recycleRoot = path.parse(home).root || 'C:\\';
   const recycle = path.join(recycleRoot, '$Recycle.Bin');
   if (fs.existsSync(recycle)) folders.push({ id: 'recycle', name: 'Recycle Bin', path: recycle, virtual: true });
@@ -47,115 +46,139 @@ function getSpecialFolders() {
   return folders;
 }
 
-function listWindowsDrives() {
-  try {
-    const out = execSync('wmic logicaldisk get DeviceID,DriveType,ProviderName,VolumeName,Size,FreeSpace /format:csv', { encoding: 'utf8' });
-    const lines = out.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
-    if (lines.length < 2) return [];
-
-    const headers = lines[0].split(',');
-    const rows = lines.slice(1);
-    const drives = [];
-    for (const row of rows) {
-      const cols = row.split(',');
-      const map = {};
-      for (let i = 0; i < headers.length; i++) {
-        map[headers[i]] = cols[i] || '';
-      }
-      const device = map.DeviceID || map.Device || cols[1];
-      if (!device) continue;
-      const type = map.DriveType || '';
-      const provider = map.ProviderName || '';
-      const vol = map.VolumeName || '';
-      const size = parseInt(map.Size || '0', 10) || 0;
-      const free = parseInt(map.FreeSpace || '0', 10) || 0;
-
-      drives.push({
-        id: device,
-        path: device + (device.endsWith('\\') ? '' : '\\'),
-        name: vol || device,
-        type: mapDriveType(type),
-        provider: provider || null,
-        size,
-        free
-      });
-    }
-    return drives;
-  } catch (err) {
-    // Fallback: try parsing PowerShell Get-PSDrive
+function getFastDrives() {
+  const drives = [];
+  const letters = ['C', 'D', 'E', 'F', 'G'];
+  for (const letter of letters) {
+    const drivePath = letter + ':\\';
     try {
-      const out = execSync('powershell -NoProfile -Command "Get-PSDrive -PSProvider FileSystem | Select-Object Name,Free,Used,Root | ConvertTo-Json"', { encoding: 'utf8' });
-      const parsed = JSON.parse(out);
-      const arr = Array.isArray(parsed) ? parsed : [parsed];
-      return arr.map(d => ({ id: d.Name + ':', path: d.Root, name: d.Name, type: 'Local', size: null, free: d.Free || null }));
-    } catch (e) {
-      return [];
-    }
+      if (fs.existsSync(drivePath)) {
+        let size = 0;
+        let free = 0;
+        if (fs.statfsSync) {
+          try {
+            const stats = fs.statfsSync(drivePath);
+            size = stats.blocks * stats.bsize;
+            free = stats.bavail * stats.bsize;
+          } catch (_) {}
+        }
+        drives.push({
+          id: letter + ':',
+          path: drivePath,
+          name: letter === 'C' ? `Local Disk (${letter}:)` : `Drive (${letter}:)`,
+          type: 'Local',
+          size,
+          free
+        });
+      }
+    } catch (_) {}
   }
+  return drives;
 }
 
-function listPortableDevices() {
-  try {
-    // Best-effort using PowerShell to list PnP devices in PortableDevice class
-    const cmd = `powershell -NoProfile -Command "Get-PnpDevice -PresentOnly | Where-Object { $_.Class -eq 'PortableDevice' -or $_.Class -eq 'Image' } | Select-Object -Property FriendlyName,InstanceId | ConvertTo-Json"`;
-    const out = execSync(cmd, { encoding: 'utf8' });
-    const parsed = JSON.parse(out);
-    const arr = Array.isArray(parsed) ? parsed : [parsed];
-    return arr.map((d, i) => ({ id: `portable-${i}`, name: d.FriendlyName || d.InstanceId || 'Portable Device', details: d }));
-  } catch (err) {
-    return [];
-  }
-}
+let cachedRoots = null;
+let isRefreshingRoots = false;
+let lastRefreshTime = 0;
 
-function listNetworkShares() {
-  try {
-    const out = execSync('net use', { encoding: 'utf8' });
-    const lines = out.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+function refreshSystemRootsAsync(targetWindow) {
+  if (isRefreshingRoots) return;
+  const now = Date.now();
+  if (now - lastRefreshTime < 10000 && cachedRoots) return;
+  isRefreshingRoots = true;
+  lastRefreshTime = now;
+
+  // Query network shares asynchronously without blocking event loop
+  exec('net use', { timeout: 3000, encoding: 'utf8' }, (_errNet, stdoutNet) => {
     const shares = [];
-    for (const line of lines) {
-      const driveMatch = line.match(/([A-Z]:)/i);
-      if (!driveMatch) continue;
-
-      const drive = driveMatch[1];
-      const afterDrive = line.slice((driveMatch.index || 0) + drive.length).trim();
-      const uncMatch = afterDrive.match(/\\+[^\s]+/);
-      if (!uncMatch) continue;
-      const unc = uncMatch[0];
-
-      shares.push({ id: drive, path: unc, name: drive, type: 'Network' });
+    if (stdoutNet) {
+      try {
+        const lines = stdoutNet.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+        for (const line of lines) {
+          const driveMatch = line.match(/([A-Z]:)/i);
+          if (!driveMatch) continue;
+          const drive = driveMatch[1];
+          const afterDrive = line.slice((driveMatch.index || 0) + drive.length).trim();
+          const uncMatch = afterDrive.match(/\\+[^\s]+/);
+          if (uncMatch) {
+            shares.push({ id: drive, path: uncMatch[0], name: drive, type: 'Network' });
+          }
+        }
+      } catch (_) {}
     }
-    return shares;
-  } catch (e) {
-    return [];
-  }
+
+    if (cachedRoots) {
+      cachedRoots.networkShares = shares;
+    }
+    isRefreshingRoots = false;
+
+    if (targetWindow && !targetWindow.isDestroyed()) {
+      targetWindow.webContents.send('system-roots-changed', cachedRoots);
+    }
+  });
 }
 
-async function getSystemRoots() {
-  const special = getSpecialFolders();
-  const drives = process.platform === 'win32' ? listWindowsDrives() : [];
-  const portable = process.platform === 'win32' ? listPortableDevices() : [];
-  const network = process.platform === 'win32' ? listNetworkShares() : [];
+async function getSystemRoots(targetWindow) {
+  if (!cachedRoots) {
+    cachedRoots = {
+      specialFolders: getSpecialFolders(),
+      drives: getFastDrives(),
+      portableDevices: [],
+      networkShares: []
+    };
+  }
+
+  // Kick off non-blocking background refresh
+  setTimeout(() => refreshSystemRootsAsync(targetWindow), 100);
 
   return {
     success: true,
-    data: {
-      specialFolders: special,
-      drives,
-      portableDevices: portable,
-      networkShares: network
-    }
+    data: cachedRoots
   };
 }
 
 function registerSystemRoots(ipcMain) {
   if (!ipcMain || typeof ipcMain.handle !== 'function') return;
-  ipcMain.handle('get-system-roots', async (_event, _opts) => {
+  ipcMain.handle('get-system-roots', async (event) => {
     try {
-      return await getSystemRoots();
+      const win = event?.sender?.getOwnerBrowserWindow?.() || null;
+      return await getSystemRoots(win);
     } catch (err) {
-      return { success: false, error: String(err) };
+      return {
+        success: true,
+        data: cachedRoots || {
+          specialFolders: getSpecialFolders(),
+          drives: getFastDrives(),
+          portableDevices: [],
+          networkShares: []
+        }
+      };
     }
   });
 }
 
-module.exports = { registerSystemRoots, getSystemRoots };
+function updateSystemRootsPortableDevices(devices, targetWindow) {
+  if (!cachedRoots) {
+    cachedRoots = {
+      specialFolders: getSpecialFolders(),
+      drives: getFastDrives(),
+      portableDevices: [],
+      networkShares: []
+    };
+  }
+  cachedRoots.portableDevices = Array.isArray(devices) ? devices : [];
+  try {
+    const { BrowserWindow } = require('electron');
+    const wins = BrowserWindow.getAllWindows();
+    for (const w of wins) {
+      if (w && !w.isDestroyed() && w.webContents && !w.webContents.isDestroyed()) {
+        w.webContents.send('system-roots-changed', cachedRoots);
+      }
+    }
+  } catch (_) {
+    if (targetWindow && !targetWindow.isDestroyed()) {
+      targetWindow.webContents.send('system-roots-changed', cachedRoots);
+    }
+  }
+}
+
+module.exports = { registerSystemRoots, getSystemRoots, updateSystemRootsPortableDevices };

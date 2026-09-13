@@ -113,6 +113,36 @@ function ExplorerSidebar({ drives, onNavigate, currentPath, onContextMenu }) {
   });
 
   const [systemRoots, setSystemRoots] = useState(null);
+  const [sidebarDrives, setSidebarDrives] = useState(drives || []);
+
+  useEffect(() => {
+    if (Array.isArray(drives) && drives.length > 0) {
+      setSidebarDrives(drives);
+    }
+  }, [drives]);
+
+  useEffect(() => {
+    const unsub = window.intellifile?.onDrivesChanged?.((newDrives) => {
+      if (Array.isArray(newDrives)) {
+        setSidebarDrives(newDrives);
+      }
+    });
+    const handleDrivesChanged = (_e, newDrives) => {
+      if (Array.isArray(newDrives)) {
+        setSidebarDrives(newDrives);
+      }
+    };
+    try {
+      ipcRenderer?.on?.('drives-changed', handleDrivesChanged);
+    } catch (_) {}
+
+    return () => {
+      if (typeof unsub === 'function') unsub();
+      try {
+        ipcRenderer?.off?.('drives-changed', handleDrivesChanged);
+      } catch (_) {}
+    };
+  }, []);
   const [expandedSections, setExpandedSections] = useState({
     favorites: true,
     quickAccess: true,
@@ -716,7 +746,7 @@ function ExplorerSidebar({ drives, onNavigate, currentPath, onContextMenu }) {
       )}
 
       {/* Drives */}
-      {drives.length > 0 && (
+      {sidebarDrives.length > 0 && (
         <div className="sidebar-section">
           <div
             className="sidebar-title collapsible"
@@ -729,14 +759,14 @@ function ExplorerSidebar({ drives, onNavigate, currentPath, onContextMenu }) {
           </div>
           {expandedSections.drives && (
             <div className="sidebar-drives">
-              {drives.filter(d => d && (d.device || d.path || d.id)).map((drive) => {
+              {sidebarDrives.filter(d => d && (d.device || d.path || d.id)).map((drive) => {
                 // Normalize to object shape expected by renderDriveCard
                 const drv = {
                   device: drive.device || drive.id || drive.path || drive.DeviceID || drive.Device || '',
                   description: drive.description || drive.name || drive.label || drive.VolumeName || drive.volumeName || drive.device || drive.path || '',
                   size: drive.size || drive.Size || 0,
                   available: drive.available ?? drive.free ?? drive.Free ?? drive.freeSpace ?? drive.free_space ?? 0,
-                  isPortable: Boolean(drive.isPortable),
+                  isPortable: Boolean(drive.isPortable || drive.type === 'portable'),
                   isRemovable: Boolean(drive.isRemovable || drive.isUSB),
                   isUSB: Boolean(drive.isUSB),
                   isSystem: Boolean(drive.isSystem),

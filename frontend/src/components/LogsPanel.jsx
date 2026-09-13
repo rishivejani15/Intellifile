@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useMemo } from 'react';
 import { showToast } from '../utils/toast';
 import './LogsPanel.css';
 
@@ -75,14 +75,35 @@ const LogsPanel = () => {
     window.intellifile.getLogs().then(initialLogs => {
       if (initialLogs) setLogs(initialLogs);
     });
-    const cleanup = window.intellifile.onBackendLog((newLog) => {
+
+    let pendingLogs = [];
+    let batchTimer = null;
+
+    const flushLogs = () => {
+      if (pendingLogs.length === 0) return;
+      const batch = pendingLogs;
+      pendingLogs = [];
       setLogs(prev => {
-        const next = [...prev, newLog];
+        const next = [...prev, ...batch];
         if (next.length > 2000) return next.slice(next.length - 2000);
         return next;
       });
+    };
+
+    const cleanup = window.intellifile.onBackendLog((newLog) => {
+      pendingLogs.push(newLog);
+      if (!batchTimer) {
+        batchTimer = setTimeout(() => {
+          batchTimer = null;
+          flushLogs();
+        }, 150);
+      }
     });
-    return cleanup;
+
+    return () => {
+      if (batchTimer) clearTimeout(batchTimer);
+      if (typeof cleanup === 'function') cleanup();
+    };
   }, []);
 
   useEffect(() => {
@@ -91,27 +112,31 @@ const LogsPanel = () => {
     }
   }, [logs, autoScroll]);
 
-  // Count logs per level for badge display
-  const levelCounts = logs.reduce((acc, log) => {
-    const lv = log.level || 'info';
-    acc[lv] = (acc[lv] || 0) + 1;
-    return acc;
-  }, {});
-
-  const filteredLogs = logs.filter(log => {
-    if (levelFilter !== 'all') {
+  // Count logs per level for badge display (memoized to avoid recomputing on every render)
+  const levelCounts = useMemo(() => {
+    return logs.reduce((acc, log) => {
       const lv = log.level || 'info';
-      if (lv !== levelFilter) return false;
-    }
-    if (!matchesCategory(log, catFilter)) return false;
-    if (textFilter) {
-      const t = textFilter.toLowerCase();
-      const msgMatch = log.message  && log.message.toLowerCase().includes(t);
-      const catMatch = log.category && log.category.toLowerCase().includes(t);
-      if (!msgMatch && !catMatch) return false;
-    }
-    return true;
-  });
+      acc[lv] = (acc[lv] || 0) + 1;
+      return acc;
+    }, {});
+  }, [logs]);
+
+  const filteredLogs = useMemo(() => {
+    return logs.filter(log => {
+      if (levelFilter !== 'all') {
+        const lv = log.level || 'info';
+        if (lv !== levelFilter) return false;
+      }
+      if (!matchesCategory(log, catFilter)) return false;
+      if (textFilter) {
+        const t = textFilter.toLowerCase();
+        const msgMatch = log.message  && log.message.toLowerCase().includes(t);
+        const catMatch = log.category && log.category.toLowerCase().includes(t);
+        if (!msgMatch && !catMatch) return false;
+      }
+      return true;
+    });
+  }, [logs, levelFilter, catFilter, textFilter]);
 
   const formatLogText = (log) => {
     return `[${log.timestamp}] [${(log.level || 'info').toUpperCase()}] [${log.category}] ${log.message}`;

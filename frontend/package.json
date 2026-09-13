@@ -44,6 +44,7 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "deleteAppDataOnUninstall": false,
+      "include": "installer.nsh",
       "installerIcon": "public/intellifile_logo.ico",
       "uninstallerIcon": "public/intellifile_logo.ico",
       "installerHeaderIcon": "public/intellifile_logo.ico"
@@ -58,9 +59,14 @@
       "file_lock_service.js",
       "dateSearchParser.js",
       "folderSearchParser.js",
+      "windowBoundsHelper.js",
+      "shell_nav.ps1",
       "public/**/*",
       "build/**/*",
       "!build/**/*.map"
+    ],
+    "asarUnpack": [
+      "shell_nav.ps1"
     ],
     "extraResources": [
       {

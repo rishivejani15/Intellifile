@@ -32,6 +32,19 @@ except Exception as _ssl_ex:
 sys.stderr.write("[engine] Starting resilient process...\n")
 sys.stderr.flush()
 
+# Set process priority to BELOW_NORMAL on Windows to prevent CPU starvation of Electron/GPU
+if sys.platform == "win32":
+    try:
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.GetCurrentProcess()
+        # 0x00004000 = BELOW_NORMAL_PRIORITY_CLASS
+        kernel32.SetPriorityClass(handle, 0x00004000)
+        sys.stderr.write("[engine] Set BELOW_NORMAL_PRIORITY_CLASS for UI and GPU responsiveness\n")
+    except Exception as _p_err:
+        sys.stderr.write(f"[engine] Process priority adjustment note: {_p_err}\n")
+    sys.stderr.flush()
+
 _DATA_DIR = os.getenv("IF_DATA_DIR", os.path.join(_BACKEND_DIR, "data"))
 os.makedirs(_DATA_DIR, exist_ok=True)
 try:
@@ -179,7 +192,14 @@ def _background_indexer():
                 
                 _t_total = _time.perf_counter()
                 
+                _last_progress_emit = 0.0
                 def emit_progress(phase, detail="", pct=None):
+                    nonlocal _last_progress_emit
+                    now = _time.perf_counter()
+                    is_terminal = phase in ("done", "error") or pct == 100 or pct == 0
+                    if not is_terminal and (now - _last_progress_emit < 0.25):
+                        return
+                    _last_progress_emit = now
                     payload = {
                         "_id": req_id,
                         "type": "progress",
@@ -188,7 +208,8 @@ def _background_indexer():
                     }
                     if pct is not None:
                         payload["pct"] = pct
-                    print(json.dumps(payload), flush=True)
+                    with _stdout_lock:
+                        print(json.dumps(payload), flush=True)
                 
                 result = index_files_incremental(folder, progress_cb=emit_progress, allow_protected=allow_protected)
                 affected = result["affected_chunk_ids"] if isinstance(result, dict) else result
@@ -281,50 +302,64 @@ while True:
                 date_from = request.get("date_from")  # Unix timestamp or None
                 date_to = request.get("date_to")      # Unix timestamp or None
                 root_folder = request.get("root_folder")
+                extensions = request.get("extensions")  # List of extensions or None
+
+                if not folder_name and request.get("query"):
+                    from core.search import parse_folder_search_query
+                    folder_name = parse_folder_search_query(request.get("query"))
 
                 # Exact folder listings are deterministic metadata queries and
                 # must remain usable even when the embedding model is offline.
                 if folder_name:
                     from core.search import folder_search
-                    results = folder_search(
+                    folder_results = folder_search(
                         folder_name,
                         root_folder=root_folder,
                         date_from=date_from,
                         date_to=date_to,
+                        extensions=extensions,
                     )
-                    log_analytics_event("folder_search_executed", {"folder_name": folder_name})
-                    print(json.dumps({
-                        "_id": req_id,
-                        "results": [
-                            {
-                                "path": r["path"],
-                                "score": round(float(r["score"]), 3),
-                                "created_time": r.get("created_time"),
-                                "methods": r.get("methods", []),
-                            }
-                            for r in results
-                        ],
-                    }), flush=True)
+                    if folder_results:
+                        log_analytics_event("folder_search_executed", {"folder_name": folder_name})
+                        print(json.dumps({
+                            "_id": req_id,
+                            "results": [
+                                {
+                                    "path": r["path"],
+                                    "score": round(float(r["score"]), 3),
+                                    "created_time": r.get("created_time"),
+                                    "methods": r.get("methods", []),
+                                }
+                                for r in folder_results
+                            ],
+                        }), flush=True)
+                        continue
+
+                query = (request.get("query") or folder_name or "").strip()
+                is_metadata_only = not query and (date_from is not None or date_to is not None or extensions)
+
+                if not query and not is_metadata_only:
+                    print(json.dumps({"_id": req_id, "results": []}), flush=True)
                     continue
 
                 # Ensure embedding model is available before running semantic search
-                try:
-                    from core.model import is_model_loaded, MODEL_LOAD_ERROR
-                    if not is_model_loaded():
-                        err = MODEL_LOAD_ERROR or "Embedding model not available"
-                        print(json.dumps({"_id": req_id, "error": f"Embeddings unavailable: {err}"}), flush=True)
+                if not is_metadata_only:
+                    try:
+                        from core.model import is_model_loaded, MODEL_LOAD_ERROR
+                        if not is_model_loaded():
+                            err = MODEL_LOAD_ERROR or "Embedding model not available"
+                            print(json.dumps({"_id": req_id, "error": f"Embeddings unavailable: {err}"}), flush=True)
+                            continue
+                    except Exception:
+                        # If model module isn't reachable, fail the request
+                        print(json.dumps({"_id": req_id, "error": "Embedding model check failed"}), flush=True)
                         continue
-                except Exception:
-                    # If model module isn't reachable, fail the request
-                    print(json.dumps({"_id": req_id, "error": "Embedding model check failed"}), flush=True)
-                    continue
 
                 import importlib
                 import core.search
                 importlib.reload(core.search)
                 from core.search import fuzzy_filename_search, semantic_search
-                query = request.get("query", "").strip()
-                results = semantic_search(query, date_from=date_from, date_to=date_to, root_folder=root_folder)
+                results = semantic_search(query, date_from=date_from, date_to=date_to, root_folder=root_folder, extensions=extensions)
                 # Fuzzy matching is an opt-in fallback by outcome: it is only
                 # considered after the normal hybrid pipeline has no result,
                 # so it cannot reorder or change confidence for existing hits.
@@ -334,6 +369,7 @@ while True:
                         root_folder=root_folder,
                         date_from=date_from,
                         date_to=date_to,
+                        extensions=extensions,
                     )
                 log_analytics_event("search_executed", {"query_length": len(query)})
                 response = {
@@ -645,7 +681,7 @@ while True:
             from core.versioning.snapshot_manager import get_last_version, compute_file_hash, get_version_content
             import os
             ext = os.path.splitext(file_path)[1].lower() if file_path else ""
-            is_binary = ext in [".docx", ".xlsx", ".pdf", ".zip", ".pptx", ".pptm", ".ppt"]
+            is_binary = ext in [".docx", ".doc", ".xlsx", ".xls", ".pdf", ".zip", ".pptx", ".pptm", ".ppt", ".odt", ".rtf"]
             
             # Auto-read current disk content for external file changes if new_content was omitted/empty
             if file_path and os.path.exists(file_path) and (new_content == "" or new_content is None):
@@ -692,7 +728,7 @@ while True:
                 # Auto-sync external changes
                 if file_path and os.path.exists(file_path):
                     ext = os.path.splitext(file_path)[1].lower()
-                    is_binary = ext in [".docx", ".xlsx", ".pdf", ".zip", ".pptx", ".pptm", ".ppt"]
+                    is_binary = ext in [".docx", ".doc", ".xlsx", ".xls", ".pdf", ".zip", ".pptx", ".pptm", ".ppt", ".odt", ".rtf"]
                     current_content = None
                     if is_binary:
                         current_hash = compute_file_hash(file_path, True)

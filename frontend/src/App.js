@@ -1,15 +1,16 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, lazy, Suspense } from 'react';
 import './App.css';
 import FileExplorer from './components/FileExplorer/FileExplorer';
-import SyncManager from './components/Sync/SyncManager';
-import LogsPanel from './components/LogsPanel';
-import OfflineSetup from './components/OfflineSetup';
 import ToastHost from './components/ToastHost';
 import AutoSortToastHost from './components/AutoSortToastHost';
-import Settings from './pages/Settings';
-import FileLockManager from './components/FileLockManager';
-import OnboardingTour from './components/OnboardingTour';
 import { FiDownload, FiZap } from 'react-icons/fi';
+
+const SyncManager = lazy(() => import('./components/Sync/SyncManager'));
+const LogsPanel = lazy(() => import('./components/LogsPanel'));
+const OfflineSetup = lazy(() => import('./components/OfflineSetup'));
+const Settings = lazy(() => import('./pages/Settings'));
+const FileLockManager = lazy(() => import('./components/FileLockManager'));
+const OnboardingTour = lazy(() => import('./components/OnboardingTour'));
 
 const ipcRenderer = window.electron?.ipcRenderer;
 const TOUR_COMPLETED_KEY = 'intellifile-onboarding-completed-v1';
@@ -22,10 +23,26 @@ function getInitialTheme() {
 
 function App() {
   const [activeTab, setActiveTab] = useState('explorer');
+  const [visitedTabs, setVisitedTabs] = useState(() => new Set(['explorer']));
+
+  useEffect(() => {
+    setVisitedTabs(prev => {
+      if (prev.has(activeTab)) return prev;
+      const next = new Set(prev);
+      next.add(activeTab);
+      return next;
+    });
+  }, [activeTab]);
   const [drives, setDrives] = useState([]);
   const [selectedFile, setSelectedFile] = useState(null);
   const [versioningFile, setVersioningFile] = useState(null);
-  const [setupComplete, setSetupComplete] = useState(false);
+  const [setupComplete, setSetupComplete] = useState(() => {
+    try {
+      const saved = localStorage.getItem('intellifile-setup-completed');
+      if (saved !== null) return saved === 'true';
+    } catch (_) {}
+    return true; // Instant frame-0 mount; background check will switch to setup if needed
+  });
   const [offlineSetupKey, setOfflineSetupKey] = useState(0);
   const [updateAvailable, setUpdateAvailable] = useState(false);
   const [updateDownloaded, setUpdateDownloaded] = useState(false);
@@ -195,6 +212,7 @@ function App() {
 
     const result = await ipcRenderer.invoke('reset-offline-setup');
     if (result.success) {
+      try { localStorage.setItem('intellifile-setup-completed', 'false'); } catch (_) {}
       setSetupComplete(false);
       setOfflineSetupKey((key) => key + 1);
     } else {
@@ -203,7 +221,44 @@ function App() {
   };
 
   const handleOfflineSetupComplete = useCallback(() => {
+    try { localStorage.setItem('intellifile-setup-completed', 'true'); } catch (_) {}
     setSetupComplete(true);
+  }, []);
+
+  useEffect(() => {
+    // Non-blocking background verification of offline setup status
+    const verifySetup = async () => {
+      try {
+        const getStatus = window.intellifile?.offlineSetupStatus || (ipcRenderer ? () => ipcRenderer.invoke('offline-setup-status') : null);
+        if (getStatus) {
+          const res = await getStatus();
+          if (res?.needed) {
+            try { localStorage.setItem('intellifile-setup-completed', 'false'); } catch (_) {}
+            setSetupComplete(false);
+          } else if (res && !res.needed) {
+            try { localStorage.setItem('intellifile-setup-completed', 'true'); } catch (_) {}
+            setSetupComplete(true);
+          }
+        }
+      } catch (_) {}
+    };
+    verifySetup();
+  }, []);
+
+  useEffect(() => {
+    const unsubComplete = window.intellifile?.onOfflineSetupComplete?.(() => {
+      try { localStorage.setItem('intellifile-setup-completed', 'true'); } catch (_) {}
+      setSetupComplete(true);
+    });
+    const unsubReset = window.intellifile?.onOfflineSetupReset?.(() => {
+      try { localStorage.setItem('intellifile-setup-completed', 'false'); } catch (_) {}
+      setSetupComplete(false);
+      setOfflineSetupKey((key) => key + 1);
+    });
+    return () => {
+      if (unsubComplete) unsubComplete();
+      if (unsubReset) unsubReset();
+    };
   }, []);
   useEffect(() => {
     console.log('[App] versioningFile:', versioningFile);
@@ -347,33 +402,57 @@ function App() {
             </div>
 
             <div style={{ display: activeTab === 'sync' ? 'block' : 'none', height: '100%' }}>
-              <SyncManager />
+              {visitedTabs.has('sync') && (
+                <Suspense fallback={null}>
+                  <SyncManager />
+                </Suspense>
+              )}
             </div>
 
             <div style={{ display: activeTab === 'vault' ? 'block' : 'none', height: '100%' }}>
-              <FileLockManager />
+              {visitedTabs.has('vault') && (
+                <Suspense fallback={null}>
+                  <FileLockManager />
+                </Suspense>
+              )}
             </div>
 
             <div style={{ display: activeTab === 'logs' ? 'block' : 'none', height: '100%' }}>
-              <LogsPanel />
+              {visitedTabs.has('logs') && (
+                <Suspense fallback={null}>
+                  <LogsPanel />
+                </Suspense>
+              )}
             </div>
 
             <div style={{ display: activeTab === 'settings' ? 'flex' : 'none', flexDirection: 'column', height: '100%', minHeight: 0, overflow: 'hidden' }}>
-              <Settings theme={theme} onThemeChange={setTheme} onStartTour={startOnboardingTour} initialTab={settingsSubTab} />
+              {visitedTabs.has('settings') && (
+                <Suspense fallback={null}>
+                  <Settings theme={theme} onThemeChange={setTheme} onStartTour={startOnboardingTour} initialTab={settingsSubTab} />
+                </Suspense>
+              )}
             </div>
           </main>
         </div>)}
       <ToastHost />
       <AutoSortToastHost />
 
-      <OnboardingTour
-        open={showOnboardingTour && setupComplete}
-        onStart={() => setActiveTab('explorer')}
-        onNavigate={navigateTour}
-        onClose={closeOnboardingTour}
-      />
+      {showOnboardingTour && (
+        <Suspense fallback={null}>
+          <OnboardingTour
+            open={showOnboardingTour && setupComplete}
+            onStart={() => setActiveTab('explorer')}
+            onNavigate={navigateTour}
+            onClose={closeOnboardingTour}
+          />
+        </Suspense>
+      )}
 
-      {!setupComplete && <OfflineSetup key={offlineSetupKey} onComplete={handleOfflineSetupComplete} />}
+      {!setupComplete && (
+        <Suspense fallback={null}>
+          <OfflineSetup key={offlineSetupKey} onComplete={handleOfflineSetupComplete} />
+        </Suspense>
+      )}
     </div>
   );
 }

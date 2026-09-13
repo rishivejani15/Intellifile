@@ -1,5 +1,30 @@
 import React from 'react';
-import { MdArrowBack, MdArrowForward, MdArrowUpward, MdRefresh, MdSearch, MdHistory, MdOutlineVisibility, MdOutlineVisibilityOff, MdViewModule, MdViewList, MdTableChart, MdUnfoldMore, MdUnfoldLess, MdOutlineDateRange, MdDelete, MdViewSidebar } from 'react-icons/md';
+import {
+  MdArrowBack,
+  MdArrowForward,
+  MdArrowUpward,
+  MdRefresh,
+  MdSearch,
+  MdHistory,
+  MdOutlineVisibility,
+  MdOutlineVisibilityOff,
+  MdViewModule,
+  MdViewList,
+  MdTableChart,
+  MdUnfoldMore,
+  MdUnfoldLess,
+  MdOutlineDateRange,
+  MdDelete,
+  MdViewSidebar,
+  MdTune,
+  MdClose,
+  MdFolderOpen,
+  MdOutlineCalendarMonth,
+  MdOutlineDescription,
+} from 'react-icons/md';
+import SearchFilterPopover, {
+  getActiveFilterChips,
+} from './FileExplorer/components/SearchFilterPopover';
 import './FileExplorer/FileExplorer.css';
 
 function ExplorerNavbar({
@@ -42,8 +67,21 @@ function ExplorerNavbar({
   onCreateFile,
   onSearchChange,
   onSearchKeyDown,
+  searchFilters,
+  currentPath,
+  currentFolders,
+  onFiltersChange,
+  onResetFilters,
+  onFilterChipRemove,
 }) {
   const [updateState, setUpdateState] = React.useState({ status: 'none', version: '', progress: 0 });
+  const [isFilterOpen, setIsFilterOpen] = React.useState(false);
+
+  const activeChips = React.useMemo(() => {
+    return getActiveFilterChips(searchFilters, currentPath);
+  }, [searchFilters, currentPath]);
+
+  const activeFilterCount = activeChips.length;
 
   React.useEffect(() => {
     if (window.electron?.getUpdateState) {
@@ -197,7 +235,38 @@ function ExplorerNavbar({
               <MdDelete />
             </button>
           )}
+          <button
+            type="button"
+            className={`search-filter-btn ${activeFilterCount > 0 ? 'active' : ''} ${isFilterOpen ? 'open' : ''}`}
+            onClick={() => setIsFilterOpen(!isFilterOpen)}
+            title="Search filters (File type, Date, Folder)"
+            aria-label="Search filters"
+          >
+            <MdTune />
+            {activeFilterCount > 0 && (
+              <span className="search-filter-badge">{activeFilterCount}</span>
+            )}
+          </button>
+
+          {isFilterOpen && (
+            <SearchFilterPopover
+              filters={searchFilters}
+              currentPath={currentPath}
+              currentFolders={currentFolders}
+              onApply={(updated) => {
+                setIsFilterOpen(false);
+                requestAnimationFrame(() => {
+                  onFiltersChange?.(updated);
+                });
+              }}
+              onReset={(blank) => {
+                onResetFilters?.(blank);
+              }}
+              onClose={() => setIsFilterOpen(false)}
+            />
+          )}
         </div>
+
         {searchQuery && /\b(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec|\d{4}|yesterday|today|last\s+week|last\s+month|this\s+month|this\s+year)\b/i.test(searchQuery) && (
           <div className="date-filter-badge">
             <MdOutlineDateRange /> Date filter active
@@ -328,6 +397,50 @@ function ExplorerNavbar({
           )}
         </div>
       </div>
+
+      {/* Active Filter Chips Bar (Below Search Bar) */}
+      {activeChips.length > 0 && (
+        <div className="search-active-filters-bar">
+          <div className="search-active-filters-inner">
+            <span className="search-active-filters-label">Filters:</span>
+            <div className="search-active-chips-list">
+              {activeChips.map((chip) => (
+                <span key={chip.key} className="search-filter-chip">
+                  {chip.type === 'fileType' && <MdOutlineDescription className="chip-icon" />}
+                  {chip.type === 'date' && <MdOutlineCalendarMonth className="chip-icon" />}
+                  {chip.type === 'folderScope' && <MdFolderOpen className="chip-icon" />}
+                  <span className="chip-label">{chip.label}</span>
+                  <button
+                    type="button"
+                    className="chip-remove-btn"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onFilterChipRemove?.(chip.key);
+                    }}
+                    title={`Remove ${chip.label}`}
+                    aria-label={`Remove ${chip.label}`}
+                  >
+                    <MdClose />
+                  </button>
+                </span>
+              ))}
+            </div>
+            {activeChips.length > 1 && (
+              <button
+                type="button"
+                className="filter-clear-all-btn"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onResetFilters?.();
+                }}
+                title="Clear all filters"
+              >
+                Clear all
+              </button>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

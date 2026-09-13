@@ -53,6 +53,9 @@ contextBridge.exposeInMainWorld('intellifile', {
   search: (query) => {
     return ipcRenderer.invoke('search', query);
   },
+  selectFolder: () => {
+    return ipcRenderer.invoke('dialog:select-folder');
+  },
   searchStatus: () => {
     return ipcRenderer.invoke('search-status');
   },
@@ -353,6 +356,16 @@ contextBridge.exposeInMainWorld('intellifile', {
     ipcRenderer.on('offline-setup-progress', handler);
     return () => ipcRenderer.off('offline-setup-progress', handler);
   },
+  onOfflineSetupComplete: (callback) => {
+    const handler = (_event, data) => callback(data);
+    ipcRenderer.on('offline-setup-complete', handler);
+    return () => ipcRenderer.off('offline-setup-complete', handler);
+  },
+  onOfflineSetupReset: (callback) => {
+    const handler = (_event, data) => callback(data);
+    ipcRenderer.on('offline-setup-reset', handler);
+    return () => ipcRenderer.off('offline-setup-reset', handler);
+  },
 
   // Startup path (for file-manager open-with and Chrome "Show in folder")
   getStartupPath: () => ipcRenderer.invoke('get-startup-path'),
@@ -371,6 +384,7 @@ contextBridge.exposeInMainWorld('intellifile', {
   maximizeWindow: () => ipcRenderer.invoke('window-maximize'),
   closeWindow: () => ipcRenderer.invoke('window-close'),
   isWindowMaximized: () => ipcRenderer.invoke('window-is-maximized'),
+  openNewWindow: () => ipcRenderer.invoke('open-new-window'),
   onWindowMaximizedChange: (callback) => {
     const handler = (_event, isMax) => callback(isMax);
     ipcRenderer.on('window-maximized-change', handler);

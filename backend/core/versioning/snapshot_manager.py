@@ -106,7 +106,7 @@ def get_version_by_number(file_path: str, version: int):
 
 def create_version(file_path: str, content_or_path: Any, metadata: dict):
     ext = os.path.splitext(file_path)[1].lower()
-    is_binary = ext in [".docx", ".xlsx", ".pdf", ".zip"]
+    is_binary = ext in [".docx", ".doc", ".xlsx", ".xls", ".pdf", ".zip", ".pptx", ".pptm", ".ppt", ".odt", ".rtf"]
     
     current_hash = compute_file_hash(content_or_path, is_binary)
     last_version = get_last_version(file_path)
@@ -186,7 +186,7 @@ def save_snapshot(file_path: str, content_or_path: Any, metadata: dict, custom_t
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S%f") + f"_{suffix}"
     ext = os.path.splitext(file_path)[1].lower()
     
-    is_binary = ext in [".docx", ".xlsx", ".pdf", ".zip"]
+    is_binary = ext in [".docx", ".doc", ".xlsx", ".xls", ".pdf", ".zip", ".pptx", ".pptm", ".ppt", ".odt", ".rtf"]
     
     # Calculate hash before saving to check for duplicates
     file_hash = compute_file_hash(content_or_path, is_binary)
@@ -352,10 +352,10 @@ def get_version_content(file_path: str, version_id: str):
                     raise FileNotFoundError(f"Version file not found for {version_id}")
 
     # For binary files, return the path so the engine can parse it
-    if ext in [".docx", ".xlsx"]:
+    if ext in [".docx", ".doc", ".xlsx", ".xls", ".pdf", ".zip", ".pptx", ".ppt", ".odt", ".rtf"]:
         return version_file
 
-    with open(version_file, "r", encoding="utf-8") as f:
+    with open(version_file, "r", encoding="utf-8", errors="replace") as f:
         return f.read()
 
 
@@ -383,7 +383,7 @@ def compare_versions(file_path: str, version_a: str, version_b: str):
 
     ext = os.path.splitext(file_path)[1].lower()
     
-    if ext in [".docx", ".xlsx"]:
+    if ext in [".docx", ".doc", ".xlsx", ".xls"]:
         # Use local import to avoid circular dependency
         from core.versioning.version_engine import VersionEngine
         engine = VersionEngine()
@@ -408,11 +408,32 @@ def compare_versions(file_path: str, version_a: str, version_b: str):
             "version_b": newer_version,
             "diff": result["diff"]
         }
+    elif ext in [".pdf"]:
+        from core.extractor import extract_text
+        path_a = get_version_content(file_path, older_version)
+        path_b = get_version_content(file_path, newer_version)
+        text_a = extract_text(path_a) if isinstance(path_a, str) and os.path.exists(path_a) else ""
+        text_b = extract_text(path_b) if isinstance(path_b, str) and os.path.exists(path_b) else ""
+        diff = generate_diff(text_a, text_b)
+        return {
+            "version_a": older_version,
+            "version_b": newer_version,
+            "diff": diff
+        }
+    elif ext in [".zip", ".png", ".jpg", ".jpeg", ".mp4", ".mp3", ".exe", ".dll", ".bin", ".pak"]:
+        return {
+            "version_a": older_version,
+            "version_b": newer_version,
+            "diff": f"--- a/{older_version}\n+++ b/{newer_version}\n@@ -1 +1 @@\n- Binary file ({ext}): {older_version}\n+ Binary file ({ext}): {newer_version}\n"
+        }
     else:
         # Standard Text Diff
-        content_a = get_version_content(file_path, older_version)
-        content_b = get_version_content(file_path, newer_version)
-        diff = generate_diff(content_a, content_b)
+        try:
+            content_a = get_version_content(file_path, older_version)
+            content_b = get_version_content(file_path, newer_version)
+            diff = generate_diff(content_a, content_b)
+        except Exception:
+            diff = f"--- a/{older_version}\n+++ b/{newer_version}\n@@ -1 +1 @@\n- Binary file: {older_version}\n+ Binary file: {newer_version}\n"
 
         return {
             "version_a": older_version,

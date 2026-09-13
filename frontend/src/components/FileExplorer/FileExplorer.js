@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { MdOutlineVisibility } from 'react-icons/md';
 import { searchFiles, onIndexProgress, onIndexComplete } from '../../services/searchService';
+import { hasSearchableFilters, convertFiltersToSearchPayload, getDefaultFilters } from './components/SearchFilterPopover';
 import { useNavigation } from '../../hooks/useNavigation';
 import { useFileExplorer } from '../../hooks/useFileExplorer';
 import { useKeyboardShortcuts } from '../../hooks/useKeyboardShortcuts';
@@ -29,8 +30,16 @@ const ipcRenderer = window.electron?.ipcRenderer;
 const VERSIONING_BLOCKED_EXTENSIONS = new Set(['.zip', '.ppt', '.pptx', '.pptm', '.pak', '.bin', '.backup']);
 
 function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWithAI }) {
-  // UI State
-  const [items, setItems] = useState([]);
+  // UI State: initialize from lastDirectoryCache so items are displayed on frame 0
+  const [items, setItems] = useState(() => {
+    try {
+      const cached = JSON.parse(localStorage.getItem('lastDirectoryCache') || '{}');
+      if (cached?.items && Array.isArray(cached.items) && cached.items.length > 0) {
+        return cached.items;
+      }
+    } catch (_) {}
+    return [];
+  });
   const [loading, setLoading] = useState(false);
   // UI State with localStorage persistence (Default: Name, Ascending)
   const [viewMode, setViewMode] = useState(() => {
@@ -90,6 +99,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
   }, [viewMode, sortBy, sortDirection, groupBy]);
   const [showHidden, setShowHidden] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [searchFilters, setSearchFilters] = useState(() => getDefaultFilters('Home'));
   const [selectedItem, setSelectedItem] = useState(null);
   const [selectedItems, setSelectedItems] = useState([]);
   const [lastSelectedIndex, setLastSelectedIndex] = useState(null);
@@ -118,6 +128,9 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
   // Search & Indexing State
   const [semanticResults, setSemanticResults] = useState(null);
   const [semanticLoading, setSemanticLoading] = useState(false);
+  const isSearchActive = semanticResults !== null && (
+    Boolean(searchQuery.trim()) || hasSearchableFilters(searchFilters)
+  );
   const [engineReady, setEngineReady] = useState(false);
   const [indexing, setIndexing] = useState(false);
   const [indexPhase, setIndexPhase] = useState('');
@@ -201,6 +214,8 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
   // Search abort ref — incremented on each search to cancel stale requests
   const searchIdRef = useRef(0);
   const searchDebounceRef = useRef(null);
+  const searchQueryRef = useRef(searchQuery);
+  searchQueryRef.current = searchQuery;
 
   // Handle internal Reveal File event from Settings / Storage
   useEffect(() => {
@@ -255,20 +270,33 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
     return () => window.removeEventListener('intellifile-reveal-file', handleRevealFile);
   }, []);
 
-  // Update This PC view immediately when USB pendrives are connected/disconnected
+  const [activeDrives, setActiveDrives] = useState(drives || []);
+
   useEffect(() => {
-    const unsub = window.intellifile?.onDrivesChanged?.((drives) => {
-      if (currentPath === 'This PC' && Array.isArray(drives)) {
-        const driveItems = drives.map(drive => ({
-          name: drive.description || drive.name,
+    if (Array.isArray(drives) && drives.length > 0) {
+      setActiveDrives(drives);
+    }
+  }, [drives]);
+
+  // Update This PC view and active drives immediately when USB pendrives/portable devices are connected/disconnected
+  useEffect(() => {
+    const unsub = window.intellifile?.onDrivesChanged?.((newDrives) => {
+      if (Array.isArray(newDrives)) {
+        setActiveDrives(newDrives);
+      }
+      if (currentPath === 'This PC' && Array.isArray(newDrives)) {
+        const driveItems = newDrives.map(drive => ({
+          name: drive.description || drive.name || drive.label || drive.device,
           path: drive.device || drive.path,
-          type: 'drive',
+          type: drive.isPortable || drive.type === 'portable' ? 'portable' : 'drive',
           ext: '',
           editable: false,
-          size: drive.size,
-          available: drive.available,
-          isRemovable: drive.isRemovable || drive.isUSB,
-          isUSB: drive.isUSB,
+          size: drive.size || 0,
+          available: drive.available || 0,
+          isPortable: Boolean(drive.isPortable || drive.type === 'portable'),
+          isRemovable: Boolean(drive.isRemovable || drive.isUSB),
+          isUSB: Boolean(drive.isUSB),
+          isSystem: Boolean(drive.isSystem),
           modified: Date.now()
         }));
         setItems(driveItems);
@@ -277,6 +305,14 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
     return () => {
       if (typeof unsub === 'function') unsub();
     };
+  }, [currentPath]);
+
+  // Sync default search filters when navigating to a new path (only if no active query)
+  useEffect(() => {
+    if (!searchQuery || !searchQuery.trim()) {
+      setSearchFilters(getDefaultFilters(currentPath));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentPath]);
 
   // Stable refs for callbacks used inside the watch effect.
@@ -288,6 +324,10 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
 
   // Derived values
   const displayItems = useMemo(() => sortItems(items, sortBy, sortDirection), [items, sortBy, sortDirection]);
+  const currentFolders = useMemo(() => {
+    if (!items || !Array.isArray(items)) return [];
+    return items.filter(i => (i.type === 'folder' || i.isDirectory) && !i.protected);
+  }, [items]);
   const matchesSearch = useCallback((name) => {
     if (!searchQuery) return true;
     return name.toLowerCase().includes(searchQuery.toLowerCase());
@@ -469,7 +509,8 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
   // Load directory with filtering and sorting
   const loadDirectory = useCallback(async (dirPath, options = {}) => {
     loadDirectoryRef.current = loadDirectory;
-    const { soft = false, trackHistory = true, tabId = null, selectFile = null, suppressLoading = false, skipSearchFilter = false } = options;
+    const { soft = false, trackHistory = true, tabId = null, selectFile = null, suppressLoading = false, skipSearchFilter = false, showHiddenOverride } = options;
+    const effectiveShowHidden = showHiddenOverride !== undefined ? showHiddenOverride : showHidden;
 
     // Handle 'Home' special virtual path
     const isHome = !dirPath || String(dirPath).toLowerCase() === 'home';
@@ -482,8 +523,16 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
       setSelectedItem(null);
       setSelectedItems([]);
       setLoading(false);
+      searchIdRef.current++;
+      if (searchDebounceRef.current) {
+        clearTimeout(searchDebounceRef.current);
+        searchDebounceRef.current = null;
+      }
       setSearchQuery('');
+      searchQueryRef.current = '';
       setSemanticResults(null);
+      setSemanticLoading(false);
+      setSearchFilters(getDefaultFilters('Home'));
       try {
         localStorage.setItem('lastDirectoryCache', JSON.stringify({ path: 'Home', items: [] }));
       } catch (_) {}
@@ -505,8 +554,16 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
       updateBreadcrumb('This PC');
       setSelectedItem(null);
       setSelectedItems([]);
+      searchIdRef.current++;
+      if (searchDebounceRef.current) {
+        clearTimeout(searchDebounceRef.current);
+        searchDebounceRef.current = null;
+      }
       setSearchQuery('');
+      searchQueryRef.current = '';
       setSemanticResults(null);
+      setSemanticLoading(false);
+      setSearchFilters(getDefaultFilters('This PC'));
       setLoading(true);
       
       try {
@@ -521,12 +578,12 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
         const driveItems = rawDrives.map(drive => ({
           name: drive.description || drive.name || drive.label || drive.device,
           path: drive.device || drive.path,
-          type: drive.isPortable ? 'portable' : 'drive',
+          type: (drive.isPortable || drive.type === 'portable') ? 'portable' : 'drive',
           ext: '',
           editable: false,
           size: drive.size || 0,
           available: drive.available || 0,
-          isPortable: Boolean(drive.isPortable),
+          isPortable: Boolean(drive.isPortable || drive.type === 'portable'),
           isRemovable: Boolean(drive.isRemovable || drive.isUSB),
           isUSB: Boolean(drive.isUSB),
           isSystem: Boolean(drive.isSystem),
@@ -567,7 +624,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
 
     const requestPromise = (async () => {
       try {
-        const result = await ipcRenderer?.invoke('list-directory', dirPath, { showHidden });
+        const result = await ipcRenderer?.invoke('list-directory', dirPath, { showHidden: effectiveShowHidden });
         if (isStale()) return;
         if (!result || result.error) {
           console.error('Error loading directory:', result?.error || 'Unknown error');
@@ -660,8 +717,16 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
               setAddressPath(actualPath);
               updateBreadcrumb(actualPath);
               // Clear search query and results when navigating to a new folder
+              searchIdRef.current++;
+              if (searchDebounceRef.current) {
+                clearTimeout(searchDebounceRef.current);
+                searchDebounceRef.current = null;
+              }
               setSearchQuery('');
+              searchQueryRef.current = '';
               setSemanticResults(null);
+              setSemanticLoading(false);
+              setSearchFilters(getDefaultFilters(actualPath));
               // Notify sidebar to track this folder visit for "Frequently used"
               try {
                 window.dispatchEvent(new CustomEvent('intellifile-folder-visited', { detail: { path: actualPath } }));
@@ -697,7 +762,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
             if (!selected) {
               // Don't wipe selectedItem during a refresh when search results are
               // showing — the selected item belongs to search, not the directory list.
-              if (!semanticResults) {
+              if (!isSearchActive) {
                 setSelectedItem(prev => (prev && loadedItems.some(i => i.path === prev.path)) ? prev : null);
                 setSelectedItems(prev => prev.filter(pItem => loadedItems.some(i => i.path === pItem.path)));
                 setLastSelectedIndex(null);
@@ -741,6 +806,24 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [updateBreadcrumb, searchQuery, sortBy, sortDirection, showHidden, updateHistory, updateActiveTab, setCurrentPath, setAddressPath, setRenamingItem, onFileSelect, currentPath]);
 
+  const handleShowHiddenChange = useCallback((newVal) => {
+    setShowHidden(newVal);
+    if (currentPath && currentPath !== 'Home' && currentPath !== 'This PC') {
+      loadDirectory(currentPath, { soft: true, showHiddenOverride: newVal });
+    }
+  }, [currentPath, loadDirectory]);
+
+  const isFirstHiddenMount = useRef(true);
+  useEffect(() => {
+    if (isFirstHiddenMount.current) {
+      isFirstHiddenMount.current = false;
+      return;
+    }
+    if (currentPath && currentPath !== 'Home' && currentPath !== 'This PC') {
+      loadDirectory(currentPath, { soft: true });
+    }
+  }, [showHidden, currentPath, loadDirectory]);
+
   const handleRecentChooserSelect = (file) => {
     setShowRecentChooser(false);
     // Prefer selecting using existing logic to keep behavior consistent and performant
@@ -772,7 +855,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
       }
 
       if (currentPath) {
-        loadDirectory(currentPath, { trackHistory: false });
+        loadDirectory(currentPath, { trackHistory: false, suppressLoading: items.length > 0 });
       } else {
         loadDirectory('Home', { trackHistory: false });
       }
@@ -1008,7 +1091,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
 
   const handleFolderClick = (item) => {
     if (!item) return;
-    if (item.type === 'folder' || item.type === 'drive' || item.type === 'portable' || item.isPortable) {
+    if (item.type === 'folder' || item.type === 'drive' || (item.type === 'portable' && item.type !== 'file')) {
       setShowPreview(false);
       loadDirectory(item.path);
     } else if (item.type === 'file') {
@@ -1019,7 +1102,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
 
   const handleOpen = (item) => {
     if (!item) return;
-    if (item.type === 'folder' || item.type === 'drive' || item.type === 'portable' || item.isPortable) {
+    if (item.type === 'folder' || item.type === 'drive' || (item.type === 'portable' && item.type !== 'file')) {
       setShowPreview(false);
       loadDirectory(item.path);
     } else if (item.type === 'file') {
@@ -1082,7 +1165,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
     setSelectedItem(item);
     // When searching, allow preview in all view modes.
     // When not searching, auto-open preview on single click ONLY in list and details view modes (not icons mode).
-    const allowPreview = semanticResults !== null || viewMode === 'list' || viewMode === 'details';
+    const allowPreview = isSearchActive || viewMode === 'list' || viewMode === 'details';
     if (item.type === 'file' && allowPreview) {
       setShowPreview(true);
     } else {
@@ -1093,10 +1176,10 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
 
   useEffect(() => {
     // When view mode is switched to icons, close preview if active
-    if (viewMode === 'icons' && semanticResults === null) {
+    if (viewMode === 'icons' && !isSearchActive) {
       setShowPreview(false);
     }
-  }, [viewMode, semanticResults]);
+  }, [viewMode, isSearchActive]);
 
   const handleCharacterType = useCallback((char) => {
     if (renamingItem || !displayItems || displayItems.length === 0) return;
@@ -1847,40 +1930,70 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
     };
   }, []);
 
-  const handleSearch = async (query) => {
-    if (!query || !query.trim()) {
+  const handleSearch = async (query, customFilters = searchFilters) => {
+    const trimmed = (query || '').trim();
+    const hasFilters = hasSearchableFilters(customFilters);
+    if (!trimmed && !hasFilters) {
+      searchIdRef.current++;
+      if (searchDebounceRef.current) {
+        clearTimeout(searchDebounceRef.current);
+        searchDebounceRef.current = null;
+      }
       setSemanticResults(null);
+      setSemanticLoading(false);
       return;
     }
 
-    // Increment the search ID so any in-flight search becomes stale
+    // Increment the search ID so any prior search becomes stale
     const thisSearchId = ++searchIdRef.current;
     setSemanticLoading(true);
 
     try {
-      // If in Home directory (!currentPath or currentPath === 'Home'), search ALL OVER THE COMPUTER (rootFolder = null).
-      // Otherwise, if in a specific directory (e.g. C:\Users\...\Documents), search ONLY inside that specific directory!
       const isHome = !currentPath || String(currentPath).toLowerCase() === 'home';
-      const searchRoot = isHome ? null : currentPath;
+      const payloadOptions = convertFiltersToSearchPayload(customFilters, currentPath);
 
-      const SEARCH_TIMEOUT_MS = 8000;
-      const searchPromise = searchFiles(query, searchRoot);
+      // Resolve rootFolder scope:
+      // If user specified 'specific' folder, search in that folder.
+      // If user selected 'entire' (or is in Home with default), search universal (rootFolder = null).
+      // Otherwise, default to the folder user is present in.
+      let searchRoot = null;
+      if (customFilters?.folderScope === 'specific' && customFilters.specificFolder) {
+        searchRoot = customFilters.specificFolder;
+      } else if (customFilters?.folderScope === 'entire' || (isHome && (!customFilters?.folderScope || customFilters?.folderScope === 'entire'))) {
+        searchRoot = null;
+      } else {
+        searchRoot = currentPath && !isHome ? currentPath : null;
+      }
+
+      const SEARCH_TIMEOUT_MS = 15000;
+      const searchPromise = searchFiles(trimmed, searchRoot, {
+        extensions: payloadOptions.extensions,
+        dateFrom: payloadOptions.dateFrom,
+        dateTo: payloadOptions.dateTo,
+        folderScope: searchRoot,
+      });
       const timeoutPromise = new Promise((_, reject) =>
         setTimeout(() => reject(new Error('search_timeout')), SEARCH_TIMEOUT_MS)
       );
 
       const results = await Promise.race([searchPromise, timeoutPromise]);
 
-      // If a newer search was fired while we were awaiting, discard
+      // If a newer search was fired OR query was cleared while we were awaiting, discard
       if (thisSearchId !== searchIdRef.current) return;
+      if (!searchQueryRef.current.trim() && !hasSearchableFilters(customFilters)) {
+        setSemanticResults(null);
+        setSemanticLoading(false);
+        return;
+      }
 
-      // Filter by folder if not home and searchRoot is specified
+      // Filter by folder if not home and searchRoot is specified (guard)
       let filteredResults = results || [];
-      if (!isHome && searchRoot) {
-        const normRoot = searchRoot.toLowerCase().replace(/[\\/]+$/, '');
+      if (searchRoot) {
+        const normalizePath = (p) => String(p || '').toLowerCase().replace(/\\/g, '/').replace(/\/+$/, '');
+        const normRoot = normalizePath(searchRoot);
         filteredResults = filteredResults.filter(r => {
-          const rPath = (r.path || '').toLowerCase();
-          return rPath.startsWith(normRoot + '\\') || rPath.startsWith(normRoot + '/');
+          const rPath = normalizePath(r.path);
+          return rPath === normRoot || rPath.startsWith(normRoot + '/');
         });
       }
 
@@ -1910,15 +2023,35 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
   };
 
   const handleSearchKeyDown = (e) => {
-    if (e.key === 'Enter' && searchQuery.trim()) {
-      e.preventDefault();
-      if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
-      handleSearch(searchQuery);
+    if (e.key === 'Enter') {
+      const hasFilters = hasSearchableFilters(searchFilters);
+      if (searchQuery.trim() || hasFilters) {
+        e.preventDefault();
+        if (searchDebounceRef.current) {
+          clearTimeout(searchDebounceRef.current);
+          searchDebounceRef.current = null;
+        }
+        handleSearch(searchQuery, searchFilters);
+      } else {
+        searchIdRef.current++;
+        if (searchDebounceRef.current) {
+          clearTimeout(searchDebounceRef.current);
+          searchDebounceRef.current = null;
+        }
+        setSemanticResults(null);
+        setSemanticLoading(false);
+      }
     } else if (e.key === 'Escape') {
-      if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+      searchIdRef.current++;
+      if (searchDebounceRef.current) {
+        clearTimeout(searchDebounceRef.current);
+        searchDebounceRef.current = null;
+      }
       setSemanticResults(null);
       setSemanticLoading(false);
       setSearchQuery('');
+      searchQueryRef.current = '';
+      setSearchFilters(getDefaultFilters(currentPath));
       if (currentPath) {
         loadDirectory(currentPath, { suppressLoading: true, soft: true, skipSearchFilter: true });
       }
@@ -1975,22 +2108,101 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
     if (type === 'query') {
       const val = e.target.value;
       setSearchQuery(val);
-      if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+      searchQueryRef.current = val;
+      if (searchDebounceRef.current) {
+        clearTimeout(searchDebounceRef.current);
+        searchDebounceRef.current = null;
+      }
 
       if (!val || !val.trim()) {
+        // User hit backspace and deleted the whole query (or clicked clear)
+        // Only when the whole query is deleted, remove/delete active filters!
+        searchIdRef.current++;
+        searchQueryRef.current = '';
+        const defaultFilters = getDefaultFilters(currentPath);
+        setSearchFilters(defaultFilters);
         setSemanticResults(null);
         setSemanticLoading(false);
         if (currentPath) {
           loadDirectory(currentPath, { suppressLoading: true, soft: true, skipSearchFilter: true });
         }
       } else {
-        setSemanticResults((prev) => (prev !== null ? prev : []));
+        // Query is not empty (user is typing or backspaced partially): keep filters intact!
+        setSemanticLoading(true);
         searchDebounceRef.current = setTimeout(() => {
-          handleSearch(val);
+          handleSearch(val, searchFilters);
         }, 250);
       }
     } else if (type === 'address') {
       setAddressPath(e.target.value);
+    }
+  };
+
+  const handleFiltersChange = (newFilters) => {
+    setSearchFilters(newFilters);
+    if (searchQuery.trim() || hasSearchableFilters(newFilters)) {
+      // Schedule search asynchronously so popover close is instant
+      setTimeout(() => {
+        handleSearch(searchQuery, newFilters);
+      }, 0);
+    } else {
+      searchIdRef.current++;
+      if (searchDebounceRef.current) {
+        clearTimeout(searchDebounceRef.current);
+        searchDebounceRef.current = null;
+      }
+      setSemanticResults(null);
+      setSemanticLoading(false);
+    }
+  };
+
+  const handleResetFilters = (blank) => {
+    const nextFilters = blank || getDefaultFilters(currentPath);
+    setSearchFilters(nextFilters);
+    if (searchQuery && searchQuery.trim()) {
+      handleSearch(searchQuery, nextFilters);
+    } else {
+      searchIdRef.current++;
+      if (searchDebounceRef.current) {
+        clearTimeout(searchDebounceRef.current);
+        searchDebounceRef.current = null;
+      }
+      setSemanticResults(null);
+      setSemanticLoading(false);
+      if (currentPath) {
+        loadDirectory(currentPath, { suppressLoading: true, soft: true, skipSearchFilter: true });
+      }
+    }
+  };
+
+  const handleFilterChipRemove = (chipKey) => {
+    const isHome = !currentPath || String(currentPath).toLowerCase() === 'home';
+    const updated = { ...searchFilters };
+    if (chipKey === 'fileType') {
+      updated.fileType = 'all';
+      updated.customExtension = '';
+    } else if (chipKey === 'date') {
+      updated.datePreset = 'all';
+      updated.dateFrom = '';
+      updated.dateTo = '';
+    } else if (chipKey === 'folderScope') {
+      updated.folderScope = isHome ? 'entire' : 'current';
+      updated.specificFolder = '';
+    }
+    setSearchFilters(updated);
+    if (searchQuery.trim() || hasSearchableFilters(updated)) {
+      handleSearch(searchQuery, updated);
+    } else {
+      searchIdRef.current++;
+      if (searchDebounceRef.current) {
+        clearTimeout(searchDebounceRef.current);
+        searchDebounceRef.current = null;
+      }
+      setSemanticResults(null);
+      setSemanticLoading(false);
+      if (currentPath) {
+        loadDirectory(currentPath, { suppressLoading: true, soft: true, skipSearchFilter: true });
+      }
     }
   };
 
@@ -2051,7 +2263,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
         }}
       >
         <ExplorerSidebar
-          drives={drives}
+          drives={activeDrives.length > 0 ? activeDrives : drives}
           onNavigate={loadDirectory}
           currentPath={currentPath}
           onContextMenu={handleContextMenu}
@@ -2100,7 +2312,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
           showHidden={showHidden}
           showSidebar={showSidebar}
           onToggleSidebar={handleToggleSidebar}
-          onShowHiddenChange={setShowHidden}
+          onShowHiddenChange={handleShowHiddenChange}
           semanticLoading={semanticLoading}
           onAddressSubmit={handleAddressSubmit}
           onBreadcrumbClick={handleBreadcrumbClick}
@@ -2114,6 +2326,12 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
           onCreateFolder={handleCreateFolder}
           onSearchChange={handleSearchChange}
           onSearchKeyDown={handleSearchKeyDown}
+          searchFilters={searchFilters}
+          currentPath={currentPath}
+          currentFolders={currentFolders}
+          onFiltersChange={handleFiltersChange}
+          onResetFilters={handleResetFilters}
+          onFilterChipRemove={handleFilterChipRemove}
         />
 
         {engineError && (
@@ -2127,7 +2345,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
             className="explorer-content"
             data-tour="file-browser"
             onContextMenu={(e) => {
-              if (semanticResults !== null) return;
+              if (isSearchActive) return;
               // Let file items handle their own context menu; use empty-space menu everywhere else.
               if (e.target?.closest?.('.file-item')) return;
               e.preventDefault();
@@ -2135,19 +2353,27 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
             }}
           >
             <SearchResults
-              visible={semanticResults !== null}
+              visible={isSearchActive}
               results={semanticResults || []}
               loading={semanticLoading}
               onClose={() => {
+                searchIdRef.current++;
+                if (searchDebounceRef.current) {
+                  clearTimeout(searchDebounceRef.current);
+                  searchDebounceRef.current = null;
+                }
                 setSemanticResults(null);
+                setSemanticLoading(false);
                 setSearchQuery('');
+                searchQueryRef.current = '';
+                setSearchFilters(getDefaultFilters(currentPath));
               }}
               onResultClick={handleSearchResultClick}
               onResultDoubleClick={handleSearchResultDoubleClick}
               onResultContextMenu={handleSearchResultContextMenu}
             />
 
-            {semanticResults === null && (
+            {!isSearchActive && (
               <>
                 {!currentPath || String(currentPath).toLowerCase() === 'home' ? (
                   <ExplorerHome

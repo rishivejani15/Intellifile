@@ -76,6 +76,7 @@ def update_faiss(chunk_ids, progress_cb=None):
         ).astype("float32")
 
         index.add_with_ids(embs, batch_ids)
+        time.sleep(0.005)  # Yield CPU slice between embedding batches to keep UI fluid
 
         done = min(i + _ENCODE_BATCH, total)
         pct = int(done / total * 100)

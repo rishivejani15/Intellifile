@@ -1,4 +1,8 @@
-"use strict";
+/**
+ * Client-side folder query parser for React components.
+ * Mirrored from frontend/folderSearchParser.js to allow immediate HMR execution
+ * without waiting for an Electron restart.
+ */
 
 const MONTH_NAMES = [
   "january", "jan", "february", "feb", "march", "mar",
@@ -57,12 +61,10 @@ function cleanFolderCandidate(rawCandidate, hasExplicitFolderKeyword = false) {
 
   const lower = trimmed.toLowerCase();
 
-  // Reject generic / structural placeholder names
   if (IGNORED_FOLDER_NAMES.has(lower)) {
     return null;
   }
 
-  // If there was no explicit "folder" / "dir" / "directory" keyword in the query:
   if (!hasExplicitFolderKeyword) {
     for (const word of DISALLOWED_STARTING_WORDS) {
       if (lower === word || lower.startsWith(word + " ")) {
@@ -83,20 +85,7 @@ function cleanFolderCandidate(rawCandidate, hasExplicitFolderKeyword = false) {
   return trimmed;
 }
 
-/**
- * Recognise explicit requests for files in a named folder.
- * Supports:
- * - Prepositions: "all files of/from/in/inside/under/within (the) (folder) X"
- * - Variations without "all": "files from/in/of/inside/under/within X"
- * - Variations with parentheses: "all files of (X)", "files of (X)"
- * - Prefix commands: "show/list/get/find all files from/in/of X"
- * - Explicit folder keywords: "all files folder X", "folder X", "directory X", "X folder"
- * - Preposition-less forms: "all files X", "files X"
- *
- * Returning null leaves all other queries on the existing search pipeline
- * (semantic search, keyword search, date filtering, etc.).
- */
-function parseFolderSearchQuery(rawQuery) {
+export function parseFolderSearchQuery(rawQuery) {
   const query = String(rawQuery || "").trim();
   if (!query) return null;
 
@@ -105,7 +94,6 @@ function parseFolderSearchQuery(rawQuery) {
   }
 
   // 1. With preposition: in, of, from, inside, under, within, into
-  // Supports: "all files of", "files of", "file of", "all of"
   const prepMatch = query.match(
     /^(?:(?:show|list|get|find|open|display)\s+)?(?:(?:all\s+)?files?|all)\s+(in|of|from|inside|under|within|into)\s+(?:(?:the|a)\s+)?(?:(?:folder|dir|directory)\s+)?(?:(?:named|called)\s+)?(.+?)\s*$/i
   );
@@ -153,5 +141,3 @@ function parseFolderSearchQuery(rawQuery) {
 
   return null;
 }
-
-module.exports = { parseFolderSearchQuery };

@@ -1,5 +1,6 @@
 import React, { useRef } from 'react';
 import { BsDeviceHddFill, BsUsbDriveFill } from 'react-icons/bs';
+import { MdPhoneAndroid } from 'react-icons/md';
 import { getFileIcon, formatFileSize, formatDate } from '../utils/fileUtils';
 
 function FileItem({
@@ -36,7 +37,9 @@ function FileItem({
     e.dataTransfer.effectAllowed = 'copyMove';
   };
 
-  const isDrive = item.type === 'drive';
+  const isPortableDrive = (item.type === 'portable' || (Boolean(item.isPortable) && !item.isPortableItem)) && item.type !== 'file' && item.type !== 'folder';
+  const isDrive = item.type === 'drive' || isPortableDrive;
+  const isPortable = isPortableDrive;
   const isRemovable = Boolean(item.isRemovable || item.isUSB);
 
   return (
@@ -52,7 +55,9 @@ function FileItem({
     >
       <div className="file-icon">
         {isDrive ? (
-          isRemovable ? (
+          isPortable ? (
+            <MdPhoneAndroid size={viewMode === 'details' ? 20 : 38} className="drive-icon-svg phone-drive" style={{ color: '#0078d4' }} />
+          ) : isRemovable ? (
             <BsUsbDriveFill size={viewMode === 'details' ? 18 : 36} className="drive-icon-svg usb-drive" />
           ) : (
             <BsDeviceHddFill size={viewMode === 'details' ? 18 : 36} className="drive-icon-svg hdd-drive" />
@@ -81,28 +86,32 @@ function FileItem({
             <div className="file-name drive-name-title" title={item.name}>{item.name}</div>
             {viewMode === 'details' ? (
               <div className="file-meta-details">
-                <span className="file-type">{isRemovable ? 'USB Drive' : 'Local Disk'}</span>
-                <span className="file-size">{`${Math.round((item.available ?? item.free ?? 0) / (1024 ** 3))} GB free of ${Math.round((item.size || 0) / (1024 ** 3))} GB`}</span>
+                <span className="file-type">{isPortable ? 'Portable Device' : isRemovable ? 'USB Drive' : 'Local Disk'}</span>
+                <span className="file-size">{isPortable && (!item.size || item.size === 0) ? 'Portable Device' : `${Math.round((item.available ?? item.free ?? 0) / (1024 ** 3))} GB free of ${Math.round((item.size || 0) / (1024 ** 3))} GB`}</span>
                 <span className="file-date">--</span>
               </div>
             ) : (
               <div className="drive-card-body">
-                <div className="drive-storage-bar">
-                  <div
-                    className={`drive-storage-fill ${
-                      item.size > 0 && ((item.size - (item.available ?? item.free ?? 0)) / item.size) > 0.9
-                        ? 'critical'
-                        : item.size > 0 && ((item.size - (item.available ?? item.free ?? 0)) / item.size) > 0.75
-                        ? 'warning'
-                        : ''
-                    }`}
-                    style={{
-                      width: `${item.size > 0 ? Math.min(100, Math.round(((item.size - (item.available ?? item.free ?? 0)) / item.size) * 100)) : 0}%`
-                    }}
-                  />
-                </div>
+                {(!isPortable || item.size > 0) && (
+                  <div className="drive-storage-bar">
+                    <div
+                      className={`drive-storage-fill ${
+                        item.size > 0 && ((item.size - (item.available ?? item.free ?? 0)) / item.size) > 0.9
+                          ? 'critical'
+                          : item.size > 0 && ((item.size - (item.available ?? item.free ?? 0)) / item.size) > 0.75
+                          ? 'warning'
+                          : ''
+                      }`}
+                      style={{
+                        width: `${item.size > 0 ? Math.min(100, Math.round(((item.size - (item.available ?? item.free ?? 0)) / item.size) * 100)) : 0}%`
+                      }}
+                    />
+                  </div>
+                )}
                 <div className="drive-storage-text">
-                  {`${Math.round((item.available ?? item.free ?? 0) / (1024 ** 3))} GB free of ${Math.round((item.size || 0) / (1024 ** 3))} GB`}
+                  {isPortable && (!item.size || item.size === 0)
+                    ? 'Portable Device'
+                    : `${Math.round((item.available ?? item.free ?? 0) / (1024 ** 3))} GB free of ${Math.round((item.size || 0) / (1024 ** 3))} GB`}
                 </div>
               </div>
             )}

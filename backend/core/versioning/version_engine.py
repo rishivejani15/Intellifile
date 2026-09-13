@@ -36,9 +36,9 @@ class VersionEngine:
         
         if ext in TEXT_EXTENSIONS:
             return "text"
-        elif ext == ".docx":
+        elif ext in [".docx", ".doc"]:
             return "word"
-        elif ext == ".xlsx":
+        elif ext in [".xlsx", ".xls"]:
             return "excel"
         else:
             return "binary"
@@ -263,7 +263,7 @@ class VersionEngine:
         # save_snapshot was called (which writes to disk but not the index),
         # causing the first version to sometimes be invisible.
         ext = os.path.splitext(file_path)[1].lower()
-        is_binary = ext in [".docx", ".xlsx", ".pdf", ".zip"]
+        is_binary = ext in [".docx", ".doc", ".xlsx", ".xls", ".pdf", ".zip", ".pptx", ".pptm", ".ppt", ".odt", ".rtf"]
         file_hash = compute_file_hash(new_content if not is_binary else file_path, is_binary)
         version_num = 1 if is_first_version else (existing_versions[0].get("version", 0) + 1)
         parent = None if is_first_version else existing_versions[0].get("version")

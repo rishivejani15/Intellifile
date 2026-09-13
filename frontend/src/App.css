@@ -98,6 +98,7 @@
 
   /* Surfaces - Glassmorphic Layers */
   --s-bg: #f8fafc;
+  --s-surface: #ffffff;
   --s-elev: rgba(255, 255, 255, 0.9);
   --s-elev-2: rgba(255, 255, 255, 0.95);
   --s-card: rgba(255, 255, 255, 0.7);
@@ -236,6 +237,7 @@
   --color-success: #3FA372;
 
   --s-bg: #09090b;
+  --s-surface: #18181b;
   --s-elev: rgba(24, 24, 27, 0.9);
   --s-elev-2: rgba(39, 39, 42, 0.95);
   --s-card: rgba(24, 24, 27, 0.6);
@@ -692,7 +694,9 @@ body {
   -webkit-backdrop-filter: blur(12px);
   border-bottom: 1px solid var(--bo-light);
   flex-wrap: nowrap;
-  overflow-x: auto;
+  overflow: visible;
+  position: relative;
+  z-index: 50;
   flex-shrink: 0;
   transition: all var(--dur-200) var(--ease-default);
 }

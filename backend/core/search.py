@@ -20,22 +20,22 @@ logger = logging.getLogger("intellifile.search")
 def _normalize_root(root_folder):
     if not root_folder:
         return None
-    return os.path.normcase(os.path.abspath(root_folder)).rstrip("\\/")
+    return os.path.normcase(os.path.abspath(str(root_folder).strip())).replace("\\", "/").rstrip("/")
 
 
 def _path_in_root(file_path, root_folder):
     if not root_folder:
         return True
     try:
-        normalized_path = os.path.normcase(os.path.abspath(file_path)).rstrip("\\/")
-        normalized_root = _normalize_root(root_folder)
-        return normalized_path == normalized_root or normalized_path.startswith(normalized_root + os.sep)
+        norm_p = os.path.normcase(str(file_path)).replace("\\", "/").rstrip("/")
+        norm_r = os.path.normcase(str(root_folder)).replace("\\", "/").rstrip("/")
+        return norm_p == norm_r or norm_p.startswith(norm_r + "/")
     except Exception:
         return False
 
 
-def _file_metadata_clause(root_folder=None, date_from=None, date_to=None, table="files"):
-    """Build SQL predicates for the canonical creation-date metadata field.
+def _file_metadata_clause(root_folder=None, date_from=None, date_to=None, extensions=None, table="files"):
+    """Build SQL predicates for the canonical creation-date and extension metadata fields.
 
     ``date_to`` is deliberately exclusive.  This keeps month boundaries
     unambiguous: ``before July 2026`` is ``date < 2026-07-01`` and ``during
@@ -43,16 +43,32 @@ def _file_metadata_clause(root_folder=None, date_from=None, date_to=None, table=
     """
     conditions = []
     params = []
-    root_folder = _normalize_root(root_folder)
     if root_folder:
-        conditions.append(f"({table}.path = ? OR {table}.path LIKE ?)")
-        params.extend([root_folder, root_folder + os.sep + "%"])
+        clean_root = str(root_folder).strip()
+        fwd_root = os.path.normcase(os.path.abspath(clean_root)).replace("\\", "/").rstrip("/")
+        back_root = fwd_root.replace("/", "\\")
+        conditions.append(
+            f"({table}.path = ? OR {table}.path = ? OR {table}.path LIKE ? OR {table}.path LIKE ?)"
+        )
+        params.extend([fwd_root, back_root, fwd_root + "/%", back_root + "\\%"])
     if date_from is not None:
         conditions.append(f"{table}.created_time >= ?")
         params.append(date_from)
     if date_to is not None:
         conditions.append(f"{table}.created_time < ?")
         params.append(date_to)
+    if extensions:
+        ext_conds = []
+        for ext in extensions:
+            ext_str = str(ext or "").strip().lower()
+            if not ext_str:
+                continue
+            if not ext_str.startswith("."):
+                ext_str = "." + ext_str
+            ext_conds.append(f"{table}.path LIKE ?")
+            params.append(f"%{ext_str}")
+        if ext_conds:
+            conditions.append(f"({' OR '.join(ext_conds)})")
     return (" AND " + " AND ".join(conditions)) if conditions else "", params
 
 
@@ -67,6 +83,24 @@ def _metadata_matches(created_time, date_from=None, date_to=None):
     if date_to is not None and created_time >= date_to:
         return False
     return True
+
+
+def _extension_matches(file_path, extensions=None):
+    """Return whether a file path matches any of the requested extensions."""
+    if not extensions:
+        return True
+    if not file_path:
+        return False
+    lower_path = os.path.normcase(file_path)
+    for ext in extensions:
+        ext_str = str(ext or "").strip().lower()
+        if not ext_str:
+            continue
+        if not ext_str.startswith("."):
+            ext_str = "." + ext_str
+        if lower_path.endswith(ext_str):
+            return True
+    return False
 
 
 import re
@@ -192,7 +226,7 @@ def _build_fts5_queries(query):
     return primary_query, fallback_query
 
 
-def _faiss_search(query, top_k, min_sim=0.15, root_folder=None, date_from=None, date_to=None):
+def _faiss_search(query, top_k, min_sim=0.15, root_folder=None, date_from=None, date_to=None, extensions=None):
     """Semantic similarity search with deterministic metadata pre-filtering."""
     if not query.strip():
         return []
@@ -207,12 +241,12 @@ def _faiss_search(query, top_k, min_sim=0.15, root_folder=None, date_from=None, 
     # global top-k afterwards loses in-range candidates and makes mixed queries
     # appear randomly incomplete.
     candidate_cids = None
-    if normalized_root or date_from is not None or date_to is not None:
+    if normalized_root or date_from is not None or date_to is not None or extensions:
         conn = get_connection()
         try:
             cur = conn.cursor()
             metadata_clause, metadata_params = _file_metadata_clause(
-                normalized_root, date_from, date_to
+                normalized_root, date_from, date_to, extensions=extensions
             )
             cur.execute(
                 """SELECT chunks.id
@@ -263,6 +297,7 @@ def _faiss_search(query, top_k, min_sim=0.15, root_folder=None, date_from=None, 
                 not row
                 or not _path_in_root(row[0], normalized_root)
                 or not _metadata_matches(row[1], date_from, date_to)
+                or not _extension_matches(row[0], extensions)
             ):
                 continue
             hits.append((int(cid), float(sim)))
@@ -274,7 +309,7 @@ def _faiss_search(query, top_k, min_sim=0.15, root_folder=None, date_from=None, 
     return hits
 
 
-def _fts5_search(query, top_k, root_folder=None, date_from=None, date_to=None):
+def _fts5_search(query, top_k, root_folder=None, date_from=None, date_to=None, extensions=None):
     """Keyword search via SQLite FTS5 (BM25 ranking) with tiered query and folder scoping."""
     primary_q, fallback_q = _build_fts5_queries(query)
     if not primary_q:
@@ -285,7 +320,7 @@ def _fts5_search(query, top_k, root_folder=None, date_from=None, date_to=None):
         cur = conn.cursor()
         root_folder = _normalize_root(root_folder)
         metadata_clause, metadata_params = _file_metadata_clause(
-            root_folder, date_from, date_to
+            root_folder, date_from, date_to, extensions=extensions
         )
 
         target_count = top_k * 5
@@ -304,7 +339,7 @@ def _fts5_search(query, top_k, root_folder=None, date_from=None, date_to=None):
         hits = [
             (row[0], -row[1])
             for row in cur.fetchall()
-            if _path_in_root(row[2], root_folder)
+            if _path_in_root(row[2], root_folder) and _extension_matches(row[2], extensions)
         ]
 
         # 2. Fallback Query: OR disjunction across content words.  Partial
@@ -325,7 +360,11 @@ def _fts5_search(query, top_k, root_folder=None, date_from=None, date_to=None):
                 [fallback_q] + metadata_params + [needed * 2],
             )
             for row in cur.fetchall():
-                if row[0] not in seen_cids and _path_in_root(row[2], root_folder):
+                if (
+                    row[0] not in seen_cids
+                    and _path_in_root(row[2], root_folder)
+                    and _extension_matches(row[2], extensions)
+                ):
                     seen_cids.add(row[0])
                     # A negative score is an internal marker for weak OR
                     # fallback evidence.  It is deliberately distinct from a
@@ -343,14 +382,14 @@ def _fts5_search(query, top_k, root_folder=None, date_from=None, date_to=None):
         conn.close()
 
 
-def _filename_search(query, top_k, root_folder=None, date_from=None, date_to=None):
+def _filename_search(query, top_k, root_folder=None, date_from=None, date_to=None, extensions=None):
     """Find title-like filename matches regardless of common separators."""
     conn = get_connection()
     try:
         cur = conn.cursor()
         root_folder = _normalize_root(root_folder)
         metadata_clause, metadata_params = _file_metadata_clause(
-            root_folder, date_from, date_to
+            root_folder, date_from, date_to, extensions=extensions
         )
         if not query.strip():
             cur.execute(
@@ -426,16 +465,16 @@ def _filename_search(query, top_k, root_folder=None, date_from=None, date_to=Non
         conn.close()
 
 
-def _date_range_search(top_k=None, date_from=None, date_to=None, root_folder=None, offset=0):
-    """Direct SQL query for files within a creation-date range.
+def _date_range_search(top_k=None, date_from=None, date_to=None, root_folder=None, offset=0, extensions=None):
+    """Direct SQL query for files within a creation-date range and/or extension filter.
     
-    Used when the user issues a date-only query (e.g. 'files of august 2022')
+    Used when the user issues a metadata-only query (e.g. date filter or filetype filter)
     with no semantic keywords, so FAISS/FTS5 have nothing to match on.
     """
     conn = get_connection()
     try:
         cur = conn.cursor()
-        metadata_clause, params = _file_metadata_clause(root_folder, date_from, date_to)
+        metadata_clause, params = _file_metadata_clause(root_folder, date_from, date_to, extensions=extensions)
         limit_clause = ""
         if top_k is not None:
             limit_clause = " LIMIT ? OFFSET ?"
@@ -447,7 +486,7 @@ def _date_range_search(top_k=None, date_from=None, date_to=None, root_folder=Non
             params,
         )
         return [
-            {"path": row[0], "score": 1.0, "created_time": row[1], "methods": ["date"]}
+            {"path": row[0], "score": 1.0, "created_time": row[1], "methods": ["filter" if extensions else "date"]}
             for row in cur.fetchall()
         ]
     except Exception:
@@ -499,7 +538,7 @@ def _is_typo_match(term, w):
     return False
 
 
-def fuzzy_filename_search(query, top_k=20, root_folder=None, date_from=None, date_to=None):
+def fuzzy_filename_search(query, top_k=20, root_folder=None, date_from=None, date_to=None, extensions=None):
     """Return typo-tolerant filename matches only after normal search misses.
 
     Candidate generation stays inside the existing FTS index, then a strict
@@ -520,7 +559,7 @@ def fuzzy_filename_search(query, top_k=20, root_folder=None, date_from=None, dat
     try:
         cur = conn.cursor()
         metadata_clause, metadata_params = _file_metadata_clause(
-            root_folder, date_from, date_to
+            root_folder, date_from, date_to, extensions=extensions
         )
         cur.execute(
             f"""SELECT path, filename, created_time
@@ -536,6 +575,8 @@ def fuzzy_filename_search(query, top_k=20, root_folder=None, date_from=None, dat
 
     matches = []
     for path, filename, created_time in candidates:
+        if not _extension_matches(path, extensions):
+            continue
         filename_terms = re.findall(r"[a-zA-Z0-9]+", (filename or "").lower())
         if not filename_terms:
             continue
@@ -562,7 +603,133 @@ def fuzzy_filename_search(query, top_k=20, root_folder=None, date_from=None, dat
     ]
 
 
-def folder_search(folder_name, root_folder=None, date_from=None, date_to=None):
+_FOLDER_SEARCH_MONTH_NAMES = {
+    "january", "jan", "february", "feb", "march", "mar",
+    "april", "apr", "may", "june", "jun", "july", "jul",
+    "august", "aug", "september", "sep", "sept",
+    "october", "oct", "november", "nov", "december", "dec",
+}
+
+_FOLDER_SEARCH_EXTENSIONS = {
+    "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "txt", "rtf",
+    "csv", "tsv", "json", "xml", "html", "htm", "md",
+    "jpg", "jpeg", "png", "gif", "bmp", "svg", "webp",
+    "mp3", "wav", "flac", "mp4", "mkv", "avi", "mov",
+    "zip", "rar", "7z", "tar", "gz",
+    "py", "js", "ts", "jsx", "tsx", "java", "c", "cpp", "h", "cs", "go", "rs", "php", "rb", "sql", "sh", "bat", "ps1",
+    "exe", "dll", "iso",
+}
+
+_FOLDER_SEARCH_DISALLOWED_PREFIXES = (
+    "from", "in", "of", "inside", "under", "within", "into",
+    "at", "on", "by", "for", "to", "with", "about",
+    "regarding", "concerning", "related to", "relative to",
+    "containing", "contains", "content", "contents",
+    "having", "has",
+    "after", "before", "during", "since", "until", "between",
+    "modified", "created", "updated",
+    "newer than", "older than",
+    "named", "called", "matching", "tagged", "tag", "type", "ext", "extension",
+)
+
+_FOLDER_SEARCH_IGNORED_NAMES = {
+    "new", "create", "current", "parent", "root", "sub", "this", "that",
+    "a", "an", "the", "in", "of", "from", "inside", "under", "within", "into",
+    "and", "or", "for", "to", "at", "by", "on", "with", "about",
+    "file", "files", "folder", "folders", "dir", "dirs", "directory", "directories",
+}
+
+
+def _is_date_or_time_expression(s):
+    s = s.strip().lower()
+    if not s:
+        return False
+    if re.match(r"^(?:19|20)\d{2}$", s):
+        return True
+    if re.match(r"^(?:today|yesterday|tomorrow|last\s+week|last\s+month|last\s+year|this\s+week|this\s+month|this\s+year|past\s+week|past\s+month|past\s+year)$", s):
+        return True
+    month_pat = "|".join(_FOLDER_SEARCH_MONTH_NAMES)
+    if re.match(rf"^(?:{month_pat})(?:\s+(?:\d{{1,2}}(?:st|nd|rd|th)?|\d{{4}}))?$", s):
+        return True
+    if re.match(rf"^(?:\d{{1,2}}(?:st|nd|rd|th)?\s+)?(?:{month_pat})(?:\s+\d{{4}})?$", s):
+        return True
+    return False
+
+
+def _clean_folder_candidate(raw_candidate, has_explicit_folder_keyword=False):
+    if not raw_candidate:
+        return None
+    trimmed = raw_candidate.strip().strip("'\"()[]{}").strip()
+    trimmed = " ".join(trimmed.split())
+    if not trimmed:
+        return None
+    lower = trimmed.lower()
+    if lower in _FOLDER_SEARCH_IGNORED_NAMES:
+        return None
+    if not has_explicit_folder_keyword:
+        for w in _FOLDER_SEARCH_DISALLOWED_PREFIXES:
+            if lower == w or lower.startswith(w + " "):
+                return None
+        if _is_date_or_time_expression(lower):
+            return None
+        ext_match = lower.lstrip(".")
+        if lower.startswith(".") or ext_match in _FOLDER_SEARCH_EXTENSIONS:
+            return None
+    return trimmed
+
+
+def parse_folder_search_query(raw_query):
+    query = str(raw_query or "").strip()
+    if not query:
+        return None
+    if re.match(r"^(?:create|make|delete|remove|rename)\s+", query, re.IGNORECASE):
+        return None
+
+    # 1. With preposition: in, of, from, inside, under, within, into
+    prep_match = re.match(
+        r"^(?:(?:show|list|get|find|open|display)\s+)?(?:(?:all\s+)?files?|all)\s+(in|of|from|inside|under|within|into)\s+(?:(?:the|a)\s+)?(?:(?:folder|dir|directory)\s+)?(?:(?:named|called)\s+)?(.+?)\s*$",
+        query, re.IGNORECASE,
+    )
+    if prep_match:
+        has_folder_word = bool(re.search(r"\b(?:folder|dir|directory)\b", query, re.IGNORECASE))
+        return _clean_folder_candidate(prep_match.group(2), has_folder_word)
+
+    # 2. Explicit folder keyword after "files" without preposition: e.g. "all files folder downloads"
+    files_folder_match = re.match(
+        r"^(?:(?:show|list|get|open|display)\s+)?(?:(?:all\s+)?files?|all)\s+(?:(?:the|a)\s+)?(?:folder|dir|directory)\s+(?:(?:named|called)\s+)?(.+?)\s*$",
+        query, re.IGNORECASE,
+    )
+    if files_folder_match:
+        return _clean_folder_candidate(files_folder_match.group(1), True)
+
+    # 3. Prefix folder keyword: e.g. "folder downloads", "directory projects"
+    folder_prefix_match = re.match(
+        r"^(?:(?:show|list|get|open|display)\s+)?(?:(?:the|a)\s+)?(?:folder|dir|directory)\s+(?:(?:named|called)\s+)?(.+?)\s*$",
+        query, re.IGNORECASE,
+    )
+    if folder_prefix_match:
+        return _clean_folder_candidate(folder_prefix_match.group(1), True)
+
+    # 4. Suffix folder keyword: e.g. "downloads folder", "downloads folder files"
+    folder_suffix_match = re.match(
+        r"^(?:(?:show|list|get|open|display)\s+)?(?:(?:all|the|a)\s+)?(.+?)\s+(?:folder|dir|directory)(?:\s+files?)?\s*$",
+        query, re.IGNORECASE,
+    )
+    if folder_suffix_match:
+        return _clean_folder_candidate(folder_suffix_match.group(1), True)
+
+    # 5. No preposition and no folder keyword: e.g. "all files downloads", "files downloads"
+    no_prep_match = re.match(
+        r"^(?:(?:show|list|get|open|display)\s+)?(?:(?:all\s+)?files?|all)\s+(.+?)\s*$",
+        query, re.IGNORECASE,
+    )
+    if no_prep_match:
+        return _clean_folder_candidate(no_prep_match.group(1), False)
+
+    return None
+
+
+def folder_search(folder_name, root_folder=None, date_from=None, date_to=None, extensions=None):
     """List every indexed file in a partial, separator-insensitive folder match.
 
     This is intentionally a metadata-only operation: it does not load FAISS,
@@ -629,20 +796,26 @@ def folder_search(folder_name, root_folder=None, date_from=None, date_to=None):
         folder_conditions = []
         folder_params = []
         for folder_path in folder_paths:
-            escaped_prefix = (
-                folder_path.rstrip("\\/")
-                .replace("^", "^^")
+            fwd_folder = folder_path.replace("\\", "/").rstrip("/")
+            back_folder = fwd_folder.replace("/", "\\")
+            esc_fwd = (
+                fwd_folder.replace("^", "^^")
                 .replace("%", "^%")
                 .replace("_", "^_")
             )
-            # Use ^ as the escape character: backslashes are literal and very
-            # common in Windows paths, so using them as SQL LIKE escapes would
-            # make descendant-folder matching fail.
-            folder_conditions.append("(files.folder_path = ? OR files.path LIKE ? ESCAPE '^')")
-            folder_params.extend([folder_path, escaped_prefix + "\\%"])
+            esc_back = (
+                back_folder.replace("^", "^^")
+                .replace("%", "^%")
+                .replace("_", "^_")
+            )
+            # Support both forward and backslash path styles in SQLite
+            folder_conditions.append(
+                "(files.folder_path = ? OR files.folder_path = ? OR files.path LIKE ? ESCAPE '^' OR files.path LIKE ? ESCAPE '^')"
+            )
+            folder_params.extend([fwd_folder, back_folder, esc_fwd + "/%", esc_back + "\\%"])
 
         metadata_clause, metadata_params = _file_metadata_clause(
-            root_folder, date_from, date_to
+            root_folder, date_from, date_to, extensions=extensions
         )
         cur.execute(
             """SELECT files.path, files.created_time
@@ -667,13 +840,13 @@ def folder_search(folder_name, root_folder=None, date_from=None, date_to=None):
         conn.close()
 
 
-def semantic_search(query, top_k=20, min_similarity=0.15, date_from=None, date_to=None, root_folder=None):
+def semantic_search(query, top_k=20, min_similarity=0.15, date_from=None, date_to=None, root_folder=None, extensions=None):
     """
     Hybrid search: FAISS semantic + FTS5 keyword + filename match,
     combined via Reciprocal Rank Fusion.
 
-    Optional date_from/date_to (Unix timestamps) filter results by
-    file creation date.
+    Optional date_from/date_to (Unix timestamps) and extensions filter results by
+    file creation date and extension.
 
     Returns list of dicts: {path, score, created_time} sorted by relevance.
     """
@@ -681,27 +854,35 @@ def semantic_search(query, top_k=20, min_similarity=0.15, date_from=None, date_t
     # Normalize 3+ repeated characters for typo resilience (e.g. "safeeee" -> "safe")
     query = re.sub(r'([a-zA-Z])\1{2,}', r'\1', str(query or ""))
 
-    # ── Fast path: date-only query (no keywords to search) ──
-    # When the user asks "files of august 2022" the NLP parser strips
-    # everything, leaving an empty query string.  FAISS and FTS5 cannot
-    # match on an empty string, so we fall through to a direct SQL
-    # date-range lookup instead.
-    if not query.strip() and (date_from is not None or date_to is not None):
-        # Date-only requests are deterministic metadata queries.  They return
-        # every matching file (the caller may opt into _date_range_search's
-        # explicit limit/offset pagination API) and never touch the model.
-        return _date_range_search(None, date_from=date_from, date_to=date_to, root_folder=root_folder)
+    # ── Fast path: empty query / metadata-only query ──
+    # When query string is empty or whitespace-only:
+    # If filetype or date filters are provided, execute direct SQL metadata-range lookup.
+    # If no filters are provided, return empty list immediately (never run dense/FAISS similarity on empty string).
+    if not query.strip():
+        if date_from is not None or date_to is not None or extensions:
+            return _date_range_search(None, date_from=date_from, date_to=date_to, root_folder=root_folder, extensions=extensions)
+        return []
+
+    # ── Fast path: folder-listing query ──
+    # Explicit folder queries such as "all files of (folder)", "files in (folder)",
+    # "files from (folder)", "files (folder)", etc. route directly to folder_search.
+    folder_match = parse_folder_search_query(query)
+    if folder_match:
+        folder_results = folder_search(folder_match, root_folder=root_folder, date_from=date_from, date_to=date_to, extensions=extensions)
+        if folder_results:
+            return folder_results
+        query = folder_match
 
     w_sem, w_kw, w_fn = _classify_query_intent(query)
     fetch_k = max(30, top_k * 5)  # over-fetch for better fusion
 
     kw_hits = _fts5_search(
         query, fetch_k, root_folder=root_folder,
-        date_from=date_from, date_to=date_to,
+        date_from=date_from, date_to=date_to, extensions=extensions,
     )
     fn_hits = _filename_search(
         query, fetch_k, root_folder=root_folder,
-        date_from=date_from, date_to=date_to,
+        date_from=date_from, date_to=date_to, extensions=extensions,
     )
 
     # Dense retrieval has no inherent "no match" state: it will always return
@@ -714,7 +895,7 @@ def semantic_search(query, top_k=20, min_similarity=0.15, date_from=None, date_t
 
     sem_hits = _faiss_search(
         query, fetch_k, min_sim=min_similarity, root_folder=root_folder,
-        date_from=date_from, date_to=date_to,
+        date_from=date_from, date_to=date_to, extensions=extensions,
     )
 
     # ── RRF at chunk level (with dynamic intent weighting) ─────────────
@@ -749,7 +930,7 @@ def semantic_search(query, top_k=20, min_similarity=0.15, date_from=None, date_t
     # Typo-tolerant fuzzy filename hits provide strong deterministic title evidence
     fuzzy_fn_hits = fuzzy_filename_search(
         query, top_k=top_k, root_folder=root_folder,
-        date_from=date_from, date_to=date_to,
+        date_from=date_from, date_to=date_to, extensions=extensions,
     )
     for rank, f_hit in enumerate(fuzzy_fn_hits, 1):
         path = f_hit["path"]
@@ -765,6 +946,7 @@ def semantic_search(query, top_k=20, min_similarity=0.15, date_from=None, date_t
                 root_folder=root_folder,
                 date_from=date_from,
                 date_to=date_to,
+                extensions=extensions,
             )
         return []
 
@@ -962,6 +1144,15 @@ def semantic_search(query, top_k=20, min_similarity=0.15, date_from=None, date_t
                 continue
             filtered.append((path, rrf))
             file_signals[path].add('date')
+        ranked = filtered
+
+    if extensions:
+        filtered = []
+        for path, rrf in ranked:
+            if not _extension_matches(path, extensions):
+                continue
+            filtered.append((path, rrf))
+            file_signals[path].add('extension')
         ranked = filtered
 
     # Copies are common across Downloads, OneDrive, and phone sync folders.

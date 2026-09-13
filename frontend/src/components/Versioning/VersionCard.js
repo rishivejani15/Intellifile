@@ -129,6 +129,10 @@ const VersionCard = ({ version, filePath, onRefresh, onCompareClick, isSelecting
             <RollbackConfirmModal
                 visible={showConfirmModal}
                 versionId={version.version_id}
+                fileName={filePath ? (filePath.split('\\').pop() || filePath.split('/').pop()) : ''}
+                versionDate={formatDate(version.version_id)}
+                intent={version.intent}
+                isBaseline={isBaseline}
                 onConfirm={executeRollback}
                 onCancel={() => setShowConfirmModal(false)}
             />

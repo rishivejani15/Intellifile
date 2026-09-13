@@ -132,6 +132,50 @@ class FolderSearchTests(unittest.TestCase):
         conn.close()
         self.assertEqual(row, (r"C:\docs\Statistical Analysis", "Statistical Analysis"))
 
+    def test_natural_language_folder_queries_without_all_and_with_prepositions(self):
+        from core.search import parse_folder_search_query, semantic_search
+
+        test_cases = [
+            ("all files of Statistical Analysis", "Statistical Analysis"),
+            ("all files of (Statistical Analysis)", "Statistical Analysis"),
+            ("all files of (Statistical Analysis) ", "Statistical Analysis"),
+            ("files of Statistical Analysis", "Statistical Analysis"),
+            ("files of (Statistical Analysis)", "Statistical Analysis"),
+            ("all files from Statistical Analysis", "Statistical Analysis"),
+            ("all files from (Statistical Analysis)", "Statistical Analysis"),
+            ("files from Statistical Analysis", "Statistical Analysis"),
+            ("files from (Statistical Analysis)", "Statistical Analysis"),
+            ("all files in Statistical Analysis", "Statistical Analysis"),
+            ("files in Statistical Analysis", "Statistical Analysis"),
+            ("all files Statistical Analysis", "Statistical Analysis"),
+            ("files Statistical Analysis", "Statistical Analysis"),
+            ("folder Statistical Analysis", "Statistical Analysis"),
+            ("Statistical Analysis folder", "Statistical Analysis"),
+        ]
+        for query, expected_folder in test_cases:
+            parsed = parse_folder_search_query(query)
+            self.assertEqual(parsed, expected_folder, f"Failed parsing: {query}")
+            results = semantic_search(query)
+            self.assertEqual(len(results), 3, f"Failed search for: {query}")
+            self.assertTrue(all(r["methods"] == ["folder"] for r in results))
+
+    def test_negative_guards_for_semantic_and_date_queries(self):
+        from core.search import parse_folder_search_query
+
+        negatives = [
+            "statistical analysis",
+            "find all files about statistical analysis",
+            "all files about machine learning",
+            "all files after July 2026",
+            "all files from July 2026",
+            "all files before 2025",
+            "all files pdf",
+            "files .pdf",
+            "create folder test",
+        ]
+        for q in negatives:
+            self.assertIsNone(parse_folder_search_query(q), f"Should not match folder query: {q}")
+
 
 if __name__ == "__main__":
     unittest.main()

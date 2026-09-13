@@ -38,7 +38,7 @@ def restore_version(file_path: str, version_timestamp: str) -> dict:
                 return {"success": False, "error": f"Version snapshot file not found: {version_file}"}
 
         # Verify integrity
-        is_binary = ext in [".docx", ".xlsx", ".pdf", ".zip"]
+        is_binary = ext in [".docx", ".doc", ".xlsx", ".xls", ".pdf", ".zip", ".pptx", ".pptm", ".ppt", ".odt", ".rtf"]
         
         if is_binary:
             from core.versioning.snapshot_manager import compute_file_hash

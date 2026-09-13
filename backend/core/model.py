@@ -23,16 +23,26 @@ _backend_name = "unknown"
 # ── 1. Locate the ONNX file and tokenizer ────────────────────
 _cache_name = MODEL_NAME.replace("/", "--")
 _model_cache_dir = os.path.join(_MODELS_DIR, f"models--{_cache_name}")
+_candidate_dirs = [
+    _model_cache_dir,
+    os.path.join(os.getenv("APPDATA", ""), "intellifile", "backend", "models", f"models--{_cache_name}"),
+    os.path.join(os.getenv("APPDATA", ""), "IntelliFile", "backend", "models", f"models--{_cache_name}"),
+    os.path.join(_BACKEND_DIR, "models", f"models--{_cache_name}"),
+    os.path.expanduser(f"~/.cache/huggingface/hub/models--{_cache_name}"),
+]
 
 _onnx_path = None
 _tokenizer_path = None
-if os.path.isdir(_model_cache_dir):
-    onnx_files = glob.glob(os.path.join(_model_cache_dir, '**', 'model.onnx'), recursive=True)
-    if onnx_files:
-        _onnx_path = onnx_files[0]
-    tokenizer_files = glob.glob(os.path.join(_model_cache_dir, '**', 'tokenizer.json'), recursive=True)
-    if tokenizer_files:
-        _tokenizer_path = tokenizer_files[0]
+for _dir in _candidate_dirs:
+    if _dir and os.path.isdir(_dir):
+        onnx_files = glob.glob(os.path.join(_dir, '**', 'model.onnx'), recursive=True)
+        if onnx_files and not _onnx_path:
+            _onnx_path = onnx_files[0]
+        tokenizer_files = glob.glob(os.path.join(_dir, '**', 'tokenizer.json'), recursive=True)
+        if tokenizer_files and not _tokenizer_path:
+            _tokenizer_path = tokenizer_files[0]
+    if _onnx_path and _tokenizer_path:
+        break
 
 # ── 2. Initialize Model & Tokenizer ──────────────────────────
 _tokenizer = None
@@ -73,6 +83,26 @@ def _detect_max_seq_len(session, tokenizer):
 def is_model_loaded():
     return _session is not None and _tokenizer is not None
 
+def get_optimal_inference_threads(cpu_count=None):
+    """
+    Dynamically scales ONNX inference worker threads based on available CPU cores,
+    while guaranteeing that at least 45% to 50% of CPU cores are left completely
+    unallocated for the Windows OS, Desktop Window Manager, and Electron UI.
+    """
+    if cpu_count is None:
+        cpu_count = os.cpu_count() or 4
+    if cpu_count <= 2:
+        return 1
+    elif cpu_count <= 4:
+        return 2
+    elif cpu_count <= 8:
+        return max(2, cpu_count // 2)
+    elif cpu_count <= 16:
+        return max(4, cpu_count // 2)
+    else:
+        # Workstations with 24, 32, 64 cores
+        return min(16, int(cpu_count * 0.55))
+
 try:
     if _onnx_path:
         import onnxruntime as ort
@@ -81,9 +111,18 @@ try:
         # Load Tokenizer
         _tokenizer = Tokenizer.from_file(_tokenizer_path)
 
-        # Load ONNX Session
+        # Load ONNX Session with dynamic thread allocation (guaranteeing OS/UI headroom)
+        sess_options = ort.SessionOptions()
+        cpu_count = os.cpu_count() or 4
+        optimal_threads = get_optimal_inference_threads(cpu_count)
+        sess_options.intra_op_num_threads = optimal_threads
+        sess_options.inter_op_num_threads = 1
+        sess_options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+        sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+
         _session = ort.InferenceSession(
             _onnx_path,
+            sess_options=sess_options,
             providers=['CPUExecutionProvider']
         )
 
@@ -97,7 +136,7 @@ try:
             pass
         
         _backend_name = "ONNX Runtime + CPU"
-        sys.stderr.write(f"[model] Loaded with {_backend_name} backend\n")
+        sys.stderr.write(f"[model] Loaded with {_backend_name} backend ({optimal_threads}/{cpu_count} CPU threads)\n")
     else:
         sys.stderr.write(
             f"[model] WARNING: ONNX model or tokenizer not found in {_model_cache_dir}. "
