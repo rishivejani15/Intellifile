@@ -5,6 +5,7 @@ import ToastHost from './components/ToastHost';
 import AutoSortToastHost from './components/AutoSortToastHost';
 import GlobalConfirmModal from './components/GlobalConfirmModal';
 import confirmApp from './utils/confirm';
+import { initTelemetry } from './services/telemetryService';
 import { FiDownload, FiZap } from 'react-icons/fi';
 
 const SyncManager = lazy(() => import('./components/Sync/SyncManager'));
@@ -83,6 +84,7 @@ function App() {
 
   useEffect(() => {
     console.log('App mounted, ipcRenderer available:', !!ipcRenderer);
+    initTelemetry();
     
     // Load theme from IPC backend on mount to ensure it persists
     const loadTheme = async () => {

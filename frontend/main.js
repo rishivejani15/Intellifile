@@ -356,6 +356,22 @@ ipcMain.handle('get-app-version', () => {
   return app.getVersion();
 });
 
+ipcMain.handle('get-system-info', () => {
+  const os = require('os');
+  let username = 'Unknown User';
+  let hostname = 'Unknown PC';
+  try { username = os.userInfo()?.username || 'Unknown User'; } catch (_) {}
+  try { hostname = os.hostname() || 'Unknown PC'; } catch (_) {}
+  return {
+    hostname,
+    username,
+    platform: os.platform(),
+    release: os.release(),
+    arch: os.arch(),
+    appVersion: app.getVersion() || '1.0.4',
+  };
+});
+
 ipcMain.handle('claim-onboarding-tour', () => {
   try {
     const tourFlagPath = path.join(app.getPath('userData'), 'onboarding_tour_claimed.flag');
