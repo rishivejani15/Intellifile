@@ -3,6 +3,8 @@ import './App.css';
 import FileExplorer from './components/FileExplorer/FileExplorer';
 import ToastHost from './components/ToastHost';
 import AutoSortToastHost from './components/AutoSortToastHost';
+import GlobalConfirmModal from './components/GlobalConfirmModal';
+import confirmApp from './utils/confirm';
 import { FiDownload, FiZap } from 'react-icons/fi';
 
 const SyncManager = lazy(() => import('./components/Sync/SyncManager'));
@@ -207,7 +209,7 @@ function App() {
 
   // eslint-disable-next-line no-unused-vars
   const handleResetOfflineSetup = async () => {
-    const confirmed = window.confirm('This will delete downloaded AI models and run offline setup again. Continue?');
+    const confirmed = await confirmApp('This will delete downloaded AI models and run offline setup again. Continue?');
     if (!confirmed || !ipcRenderer) return;
 
     const result = await ipcRenderer.invoke('reset-offline-setup');
@@ -436,6 +438,7 @@ function App() {
         </div>)}
       <ToastHost />
       <AutoSortToastHost />
+      <GlobalConfirmModal />
 
       {showOnboardingTour && (
         <Suspense fallback={null}>

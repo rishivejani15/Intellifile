@@ -585,7 +585,10 @@ function FileLockModal({ visible, mode, file, onClose, onSuccess }) {
               </button>
             </div>
             <div className="file-lock-warning file-lock-recovery-warning">
-              ⚠️ If you forget your password and hint, this key is the <strong>only way</strong> to recover your file.
+              <span className="file-lock-warning-icon">⚠️</span>
+              <p className="file-lock-warning-text">
+                If you forget your password and hint, this key is the <strong>only way</strong> to recover your file.
+              </p>
             </div>
             <button
               type="button"
@@ -923,8 +926,14 @@ function FileLockModal({ visible, mode, file, onClose, onSuccess }) {
                     className={`file-lock-btn file-lock-btn-primary ${loading ? 'loading' : ''}`}
                     disabled={loading}
                   >
-                    {loading && <span className="file-lock-spinner" />}
-                    🔓 Recover & Unlock
+                    {loading ? (
+                      <>
+                        <span className="file-lock-spinner" />
+                        <span>Recovering…</span>
+                      </>
+                    ) : (
+                      '🔓 Recover & Unlock'
+                    )}
                   </button>
                 </>
               ) : viewMode === 'resetPassword' ? (
@@ -945,8 +954,14 @@ function FileLockModal({ visible, mode, file, onClose, onSuccess }) {
                     className={`file-lock-btn file-lock-btn-primary ${loading ? 'loading' : ''}`}
                     disabled={loading}
                   >
-                    {loading && <span className="file-lock-spinner" />}
-                    Save New Password
+                    {loading ? (
+                      <>
+                        <span className="file-lock-spinner" />
+                        <span>Saving…</span>
+                      </>
+                    ) : (
+                      'Save New Password'
+                    )}
                   </button>
                 </>
               ) : (
@@ -964,13 +979,28 @@ function FileLockModal({ visible, mode, file, onClose, onSuccess }) {
                     className={`file-lock-btn file-lock-btn-primary ${loading ? 'loading' : ''}`}
                     disabled={loading}
                   >
-                    {loading && <span className="file-lock-spinner" />}
-                    {mode === 'lock' && (loading ? 'Encrypting…' : <><MdLock style={{ marginRight: 6 }} /> Lock File</>)}
-                    {mode === 'unlock' && (loading ? 'Decrypting…' : <><MdLockOpen style={{ marginRight: 6 }} /> Unlock File</>)}
-                    {mode === 'access' && (loading ? 'Opening…' : <><MdOutlineVisibility style={{ marginRight: 6 }} /> Open File</>)}
-                    {mode === 'changePassword' && (loading ? 'Updating…' : <><MdVpnKey style={{ marginRight: 6 }} /> Change Password</>)}
-                    {mode === 'renameLocked' && (loading ? 'Renaming…' : <><MdEdit style={{ marginRight: 6 }} /> Rename File</>)}
-                    {mode === 'deleteLocked' && (loading ? 'Deleting…' : <><MdDelete style={{ marginRight: 6 }} /> Delete File</>)}
+                    {loading ? (
+                      <>
+                        <span className="file-lock-spinner" />
+                        <span>
+                          {mode === 'lock' && 'Encrypting…'}
+                          {mode === 'unlock' && 'Decrypting…'}
+                          {mode === 'access' && 'Opening…'}
+                          {mode === 'changePassword' && 'Updating…'}
+                          {mode === 'renameLocked' && 'Renaming…'}
+                          {mode === 'deleteLocked' && 'Deleting…'}
+                        </span>
+                      </>
+                    ) : (
+                      <>
+                        {mode === 'lock' && <><MdLock style={{ marginRight: 6 }} /> Lock File</>}
+                        {mode === 'unlock' && <><MdLockOpen style={{ marginRight: 6 }} /> Unlock File</>}
+                        {mode === 'access' && <><MdOutlineVisibility style={{ marginRight: 6 }} /> Open File</>}
+                        {mode === 'changePassword' && <><MdVpnKey style={{ marginRight: 6 }} /> Change Password</>}
+                        {mode === 'renameLocked' && <><MdEdit style={{ marginRight: 6 }} /> Rename File</>}
+                        {mode === 'deleteLocked' && <><MdDelete style={{ marginRight: 6 }} /> Delete File</>}
+                      </>
+                    )}
                   </button>
                 </>
               )}

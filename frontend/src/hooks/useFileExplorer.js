@@ -1,6 +1,7 @@
 // Hook for file operations: copy, cut, paste, delete, rename, create folder, create file, undo
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { showErrorToast } from '../utils/toast';
+import confirmApp from '../utils/confirm';
 
 export const useFileExplorer = (ipcRenderer) => {
   const [clipboard, setClipboard] = useState(null);
@@ -164,7 +165,8 @@ export const useFileExplorer = (ipcRenderer) => {
           ? `Are you sure you want to move "${names}" to the Recycle Bin?`
           : `Are you sure you want to move ${itemsToDelete.length} items to the Recycle Bin?\n\n${names}`;
 
-        if (!window.confirm(msg)) return false;
+        const confirmed = await confirmApp(msg, itemsToDelete);
+        if (!confirmed) return false;
       }
       try {
         const deletedActions = [];

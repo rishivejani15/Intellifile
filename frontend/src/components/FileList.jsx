@@ -1,7 +1,8 @@
 import React, { useMemo, useState, useEffect } from 'react';
-import { MdFolderOpen, MdPhoneAndroid } from 'react-icons/md';
+import { MdFolderOpen, MdPhoneAndroid, MdPushPin, MdStar } from 'react-icons/md';
 import { BsWindows } from 'react-icons/bs';
 import { getFileIcon, formatFileSize, formatDate } from '../utils/fileUtils';
+import { isStarred, isPinned } from '../utils/starPinUtils';
 import './FileExplorer/FileExplorer.css';
 
 const ipcRenderer = window.electron?.ipcRenderer;
@@ -51,22 +52,22 @@ function WindowsDriveIcon({ isSystem, isRemovable, isPortable }) {
           </linearGradient>
         </defs>
         
-        {/* Drive Front Chassis */}
-        <rect x="2" y="10" width="42" height="20" rx="3" fill="url(#driveChassisGrad)" stroke="#4b5563" strokeWidth="1" />
+        {/* Chassis shadow */}
+        <rect x="2" y="5" width="42" height="26" rx="4" fill="rgba(0,0,0,0.3)" />
         
-        {/* Top Surface (Isometric Slope) */}
-        <path d="M4 10 L10 3 L36 3 L42 10 Z" fill="url(#driveTopFace)" stroke="#9ca3af" strokeWidth="0.8" />
-        <path d="M10 3 L36 3" stroke="#ffffff" strokeWidth="1" strokeLinecap="round" />
+        {/* Drive Chassis base */}
+        <rect x="2" y="3" width="42" height="26" rx="4" fill="url(#driveChassisGrad)" stroke="#111827" strokeWidth="1" />
         
-        {/* Front Plate Inset */}
-        <rect x="5" y="13" width="36" height="14" rx="2" fill="#141820" stroke="#2d3340" strokeWidth="0.8" />
+        {/* Metallic Top Plate */}
+        <rect x="4" y="5" width="38" height="12" rx="2" fill="url(#driveTopFace)" opacity="0.9" />
+        
+        {/* Top Plate screw accents */}
+        <circle cx="6.5" cy="7.5" r="0.8" fill="#6b7280" />
+        <circle cx="39.5" cy="7.5" r="0.8" fill="#6b7280" />
         
         {/* Activity LED */}
         <circle cx="9" cy="20" r="2.2" fill={isRemovable ? "#10b981" : "#22c55e"} />
         <circle cx="9" cy="20" r="1" fill="#ffffff" />
-        
-        {/* Front Drive Slot */}
-        <line x1="15" y1="20" x2="37" y2="20" stroke="#374151" strokeWidth="1.8" strokeLinecap="round" />
       </svg>
     </div>
   );
@@ -78,6 +79,7 @@ function FileList({
   viewMode,
   groupBy,
   loading,
+  currentPath = '',
   renamingItem,
   renameValue,
   selectedItems,
@@ -115,7 +117,6 @@ function FileList({
     let cancelled = false;
     const loadThumbnails = async () => {
       for (const item of toLoad) {
-        if (cancelled) break;
         try {
           const result = await ipcRenderer?.invoke('get-thumbnail', item.path);
           if (result?.success && !cancelled) {
@@ -130,6 +131,9 @@ function FileList({
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [items, viewMode]);
+
+  const isStarredPath = currentPath === 'Starred' || String(currentPath).toLowerCase() === 'starred';
+
   const groupedItems = useMemo(() => {
     if (groupBy === 'none') {
       return [{ key: 'All items', items }];
@@ -160,43 +164,57 @@ function FileList({
   };
 
   if (loading) {
-    return <div className="loading">Loading...</div>;
-  }
-
-  if (items.length === 0) {
     return (
-      <div
-        className="empty-state"
-        onContextMenu={(e) => {
-          e.preventDefault();
-          onEmptySpaceContextMenu?.(e);
-        }}
-      >
-        This folder is empty
+      <div className="file-list-loading">
+        <div className="loading-spinner"></div>
+        <span>Loading folder contents...</span>
       </div>
     );
   }
 
   const isDrivesView = items.length > 0 && items.every(i => (i.type === 'drive' || i.type === 'portable') && i.type !== 'file' && i.type !== 'folder');
+  if (!items || items.length === 0) {
+    if (isStarredPath) {
+      return (
+        <div className="file-list-empty starred-empty-container">
+          <div className="starred-empty-glow-wrapper">
+            <div className="starred-empty-star-badge">
+              <MdStar size={44} className="starred-empty-star-icon" />
+            </div>
+          </div>
+          <h3 className="starred-empty-title">No starred files yet</h3>
+          <p className="starred-empty-subtitle">
+            Star important files and folders for instant, one-click access right here.
+          </p>
+          <div className="starred-empty-hint-pill">
+            <span className="starred-hint-icon">💡</span>
+            <span>Right-click any file or folder and click <strong>⭐ Star document</strong></span>
+          </div>
+        </div>
+      );
+    }
 
-  if (isDrivesView) {
     return (
-      <div className="win-devices-wrapper">
-        <div
-          className={`file-list ${viewMode} win-drives-list`}
-          role="presentation"
-          onClick={(e) => {
-            const onFileItem = !!e.target?.closest?.('.file-item');
-            if (!onFileItem) onEmptySpaceClick?.(e);
-          }}
-          onContextMenu={(e) => {
-            const onFileItem = !!e.target?.closest?.('.file-item');
-            if (!onFileItem) {
-              e.preventDefault();
-              onEmptySpaceContextMenu?.(e);
-            }
-          }}
-        >
+      <div className="file-list-empty">
+        <div className="general-empty-icon-wrapper">
+          <MdFolderOpen size={42} className="empty-icon" />
+        </div>
+        <h3 className="general-empty-title">This folder is empty</h3>
+        <p className="general-empty-subtitle">Items added to this directory will appear here</p>
+      </div>
+    );
+  }
+
+  // Drive layout view mode rendering (This PC view)
+  const isDriveList = items.length > 0 && items.every(item => item.type === 'drive' || item.type === 'portable' || item.isPortable);
+
+  if (isDriveList) {
+    return (
+      <div className="file-list drive-grid-container">
+        <div className="drive-grid-header">
+          Devices and drives ({items.length})
+        </div>
+        <div className="drive-grid-content win-drives-list">
           {items.map((item, idx) => {
             const isTempHighlighted = tempHighlightedPath === item.path;
             const isSystem = item.isSystem || item.path?.toUpperCase().startsWith('C:') || item.device?.toUpperCase() === 'C:';
@@ -208,12 +226,14 @@ function FileList({
             const usedPercent = size > 0 ? Math.min(100, Math.round((used / size) * 100)) : 0;
             const isCritical = size > 0 && (used / size) > 0.9;
             const isWarning = size > 0 && (used / size) > 0.75;
+            const itemStarred = isStarred(item);
+            const itemPinned = isPinned(item);
 
             return (
               <div
                 key={item.path || item.name}
                 data-path={item.path}
-                className={`file-item drive ${isFileSelected(item) ? 'selected' : ''} ${isTempHighlighted ? 'temp-highlighted' : ''}`}
+                className={`file-item drive ${isFileSelected(item) ? 'selected' : ''} ${isTempHighlighted ? 'temp-highlighted' : ''} ${itemPinned ? 'is-pinned-item' : ''} ${itemStarred ? 'is-starred-item' : ''}`}
                 onDoubleClick={() => onItemDoubleClick(item)}
                 onClick={(e) => {
                   e.stopPropagation();
@@ -259,7 +279,7 @@ function FileList({
 
   return (
     <div
-      className={`file-list ${viewMode}`}
+      className={`file-list ${viewMode} ${isStarredPath ? 'starred-file-list' : ''}`}
       role="presentation"
       onClick={(e) => {
         const onFileItem = !!e.target?.closest?.('.file-item');
@@ -276,6 +296,12 @@ function FileList({
         }
       }}
     >
+      {isStarredPath && (
+        <div className="starred-grid-header">
+          <MdStar size={16} className="starred-header-icon" />
+          <span>Starred Items ({items.length})</span>
+        </div>
+      )}
       {groupedItems.map(group => (
         <React.Fragment key={group.key}>
           {groupBy !== 'none' && (
@@ -298,12 +324,14 @@ function FileList({
             const usedPercent = size > 0 ? Math.min(100, Math.round((used / size) * 100)) : 0;
             const isCritical = size > 0 && (used / size) > 0.9;
             const isWarning = size > 0 && (used / size) > 0.75;
+            const itemStarred = isStarred(item);
+            const itemPinned = isPinned(item);
 
             return (
               <div
                 key={item.path}
                 data-path={item.path}
-                className={`file-item ${item.type} ${isFileSelected(item) ? 'selected' : ''} ${isTempHighlighted ? 'temp-highlighted' : ''} ${renamingItem?.path === item.path ? 'renaming' : ''} ${isCutItem(item) ? 'cut-item' : ''}`}
+                className={`file-item ${item.type} ${isFileSelected(item) ? 'selected' : ''} ${isTempHighlighted ? 'temp-highlighted' : ''} ${renamingItem?.path === item.path ? 'renaming' : ''} ${isCutItem(item) ? 'cut-item' : ''} ${itemPinned ? 'is-pinned-item' : ''} ${itemStarred ? 'is-starred-item' : ''}`}
                 onDoubleClick={() => onItemDoubleClick(item)}
                 onClick={(e) => {
                   e.stopPropagation();
@@ -325,6 +353,16 @@ function FileList({
                     <img src={thumbnails[item.path]} alt="" className="file-thumbnail" />
                   ) : (
                     getFileIcon(item)
+                  )}
+                  {itemPinned && (
+                    <span className="file-pin-badge" title="Pinned to top">
+                      <MdPushPin size={12} />
+                    </span>
+                  )}
+                  {itemStarred && (
+                    <span className="file-star-badge" title="Starred document">
+                      <MdStar size={11} />
+                    </span>
                   )}
                 </div>
                 <div className={`file-info ${item.type === 'drive' ? 'drive-file-info' : ''}`}>
@@ -363,7 +401,7 @@ function FileList({
                     </>
                   ) : (
                     <>
-                      <div className="file-name">{item.name}</div>
+                      <div className="file-name" title={item.name}>{item.name}</div>
                       {viewMode === 'details' && (
                         <div className="file-meta-details">
                           <span className="file-type">{item.type === 'folder' ? 'Folder' : item.ext}</span>

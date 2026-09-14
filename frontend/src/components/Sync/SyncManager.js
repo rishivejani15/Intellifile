@@ -63,7 +63,7 @@ const STATUS_CONFIG = {
 //  SyncManager Component (Sleek Clean Tabbed Layout)
 // ═════════════════════════════════════════════════════════════════════════════
 
-const SyncManager = () => {
+const SyncManager = ({ isActive = true }) => {
   // ── Local file state ─────────────────────────────────────────────────
   const [files, setFiles] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -75,6 +75,8 @@ const SyncManager = () => {
   const [copiedLogIndex, setCopiedLogIndex] = useState(null);
   const [copiedIp, setCopiedIp] = useState(false);
   const prevFilesRef = useRef({});
+  const prevIsActiveRef = useRef(false);
+  const hasEvaluatedInitialTabRef = useRef(false);
 
   // ── Remote sync state ────────────────────────────────────────────────
   const [syncStatus, setSyncStatus] = useState({ status: 'idle', message: 'Not connected' });
@@ -99,6 +101,20 @@ const SyncManager = () => {
   const [connectedDevices, setConnectedDevices] = useState([]);
   const [showFilePicker, setShowFilePicker] = useState(false);
   const isConnected = ['synced', 'syncing', 'waiting', 'reconnecting', 'connected_p2p', 'connected_relay'].includes(syncStatus.status);
+
+  // Default tab selection when entering Sync view or on initial load:
+  // If no connection or no files shared yet, switch to 'devices' (Pair & Devices).
+  useEffect(() => {
+    if (!loading && (isActive && !prevIsActiveRef.current || !hasEvaluatedInitialTabRef.current)) {
+      hasEvaluatedInitialTabRef.current = true;
+      if (!isConnected || files.length === 0) {
+        setActiveTab('devices');
+      } else {
+        setActiveTab('files');
+      }
+    }
+    prevIsActiveRef.current = isActive;
+  }, [isActive, loading, files.length, isConnected]);
 
   const qrValue = localAddress
     ? (localAddress.startsWith('http') ? localAddress : `http://${localAddress}`)

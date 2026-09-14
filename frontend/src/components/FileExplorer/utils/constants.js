@@ -1,3 +1,39 @@
+import React from 'react';
+
+export const PowerPointIcon = ({ style = {} }) => (
+  <span
+    className="file-icon-pptx"
+    title="PowerPoint Presentation"
+    style={{
+      position: 'relative',
+      display: 'inline-block',
+      lineHeight: 1.25,
+      marginTop: '5px',
+      ...style
+    }}
+  >
+    📙
+    <span
+      style={{
+        position: 'absolute',
+        top: '50%',
+        left: '50%',
+        transform: 'translate(-50%, -50%)',
+        color: '#ffffff',
+        fontWeight: '900',
+        fontSize: '0.48em',
+        fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+        textShadow: '0 1px 2px rgba(0, 0, 0, 0.85)',
+        pointerEvents: 'none',
+        userSelect: 'none',
+        lineHeight: 1
+      }}
+    >
+      P
+    </span>
+  </span>
+);
+
 // File icon mapping based on extension
 export const FILE_ICONS = {
   '.py': '🐍',
@@ -20,6 +56,11 @@ export const FILE_ICONS = {
   '.docx': '📘',
   '.xls': '📊',
   '.xlsx': '📊',
+  '.ppt': <PowerPointIcon />,
+  '.pptx': <PowerPointIcon />,
+  '.pptm': <PowerPointIcon />,
+  '.pps': <PowerPointIcon />,
+  '.ppsx': <PowerPointIcon />,
   '.png': '🖼️',
   '.jpg': '🖼️',
   '.jpeg': '🖼️',

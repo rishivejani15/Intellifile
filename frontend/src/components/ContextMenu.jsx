@@ -1,6 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import './FileExplorer/FileExplorer.css';
+import { PowerPointIcon } from '../utils/fileUtils';
+import { isStarred, toggleStar, isPinned, togglePin } from '../utils/starPinUtils';
 
 
 function ContextMenu({
@@ -208,6 +210,15 @@ function ContextMenu({
             <div className="context-menu-item" onClick={() => { onCreateFile?.('New Text Document.txt'); onClose(); }}>
               📄 Text Document
             </div>
+            <div className="context-menu-item" onClick={() => { onCreateFile?.('New Word Document.docx'); onClose(); }}>
+              📘 Word Document
+            </div>
+            <div className="context-menu-item" onClick={() => { onCreateFile?.('New Excel Worksheet.xlsx'); onClose(); }}>
+              📊 Excel Worksheet
+            </div>
+            <div className="context-menu-item" onClick={() => { onCreateFile?.('New PowerPoint Presentation.pptx'); onClose(); }}>
+              <PowerPointIcon />PowerPoint Presentation
+            </div>
             <div className="context-menu-item" onClick={() => { onCreateFile?.('New Document.md'); onClose(); }}>
               📝 Markdown File
             </div>
@@ -243,15 +254,20 @@ function ContextMenu({
         <div className="context-menu-item" onClick={() => { onOpen(); onClose(); }}>
           Open
         </div>
-        {selectedItem?.type === 'folder' && (
-          <div className="context-menu-item" onClick={() => { onPinToFavorites?.(); onClose(); }}>
-            {isPinnedToFavorites ? '📌 Unpin from Quick access' : '📌 Pin to Quick access'}
-          </div>
-        )}
         {selectedItem?.type === 'file' && (
           <div className="context-menu-item" onClick={() => { onOpenWith?.(); onClose(); }}>
             📂 Open with…
           </div>
+        )}
+        {selectedItem?.type !== 'drive' && (
+          <>
+            <div className="context-menu-item" onClick={() => { toggleStar(selectedItem); onClose(); }}>
+              {isStarred(selectedItem) ? '⭐ Unstar document' : '⭐ Star document'}
+            </div>
+            <div className="context-menu-item" onClick={() => { togglePin(selectedItem); onClose(); }}>
+              {isPinned(selectedItem) ? '📌 Unpin item' : '📌 Pin item to top'}
+            </div>
+          </>
         )}
         <div className="context-menu-divider"></div>
 
@@ -369,6 +385,15 @@ function ContextMenu({
           <div className="context-menu-divider"></div>
           <div className="context-menu-item" onClick={() => { onCreateFile?.('New Text Document.txt'); onClose(); }}>
             📄 Text Document
+          </div>
+          <div className="context-menu-item" onClick={() => { onCreateFile?.('New Word Document.docx'); onClose(); }}>
+            📘 Word Document
+          </div>
+          <div className="context-menu-item" onClick={() => { onCreateFile?.('New Excel Worksheet.xlsx'); onClose(); }}>
+            📊 Excel Worksheet
+          </div>
+          <div className="context-menu-item" onClick={() => { onCreateFile?.('New PowerPoint Presentation.pptx'); onClose(); }}>
+            <PowerPointIcon />PowerPoint Presentation
           </div>
           <div className="context-menu-item" onClick={() => { onCreateFile?.('New Document.md'); onClose(); }}>
             📝 Markdown File

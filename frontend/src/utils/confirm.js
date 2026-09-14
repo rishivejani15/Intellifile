@@ -13,7 +13,8 @@ export async function confirmApp(message, items = []) {
     };
 
     try {
-      window.dispatchEvent(new CustomEvent('app-show-confirm', { detail: { items, callback: wrappedCb } }));
+      const payload = typeof message === 'string' ? { message, items } : (message || {});
+      window.dispatchEvent(new CustomEvent('app-show-confirm', { detail: { ...payload, callback: wrappedCb } }));
     } catch (e) {
       // ignore
     }

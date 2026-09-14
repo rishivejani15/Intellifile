@@ -352,7 +352,7 @@ export default function Settings({ theme, onThemeChange, onStartTour, initialTab
   };
 
   const handleResetIndexing = async () => {
-    const ok = window.confirm('Are you sure you want to reset the vector database and search index? All current index data will be purged and rebuilt.');
+    const ok = await confirmApp('Are you sure you want to reset the vector database and search index? All current index data will be purged and rebuilt.');
     if (!ok) return;
     setResetLoading(true);
     try {

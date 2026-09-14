@@ -4,10 +4,11 @@ from utils.file_hash import generate_sha256
 from core.paths import get_storage_dir
 
 BASE_VERSION_PATH = os.path.join(get_storage_dir(), "versions")
+BACKUP_STORAGE_PATH = os.path.join(get_storage_dir(), "backups")
 
 def restore_version(file_path: str, version_timestamp: str) -> dict:
     """
-    Restores file safely with integrity check.
+    Restores file safely with integrity check and AppData safety backup.
     """
 
     # Robust path normalization
@@ -51,26 +52,45 @@ def restore_version(file_path: str, version_timestamp: str) -> dict:
         if current_hash != metadata.get("file_hash"):
             return {"success": False, "error": "Snapshot integrity failed"}
 
-        # Create safety backup before overwrite
+        # Clean up any legacy .backup file in the user's folder
+        legacy_backup_path = file_path + ".backup"
+        if os.path.exists(legacy_backup_path):
+            try:
+                import subprocess
+                subprocess.run(['attrib', '-h', legacy_backup_path], capture_output=True, check=False)
+                os.remove(legacy_backup_path)
+            except Exception as e:
+                print(f"[Rollback] Legacy backup cleanup: {e}")
+
+        # Create safety backup in AppData storage before overwrite
         if os.path.exists(file_path):
             import shutil
-            backup_path = file_path + ".backup"
-            
-            # Shield: If a hidden backup already exists, we must unhide it to overwrite it
-            if os.path.exists(backup_path):
-                try:
-                    import subprocess
-                    subprocess.run(['attrib', '-h', backup_path], capture_output=True, check=False)
-                    os.remove(backup_path) # Remove old one to be safe
-                except Exception: pass
+            from datetime import datetime, timezone
+
+            backup_dir = os.path.join(BACKUP_STORAGE_PATH, file_identifier)
+            os.makedirs(backup_dir, exist_ok=True)
+
+            ts_str = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S%f")
+            file_basename = os.path.basename(file_path)
+            backup_filename = f"pre_rollback_{ts_str}_{file_basename}"
+            appdata_backup_path = os.path.join(backup_dir, backup_filename)
 
             try:
-                shutil.copy2(file_path, backup_path)
-                # Optimization: Hide the backup file on Windows so it doesn't clutter the UI
-                import subprocess
-                subprocess.run(['attrib', '+h', backup_path], capture_output=True, check=False)
-            except Exception:
-                pass
+                shutil.copy2(file_path, appdata_backup_path)
+                print(f"[Rollback] Saved safety backup in AppData: {appdata_backup_path}")
+            except Exception as e:
+                print(f"[Rollback] Warning: Could not save AppData safety backup: {e}")
+
+        # Save current pre-rollback state as a version snapshot so roll-forward is preserved
+        try:
+            from core.versioning.snapshot_manager import create_version
+            if os.path.exists(file_path):
+                create_version(file_path, file_path, {
+                    "intent": "Pre-rollback snapshot",
+                    "summary": f"Automatic state captured before rollback to version {version_timestamp}"
+                })
+        except Exception as e:
+            print(f"[Rollback] Note: Pre-rollback snapshot creation: {e}")
 
         # Restore
         print(f"[Rollback] Restoring {version_timestamp} to {file_path}")

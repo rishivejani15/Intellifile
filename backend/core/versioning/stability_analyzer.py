@@ -21,7 +21,14 @@ def calculate_stability(old_content: str, new_content: str, risk_score: float = 
         
     # Base structural stability (change in size)
     delta = abs(new_len - old_len)
-    structural_stability = 1.0 - (delta / float(max_len))
+    if new_len < old_len:
+        # Deletion: shrinking structure reduces stability based on proportion of deleted content
+        structural_stability = 1.0 - (delta / float(old_len))
+    else:
+        # Addition / Restoration: growing structure retains existing content,
+        # so size expansion has a lighter structural impact instead of penalizing growth as destruction.
+        growth_ratio = delta / float(new_len)
+        structural_stability = 1.0 - (0.3 * growth_ratio)
     
     # Semantic stability (weighted by risk_score)
     # Even if size is identical, high risk = low stability

@@ -1,4 +1,5 @@
 import { FILE_ICONS, DEFAULT_FILE_ICON } from './constants';
+import { isPinned } from '../../../utils/starPinUtils';
 
 /**
  * Get the icon for a file based on its type
@@ -12,36 +13,45 @@ export const getFileIcon = (item) => {
   if (item.type === 'folder') {
     return '📁';
   }
-  const ext = item.ext?.toLowerCase() || '';
+  const extSource = item.ext || item.name || item.path || '';
+  const extStr = String(extSource).toLowerCase();
+  const ext = extStr.includes('.') ? extStr.slice(extStr.lastIndexOf('.')) : extStr;
   return FILE_ICONS[ext] || DEFAULT_FILE_ICON;
 };
 
 /**
- * Format file size to human readable format
+ * Format file size into human readable string
  * @param {number} bytes - Size in bytes
- * @returns {string} Formatted size string
+ * @returns {string} Formatted size
  */
 export const formatFileSize = (bytes) => {
-  if (bytes === 0) return '0 B';
+  if (bytes === 0 || !bytes) return '0 B';
   const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB'];
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 };
 
 /**
- * Format date to locale string
- * @param {number} ms - Timestamp in milliseconds
+ * Format timestamp into readable date string
+ * @param {number} timestamp - Unix timestamp
  * @returns {string} Formatted date
  */
-export const formatDate = (ms) => {
-  return new Date(ms).toLocaleDateString();
+export const formatDate = (timestamp) => {
+  if (!timestamp) return 'Unknown';
+  return new Date(timestamp).toLocaleDateString(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
 };
 
 /**
- * Get parent path from a full path
- * @param {string} filePath - Full file path
- * @returns {string} Parent directory path
+ * Get parent path of a file/folder
+ * @param {string} filePath - Path to file or folder
+ * @returns {string|null} Parent path or null
  */
 export const getParentPath = (filePath) => {
   if (!filePath) return null;
@@ -74,6 +84,13 @@ export const sortItems = (items, sortBy, sortDirection = 'asc') => {
   }
 
   return [...items].sort((a, b) => {
+    // 1. Pinned items float to the very top
+    const aPinned = isPinned(a);
+    const bPinned = isPinned(b);
+    if (aPinned && !bPinned) return -1;
+    if (!aPinned && bPinned) return 1;
+
+    // 2. Folders before files
     if (a.type === 'folder' && b.type !== 'folder') return -1;
     if (a.type !== 'folder' && b.type === 'folder') return 1;
 
@@ -92,7 +109,7 @@ export const sortItems = (items, sortBy, sortDirection = 'asc') => {
         compareValue = (a.ext || '').localeCompare(b.ext || '');
         break;
       default:
-        compareValue = a.name.localeCompare(b.name);
+        compareValue = (a.name || '').localeCompare(b.name || '');
     }
 
     return sortDirection === 'desc' ? -compareValue : compareValue;

@@ -23,6 +23,7 @@ import { smartCleanupVersions } from '../../services/versionService';
 import { showErrorToast, showToast } from '../../utils/toast';
 import FileLockModal from '../FileLockModal';
 import { trackRecentFile } from '../../utils/recentTracker';
+import { getStarredItems } from '../../utils/starPinUtils';
 import './FileExplorer.css';
 
 
@@ -97,6 +98,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
       }));
     } catch (_) { }
   }, [viewMode, sortBy, sortDirection, groupBy]);
+
   const [showHidden, setShowHidden] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchFilters, setSearchFilters] = useState(() => getDefaultFilters('Home'));
@@ -124,6 +126,24 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
   const [showLockModal, setShowLockModal] = useState(false);
   const [lockModalMode, setLockModalMode] = useState('lock');
   const [lockModalFile, setLockModalFile] = useState(null);
+
+  // Open with & chooser states
+  const [openWithItem, setOpenWithItem] = useState(null);
+  const [showOpenWith, setShowOpenWith] = useState(false);
+  const [showRecentChooser, setShowRecentChooser] = useState(false);
+  const [recentChooserFiles, setRecentChooserFiles] = useState([]);
+
+  // Sidebar resizing state
+  const [showSidebar, setShowSidebar] = useState(() => {
+    try { return localStorage.getItem('intellifile-show-sidebar') !== 'false'; } catch { return true; }
+  });
+  const [sidebarWidth, setSidebarWidth] = useState(() => {
+    try {
+      const saved = localStorage.getItem('intellifile-sidebar-width');
+      return saved ? parseInt(saved, 10) : 260;
+    } catch { return 260; }
+  });
+  const [isResizingSidebar, setIsResizingSidebar] = useState(false);
 
   // Search & Indexing State
   const [semanticResults, setSemanticResults] = useState(null);
@@ -204,6 +224,31 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
   const loadRequestRef = useRef(0);
   const watchedDirectoryRef = useRef(null);
   const initialLoadRef = useRef(false);
+
+  // Listen for starred items updates for live UI refresh
+  useEffect(() => {
+    const handleStarredUpdated = (e) => {
+      if (currentPath === 'Starred' || String(currentPath).toLowerCase() === 'starred') {
+        const updatedStarred = e.detail || getStarredItems();
+        setItems(updatedStarred);
+      } else {
+        setItems(prevItems => [...prevItems]);
+      }
+    };
+
+    window.addEventListener('starred-updated', handleStarredUpdated);
+    return () => window.removeEventListener('starred-updated', handleStarredUpdated);
+  }, [currentPath]);
+
+  // Listen for pinned items updates for live UI re-sorting
+  useEffect(() => {
+    const handlePinnedUpdated = () => {
+      setItems(prevItems => [...prevItems]);
+    };
+
+    window.addEventListener('pinned-updated', handlePinnedUpdated);
+    return () => window.removeEventListener('pinned-updated', handlePinnedUpdated);
+  }, []);
   const archiveMessageTimerRef = useRef(null);
   const directoryLoadInFlightRef = useRef(new Map());
 
@@ -606,6 +651,38 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
       return { success: true, items: [] };
     }
 
+    // Handle 'Starred' special virtual path
+    const isStarredPath = dirPath === 'Starred' || String(dirPath).toLowerCase() === 'starred';
+    if (isStarredPath) {
+      const pathChanged = currentPath !== 'Starred';
+      setCurrentPath('Starred');
+      setAddressPath('Starred');
+      updateBreadcrumb('Starred');
+      setSelectedItem(null);
+      setSelectedItems([]);
+      setSearchQuery('');
+      setSemanticResults(null);
+      setLoading(true);
+      
+      try {
+        const starredItems = getStarredItems();
+        setItems(starredItems);
+      } catch (err) {
+        console.error('Failed to load starred items:', err);
+        setItems([]);
+      } finally {
+        setLoading(false);
+      }
+      
+      if (trackHistory && pathChanged) {
+        updateHistory('Starred', tabId);
+      }
+      if (pathChanged) {
+        updateActiveTab('Starred', tabId);
+      }
+      return { success: true, items: [] };
+    }
+
     const normalizedPath = (dirPath || '').replace(/[\\/]+$/, '');
     const loadKey = `${normalizedPath}::${soft ? 'soft' : 'full'}::${suppressLoading ? 'suppress' : 'show'}`;
     const inFlight = directoryLoadInFlightRef.current.get(loadKey);
@@ -900,10 +977,6 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
       ipcRenderer.off('open-path', handleOpenPath);
     };
   }, [loadDirectory]);
-
-  // Recent-file chooser state (for explorer open fallback)
-  const [showRecentChooser, setShowRecentChooser] = React.useState(false);
-  const [recentChooserFiles, setRecentChooserFiles] = React.useState([]);
 
 
   // Keep the stable refs in sync with the latest callback versions
@@ -1622,9 +1695,6 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
     return () => window.removeEventListener('intellifile-tour-open-version-history', openTourVersionHistory);
   }, [canVersionItem, displayItems]);
 
-  // Open with handling – use custom OpenWithModal
-  const [openWithItem, setOpenWithItem] = React.useState(null);
-  const [showOpenWith, setShowOpenWith] = React.useState(false);
 
   const handleOpenWith = async (item) => {
     // Set the item and display the modal. Candidate fetching is done inside the modal.
@@ -2409,6 +2479,7 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
                       viewMode={viewMode}
                       groupBy={groupBy}
                       loading={loading}
+                      currentPath={currentPath}
                       renamingItem={renamingItem}
                       renameValue={renameValue}
                       selectedItems={selectedItems}

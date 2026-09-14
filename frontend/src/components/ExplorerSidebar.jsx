@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { MdHome, MdComputer, MdStorage, MdCloud, MdDelete, MdDesktopMac, MdDescription, MdDownload, MdFolder, MdImage, MdMusicNote, MdVideoLibrary, MdPhoneAndroid } from 'react-icons/md';
+import { MdHome, MdComputer, MdStorage, MdCloud, MdDelete, MdDesktopMac, MdDescription, MdDownload, MdFolder, MdImage, MdMusicNote, MdVideoLibrary, MdPhoneAndroid, MdStar } from 'react-icons/md';
 import { BsWindows } from 'react-icons/bs';
 import './FileExplorer/FileExplorer.css';
 import { showErrorToast } from '../utils/toast';
+import { getStarredItems } from '../utils/starPinUtils';
 
 const FAVORITES_KEY = 'intellifile-favorites';
 const RECENT_FOLDERS_KEY = 'intellifile-recent-folders';
@@ -442,6 +443,17 @@ function ExplorerSidebar({ drives, onNavigate, currentPath, onContextMenu }) {
       try { ipcRenderer && ipcRenderer.off && ipcRenderer.off('system-roots-changed', onChanged); } catch (e) {}
     };
   }, []);
+
+  const [starredCount, setStarredCount] = useState(() => getStarredItems().length);
+
+  useEffect(() => {
+    const handleStarredUpdated = (e) => {
+      const starred = e.detail || getStarredItems();
+      setStarredCount(starred.length);
+    };
+    window.addEventListener('starred-updated', handleStarredUpdated);
+    return () => window.removeEventListener('starred-updated', handleStarredUpdated);
+  }, []);
   
   const navigateToQuickAccess = (folderName) => {
     onNavigate(folderName);
@@ -626,6 +638,16 @@ function ExplorerSidebar({ drives, onNavigate, currentPath, onContextMenu }) {
           <span className="sidebar-icon"><MdComputer size={18} /></span>
           <span className="sidebar-label">This PC</span>
         </div>
+        <div
+          className={`sidebar-item ${currentPath === 'Starred' ? 'active' : ''}`}
+          onClick={() => onNavigate('Starred')}
+        >
+          <span className="sidebar-icon"><MdStar size={18} color="#f59e0b" /></span>
+          <span className="sidebar-label">Starred</span>
+          {starredCount > 0 && (
+            <span className="sidebar-badge-pill">{starredCount}</span>
+          )}
+        </div>
       </div>
 
       {/* Quick Access */}
@@ -686,6 +708,8 @@ function ExplorerSidebar({ drives, onNavigate, currentPath, onContextMenu }) {
           </>
         )}
       </div>
+
+
 
       {/* Recent Folders */}
       {recentFolders.length > 0 && (

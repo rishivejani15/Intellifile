@@ -6,12 +6,12 @@ import {
 } from 'react-icons/md';
 import { getFileIcon, formatFileSize } from '../utils/fileUtils';
 import { getRecentFiles, trackRecentFile } from '../../../utils/recentTracker';
+import { getStarredItems } from '../../../utils/starPinUtils';
 import './ExplorerHome.css';
 
 const FAVORITES_KEY = 'intellifile-favorites';
 
 const getItemTypeLabel = (item) => {
-  if (item.type === 'folder') return 'Folder';
   if (item.type === 'drive') return 'Drive';
   const ext = (item.ext || '').replace(/^\./, '').toUpperCase();
   if (!ext) return 'File';
@@ -339,13 +339,24 @@ export default function ExplorerHome({
   }, [searchQuery]);
 
   const displayedRecent = useMemo(() => filterList(recentItems), [recentItems, filterList]);
-  const displayedFavorites = useMemo(() => filterList(favorites.map(f => ({
-    name: f.name || f.path.split('\\').pop(),
-    path: f.path,
-    location: f.path.split('\\').slice(0, -1).pop() || 'Favorites',
-    type: 'folder',
-    accessed: Date.now(),
-  }))), [favorites, filterList]);
+  const displayedFavorites = useMemo(() => {
+    const favItems = favorites.map(f => ({
+      name: f.name || f.path.split('\\').pop(),
+      path: f.path,
+      location: f.path.split('\\').slice(0, -1).pop() || 'Favorites',
+      type: 'folder',
+      accessed: Date.now(),
+    }));
+    const starredItems = getStarredItems().map(s => ({
+      ...s,
+      location: s.location || s.path.split('\\').slice(0, -1).pop() || 'Starred',
+    }));
+    const map = new Map();
+    [...favItems, ...starredItems].forEach(item => {
+      if (item.path) map.set(item.path.toLowerCase(), item);
+    });
+    return filterList(Array.from(map.values()));
+  }, [favorites, filterList]);
   const displayedShared = useMemo(() => filterList(sharedItems), [sharedItems, filterList]);
 
   const activeTableItems = activeTab === 'recent'
