@@ -22,9 +22,8 @@ import {
   MdOutlineCalendarMonth,
   MdOutlineDescription,
 } from 'react-icons/md';
-import SearchFilterPopover, {
-  getActiveFilterChips,
-} from './FileExplorer/components/SearchFilterPopover';
+import SearchFilterPopover from './FileExplorer/components/SearchFilterPopover';
+import { getActiveFilterChips } from '../utils/searchFiltersHelper';
 import './FileExplorer/FileExplorer.css';
 
 function ExplorerNavbar({

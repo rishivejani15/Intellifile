@@ -54,6 +54,12 @@ export default function ExplorerHome({
   selectedItems,
   setSelectedItems,
   searchQuery = '',
+  renamingItem,
+  renameValue,
+  setRenameValue,
+  onRenameBlur,
+  onRenameKeyDown,
+  setRenamingItem,
 }) {
   const [quickAccessItems, setQuickAccessItems] = useState([]);
   const [recentItems, setRecentItems] = useState([]);
@@ -519,7 +525,24 @@ export default function ExplorerHome({
                         </div>
 
                         <div className="file-name" title={item.name}>
-                          {item.name}
+                          {renamingItem?.path === item.path ? (
+                            <input
+                              type="text"
+                              className="file-name-input"
+                              value={renameValue}
+                              onChange={(e) => setRenameValue?.(e.target.value)}
+                              onBlur={onRenameBlur}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') onRenameBlur?.();
+                                if (e.key === 'Escape') setRenamingItem?.(null);
+                                if (onRenameKeyDown) onRenameKeyDown(e);
+                              }}
+                              onClick={(e) => e.stopPropagation()}
+                              autoFocus
+                            />
+                          ) : (
+                            item.name
+                          )}
                         </div>
 
                         <div className="file-location" title={item.location || item.parentPath}>

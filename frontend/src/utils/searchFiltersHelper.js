@@ -117,14 +117,13 @@ export function convertFiltersToSearchPayload(filters, currentPath) {
 }
 
 export function getDefaultFilters(currentPath) {
-  const isHome = !currentPath || String(currentPath).toLowerCase() === 'home';
   return {
     fileType: 'all',
     customExtension: '',
     datePreset: 'all',
     dateFrom: '',
     dateTo: '',
-    folderScope: isHome ? 'entire' : 'current',
+    folderScope: 'entire',
     specificFolder: '',
   };
 }
@@ -134,7 +133,8 @@ export function hasSearchableFilters(filters) {
   if (filters.fileType && filters.fileType !== 'all') return true;
   if (filters.datePreset && filters.datePreset !== 'all') return true;
   if (Boolean(filters.dateFrom || filters.dateTo)) return true;
-  if (filters.folderScope === 'specific' && Boolean(filters.specificFolder)) return true;
+  if (filters.folderScope && filters.folderScope !== 'entire') return true;
+  if (filters.specificFolder) return true;
   return false;
 }
 
@@ -143,15 +143,8 @@ export function hasActiveFilters(filters, currentPath = null) {
   if (filters.fileType && filters.fileType !== 'all') return true;
   if (filters.datePreset && filters.datePreset !== 'all') return true;
   if (filters.dateFrom || filters.dateTo) return true;
-  if (filters.folderScope === 'specific' && filters.specificFolder) return true;
-
-  if (currentPath !== null && currentPath !== undefined) {
-    const isHome = !currentPath || String(currentPath).toLowerCase() === 'home';
-    if (!isHome && filters.folderScope === 'entire') return true;
-    if (isHome && filters.folderScope === 'current') return true;
-  } else {
-    if (filters.folderScope === 'current') return true;
-  }
+  if (filters.folderScope && filters.folderScope !== 'entire') return true;
+  if (filters.specificFolder) return true;
   return false;
 }
 
@@ -196,7 +189,6 @@ export function getActiveFilterChips(filters, currentPath = null) {
   }
 
   // 3. Folder scope
-  const isHome = !currentPath || String(currentPath).toLowerCase() === 'home';
   if (filters.folderScope === 'specific' && filters.specificFolder) {
     const folderName = filters.specificFolder.split('\\').pop() || filters.specificFolder.split('/').pop() || filters.specificFolder;
     chips.push({
@@ -204,16 +196,11 @@ export function getActiveFilterChips(filters, currentPath = null) {
       label: `In: ${folderName}`,
       type: 'folderScope',
     });
-  } else if (!isHome && filters.folderScope === 'entire') {
+  } else if (filters.folderScope === 'current' && currentPath && currentPath.toLowerCase() !== 'home') {
+    const currentName = currentPath.split('\\').pop() || currentPath.split('/').pop() || currentPath;
     chips.push({
       key: 'folderScope',
-      label: 'In: Entire Computer',
-      type: 'folderScope',
-    });
-  } else if (isHome && filters.folderScope === 'current') {
-    chips.push({
-      key: 'folderScope',
-      label: 'In: Home only',
+      label: `In: ${currentName}`,
       type: 'folderScope',
     });
   }

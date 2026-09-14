@@ -1,11 +1,15 @@
 .dfm-overlay {
   position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.70);
+  top: 50px;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: calc(100vh - 50px);
+  background: rgba(0, 0, 0, 0.40);
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 9999;
+  z-index: 999;
   -webkit-backdrop-filter: blur(8px);
   backdrop-filter: blur(8px);
   animation: dfmOverlayFade 0.2s cubic-bezier(0.16, 1, 0.3, 1);

@@ -1370,11 +1370,22 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
       return;
     }
 
-    if (renamingItem && renameValue && renameValue !== renamingItem.name && currentPath) {
+    if (renamingItem && renameValue && renameValue !== renamingItem.name) {
+      let parentDir = currentPath;
+      if (!parentDir || parentDir === 'HOME') {
+        if (renamingItem.path && renamingItem.path.includes('\\')) {
+          parentDir = renamingItem.path.substring(0, renamingItem.path.lastIndexOf('\\'));
+        } else if (renamingItem.path && renamingItem.path.includes('/')) {
+          parentDir = renamingItem.path.substring(0, renamingItem.path.lastIndexOf('/'));
+        }
+      }
+
       const ok = await fileOps.handleRename(renamingItem, renameValue);
       if (ok) {
-        const newPath = `${currentPath}\\${renameValue}`;
+        const newPath = parentDir ? `${parentDir}\\${renameValue}` : renameValue;
         updateItemPathInState(renamingItem.path, newPath, renameValue);
+        window.dispatchEvent(new CustomEvent('recent-files-updated'));
+        handleRefresh();
       }
     }
     setRenamingItem(null);
@@ -2276,17 +2287,6 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
     }
   };
 
-  // Quick Access Sidebar - Width resizing and collapse/expand state
-  const [showSidebar, setShowSidebar] = useState(() => {
-    try { return localStorage.getItem('intellifile-show-sidebar') !== 'false'; } catch { return true; }
-  });
-  const [sidebarWidth, setSidebarWidth] = useState(() => {
-    try {
-      const saved = localStorage.getItem('intellifile-sidebar-width');
-      return saved ? parseInt(saved, 10) : 260;
-    } catch { return 260; }
-  });
-  const [isResizingSidebar, setIsResizingSidebar] = useState(false);
 
   const handleSidebarMouseDown = (e) => {
     e.preventDefault();
@@ -2455,6 +2455,15 @@ function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWit
                     selectedItems={selectedItems}
                     setSelectedItems={setSelectedItems}
                     searchQuery={searchQuery}
+                    renamingItem={renamingItem}
+                    renameValue={renameValue}
+                    setRenameValue={setRenameValue}
+                    onRenameBlur={handleRename}
+                    onRenameKeyDown={(e) => {
+                      if (e.key === 'Enter') handleRename();
+                      if (e.key === 'Escape') setRenamingItem(null);
+                    }}
+                    setRenamingItem={setRenamingItem}
                   />
                 ) : (
                   <>

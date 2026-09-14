@@ -5,14 +5,18 @@
 
 .rollback-modal-overlay {
   position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.72) !important;
+  top: 50px;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: calc(100vh - 50px);
+  background: rgba(0, 0, 0, 0.45) !important;
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 10001;
+  z-index: 999;
   animation: rollbackOverlayIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 }
 

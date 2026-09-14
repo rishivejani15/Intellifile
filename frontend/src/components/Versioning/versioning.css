@@ -11,9 +11,7 @@
   height: 100%;
   flex: 1;
   min-height: 0;
-  background: #09090b !important;
-  backdrop-filter: none !important;
-  -webkit-backdrop-filter: none !important;
+  background: var(--s-bg);
 }
 
 .timeline-header {
@@ -21,9 +19,7 @@
   gap: var(--sp-2);
   padding: var(--sp-3) var(--sp-4);
   border-bottom: 1px solid var(--bo-light);
-  background: #111217 !important;
-  backdrop-filter: none !important;
-  -webkit-backdrop-filter: none !important;
+  background: var(--s-surface);
   flex-shrink: 0;
   align-items: center;
 }
@@ -435,12 +431,16 @@
    Diff Viewer Overlay
    ─────────────────────────────────────────────────────── */
 .diff-viewer-overlay {
-  z-index: 9999 !important;
+  z-index: 999 !important;
   position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.85);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
+  top: 50px;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: calc(100vh - 50px);
+  background: rgba(15, 23, 42, 0.45);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
   display: flex;
   justify-content: center;
   align-items: center;

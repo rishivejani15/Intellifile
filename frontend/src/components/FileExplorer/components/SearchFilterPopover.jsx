@@ -10,6 +10,7 @@ import {
   MdTune,
 } from 'react-icons/md';
 import { selectDirectory } from '../../../services/searchService';
+import VaultFilePicker from '../../VaultFilePicker';
 import {
   FILE_TYPE_CONFIG,
   DATE_PRESETS,
@@ -47,8 +48,7 @@ const SearchFilterPopover = React.memo(function SearchFilterPopover({
   onReset,
   onClose,
 }) {
-  const isHome = !currentPath || String(currentPath).toLowerCase() === 'home';
-  const defaultScope = isHome ? 'entire' : 'current';
+  const defaultScope = 'entire';
 
   const [draft, setDraft] = useState(() => ({
     fileType: filters?.fileType || 'all',
@@ -139,19 +139,10 @@ const SearchFilterPopover = React.memo(function SearchFilterPopover({
     };
   }, [onClose]);
 
-  const handlePickFolder = async () => {
-    try {
-      const selected = await selectDirectory();
-      if (selected) {
-        setDraft((prev) => ({
-          ...prev,
-          folderScope: 'specific',
-          specificFolder: selected,
-        }));
-      }
-    } catch (err) {
-      console.warn('Folder selection dialog failed:', err);
-    }
+  const [showFolderPicker, setShowFolderPicker] = useState(false);
+
+  const handlePickFolder = () => {
+    setShowFolderPicker(true);
   };
 
   const handleApply = (e) => {
@@ -194,6 +185,7 @@ const SearchFilterPopover = React.memo(function SearchFilterPopover({
       setDraft((prev) => ({ ...prev, folderScope: 'specific', specificFolder: subPath }));
     } else if (val === 'specific') {
       setDraft((prev) => ({ ...prev, folderScope: 'specific' }));
+      setShowFolderPicker(true);
     }
   };
 
@@ -384,12 +376,12 @@ const SearchFilterPopover = React.memo(function SearchFilterPopover({
               value={getSelectedScopeValue()}
               onChange={handleScopeSelectChange}
             >
+              <option value="entire">🌐 Entire Computer</option>
               {isCurrentFolderAvailable && (
                 <option value="current">
                   📁 Current Folder ({currentFolderDisplayName})
                 </option>
               )}
-              <option value="entire">🌐 Entire Computer</option>
               {discoveredFolders.length > 0 && (
                 <optgroup label={`Subfolders in ${currentFolderDisplayName} (${discoveredFolders.length})`}>
                   {discoveredFolders.map((folder) => (
@@ -443,6 +435,24 @@ const SearchFilterPopover = React.memo(function SearchFilterPopover({
           </button>
         </div>
       </form>
+      {showFolderPicker && (
+        <VaultFilePicker
+          mode="folder"
+          title="Select Search Folder"
+          subtitle="Browse folders using IntelliFile"
+          onSelect={(selectedPath) => {
+            setShowFolderPicker(false);
+            if (selectedPath) {
+              setDraft((prev) => ({
+                ...prev,
+                folderScope: 'specific',
+                specificFolder: selectedPath,
+              }));
+            }
+          }}
+          onCancel={() => setShowFolderPicker(false)}
+        />
+      )}
     </div>
   );
 });

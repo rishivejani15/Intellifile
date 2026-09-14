@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import {
   MdFolder, MdFolderOpen, MdInsertDriveFile, MdArrowBack,
   MdClose, MdLock, MdHome, MdStorage, MdCheck,
@@ -56,7 +57,13 @@ function Breadcrumb({ pathStr, onNavigate }) {
   );
 }
 
-function VaultFilePicker({ onSelect, onCancel }) {
+function VaultFilePicker({
+  onSelect,
+  onCancel,
+  mode = 'file',
+  title = 'Select File to Lock',
+  subtitle = 'Browse your files using IntelliFile',
+}) {
   const [currentPath, setCurrentPath] = useState(null);
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -142,21 +149,25 @@ function VaultFilePicker({ onSelect, onCancel }) {
   };
 
   const handleConfirm = () => {
-    if (selectedFile) onSelect(selectedFile.path);
+    if (mode === 'folder') {
+      if (currentPath) onSelect(currentPath);
+    } else {
+      if (selectedFile) onSelect(selectedFile.path);
+    }
   };
 
   const isHome = currentPath === null;
 
-  return (
+  return createPortal(
     <div className="vfp-overlay" onClick={(e) => { if (e.target === e.currentTarget) onCancel(); }}>
-      <div className={`vfp-modal ${showPreview ? 'vfp-modal-with-preview' : ''}`} role="dialog" aria-modal="true" aria-label="Select a file to lock">
+      <div className={`vfp-modal ${showPreview ? 'vfp-modal-with-preview' : ''}`} role="dialog" aria-modal="true" aria-label={title}>
         {/* Header */}
         <div className="vfp-header">
           <div className="vfp-header-left">
-            <MdLock className="vfp-header-icon" />
+            {mode === 'folder' ? <MdFolderOpen className="vfp-header-icon" /> : <MdLock className="vfp-header-icon" />}
             <div>
-              <h3 className="vfp-header-title">Select File to Lock</h3>
-              <p className="vfp-header-subtitle">Browse your files using IntelliFile</p>
+              <h3 className="vfp-header-title">{title}</h3>
+              <p className="vfp-header-subtitle">{subtitle}</p>
             </div>
           </div>
           <button className="vfp-close-btn" onClick={onCancel} title="Close">
@@ -181,59 +192,55 @@ function VaultFilePicker({ onSelect, onCancel }) {
           </div>
         </div>
 
-        {/* Body */}
+        {/* Content Area */}
         <div className="vfp-body">
-          {/* Sidebar */}
+          {/* Sidebar / Quick Access */}
           <div className="vfp-sidebar">
-            {quickAccess.length > 0 && (
-              <div className="vfp-sidebar-section">
-                <div className="vfp-sidebar-title">Quick Access</div>
-                {quickAccess.map((qa) => (
-                  <button
-                    key={qa.path}
-                    className={`vfp-sidebar-item ${normalizePath(currentPath) === normalizePath(qa.path) ? 'active' : ''}`}
-                    onClick={() => navigateTo(qa.path)}
-                  >
-                    <span className="vfp-sidebar-icon">{getFolderIcon(qa.name)}</span>
-                    <span>{qa.name}</span>
-                  </button>
-                ))}
-              </div>
-            )}
-            {drives.length > 0 && (
-              <div className="vfp-sidebar-section">
-                <div className="vfp-sidebar-title">Drives</div>
-                {drives.map((d) => (
-                  <button
-                    key={d.path || d.id}
-                    className={`vfp-sidebar-item ${normalizePath(currentPath) === normalizePath(d.path) ? 'active' : ''}`}
-                    onClick={() => navigateTo(d.path)}
-                  >
-                    <span className="vfp-sidebar-icon"><MdStorage /></span>
-                    <span>{d.name || d.path}</span>
-                  </button>
-                ))}
-              </div>
-            )}
+            <div className="vfp-sidebar-title">Quick Access</div>
+            {quickAccess.map((qa) => {
+              const isActive = currentPath && normalizePath(currentPath) === normalizePath(qa.path);
+              return (
+                <button
+                  key={qa.path}
+                  className={`vfp-sidebar-item ${isActive ? 'active' : ''}`}
+                  onClick={() => navigateTo(qa.path)}
+                >
+                  <span className="vfp-sidebar-icon">{getFolderIcon(qa.name)}</span>
+                  <span className="vfp-sidebar-name">{qa.name}</span>
+                </button>
+              );
+            })}
+            <div className="vfp-sidebar-title" style={{ marginTop: 16 }}>Drives</div>
+            {drives.map((d) => {
+              const isActive = currentPath && normalizePath(currentPath) === normalizePath(d.path);
+              return (
+                <button
+                  key={d.path || d.id}
+                  className={`vfp-sidebar-item ${isActive ? 'active' : ''}`}
+                  onClick={() => navigateTo(d.path)}
+                >
+                  <span className="vfp-sidebar-icon"><MdStorage /></span>
+                  <span className="vfp-sidebar-name">{d.id || d.name}</span>
+                </button>
+              );
+            })}
           </div>
 
-          {/* File List */}
-          <div className="vfp-list-wrap">
-            <div className="vfp-list" ref={listRef}>
-              {loading && (
-                <div className="vfp-status-msg">
-                  <div className="vfp-spinner" />
-                  <span>Loading…</span>
+          {/* Main Content Area */}
+          <div className="vfp-content-area">
+            {/* Main File Grid / List */}
+            <div className="vfp-list-view" ref={listRef}>
+              {loading && <div className="vfp-status-msg">Loading folder contents...</div>}
+              {error && (
+                <div className="vfp-status-msg vfp-status-error">
+                  <MdErrorOutline size={20} style={{ marginBottom: 4 }} />
+                  <div>{error}</div>
                 </div>
               )}
-              {!loading && error && (
-                <div className="vfp-status-msg vfp-error">
-                  <MdErrorOutline size={16} style={{ marginRight: 6 }} />
-                  {error}
-                </div>
-              )}
+
+              {/* Home View — drives & special folders */}
               {!loading && !error && isHome && (
-                <div className="vfp-home">
+                <div className="vfp-home-view">
                   {quickAccess.length > 0 && (
                     <>
                       <div className="vfp-list-section-title">Quick Access</div>
@@ -307,27 +314,42 @@ function VaultFilePicker({ onSelect, onCancel }) {
             {/* Footer / Selection bar */}
             <div className="vfp-selection-bar">
               <div className="vfp-selection-label">
-                {selectedFile ? (
+                {mode === 'folder' ? (
+                  currentPath ? (
+                    <>
+                      <MdFolderOpen size={16} style={{ color: '#f59e0b', marginRight: 6 }} />
+                      <span className="vfp-selected-name" title={currentPath}>{currentPath}</span>
+                    </>
+                  ) : (
+                    <span className="vfp-no-selection">Navigate into a folder to select it</span>
+                  )
+                ) : selectedFile ? (
                   <>
                     <MdInsertDriveFile size={14} />
                     <span className="vfp-selected-name" title={selectedFile.path}>{selectedFile.name}</span>
                   </>
                 ) : (
-                  <span className="vfp-no-selection">No file selected — click a file or double-click to lock</span>
+                  <span className="vfp-no-selection">No file selected — click a file or double-click to select</span>
                 )}
               </div>
               <div className="vfp-actions">
                 <button className="vfp-btn-cancel" onClick={onCancel}>Cancel</button>
+                {mode !== 'folder' && (
+                  <button
+                    className="vfp-btn-preview"
+                    onClick={() => setShowPreview(true)}
+                    disabled={!selectedFile}
+                    title="Preview the selected file"
+                  >
+                    <MdVisibility size={15} /> Preview
+                  </button>
+                )}
                 <button
-                  className="vfp-btn-preview"
-                  onClick={() => setShowPreview(true)}
-                  disabled={!selectedFile}
-                  title="Preview the selected file"
+                  className="vfp-btn-select"
+                  onClick={handleConfirm}
+                  disabled={mode === 'folder' ? !currentPath : !selectedFile}
                 >
-                  <MdVisibility size={15} /> Preview
-                </button>
-                <button className="vfp-btn-select" onClick={handleConfirm} disabled={!selectedFile}>
-                  <MdLock size={14} /> Select &amp; Lock
+                  <MdCheck size={14} /> {mode === 'folder' ? 'Select This Folder' : 'Select'}
                 </button>
               </div>
             </div>
@@ -343,7 +365,8 @@ function VaultFilePicker({ onSelect, onCancel }) {
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 

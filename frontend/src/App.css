@@ -371,13 +371,13 @@ body {
   padding: 0 140px 0 var(--sp-2); /* 140px reserved for native Windows titlebar buttons */
   height: 50px;
   min-height: 50px;
-  background: var(--s-glass);
+  background: var(--s-surface);
   backdrop-filter: blur(20px) saturate(1.2);
   -webkit-backdrop-filter: blur(20px) saturate(1.2);
   border-bottom: 1px solid var(--bo-light);
   gap: var(--sp-2);
   box-shadow: var(--sh-sm);
-  z-index: var(--z-sticky-top);
+  z-index: 10000;
   -webkit-app-region: drag;
   user-select: none;
 }

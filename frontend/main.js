@@ -5053,9 +5053,11 @@ function registerIpcHandlers() {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (win && typeof win.setTitleBarOverlay === 'function') {
       try {
-        win.setTitleBarOverlay(options);
+        const config = { ...options };
+        win.setTitleBarOverlay(config);
         return { success: true };
       } catch (err) {
+        console.warn('[TitleBar] Failed to set title bar overlay:', err.message);
         return { success: false, error: err.message };
       }
     }
@@ -6829,8 +6831,6 @@ function createWindow() {
     show: false,
     titleBarStyle: 'hidden',
     titleBarOverlay: {
-      // Light startup fallback; the renderer immediately applies the saved
-      // IntelliFile light/dark/system theme through setTitleBarOverlay.
       color: '#ffffff',
       symbolColor: '#1f2937',
       height: 44
