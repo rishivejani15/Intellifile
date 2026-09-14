@@ -1574,6 +1574,12 @@ let directoryIndexTimers = new Map();
 const _recentlyDeletedPaths = new Set();
 let pyModelLoaded = false;
 
+// Auto-restart tracking for the Python engine
+const PY_MAX_RESTART_ATTEMPTS = 3;
+const PY_BASE_RESTART_DELAY_MS = 1000;
+let pyRestartAttempts = 0;
+let pyRestartTimer = null;
+
 function sendToPython(payload, timeoutMs = 120000) {
   return new Promise((resolve) => {
     if (!pyProcess || !pyReady) {
@@ -1989,6 +1995,7 @@ function startPython() {
         pyReady = true;
         pyModelLoaded = false;
         pythonReadyForIndexing = false;
+        pyRestartAttempts = 0; // Reset restart counter on successful start
         console.log('[Python] ✅ Engine is ready — pyReady = true');
         sendToPython({ action: 'model_status' }, 10000).then((res) => {
           if (res && res.loaded) {
@@ -2092,6 +2099,35 @@ function startPython() {
     autoIndexRequested = false;
     indexInProgress = false;
     pythonReadyForIndexing = false;
+
+    // Auto-restart the engine if the exit was unexpected (not during app quit)
+    // The before-quit handler sets pyProcess = null before killing, so if
+    // pyProcess is still set here, the exit was unexpected (a crash).
+    if (!isAppQuitting && pyProcess) {
+      pyProcess = null;
+      if (pyRestartAttempts < PY_MAX_RESTART_ATTEMPTS) {
+        const delay = PY_BASE_RESTART_DELAY_MS * Math.pow(2, pyRestartAttempts);
+        pyRestartAttempts++;
+        console.warn(`[Python] Engine crashed (exit code ${code}). Auto-restarting in ${delay}ms (attempt ${pyRestartAttempts}/${PY_MAX_RESTART_ATTEMPTS})...`);
+        appendLog('Python', `Engine crashed — auto-restarting (attempt ${pyRestartAttempts}/${PY_MAX_RESTART_ATTEMPTS})...`, true, 'warning');
+        if (pyRestartTimer) clearTimeout(pyRestartTimer);
+        pyRestartTimer = setTimeout(() => {
+          pyRestartTimer = null;
+          // Reset indexing flags so auto-index can re-trigger after restart
+          autoIndexTriggeredThisSession = false;
+          startPython();
+        }, delay);
+      } else {
+        console.error(`[Python] Engine has crashed ${PY_MAX_RESTART_ATTEMPTS} times. Not restarting — manual app restart required.`);
+        appendLog('Python', `Engine crashed ${PY_MAX_RESTART_ATTEMPTS} times. Please restart the app.`, true, 'error');
+        pyEngineError = `Engine crashed repeatedly (${PY_MAX_RESTART_ATTEMPTS} times). Please restart the app.`;
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('engine-error', pyEngineError);
+        }
+      }
+    } else {
+      pyProcess = null;
+    }
   });
 }
 
@@ -7062,6 +7098,12 @@ app.on('before-quit', () => {
     clearTimeout(timer);
   }
   directoryIndexTimers.clear();
+
+  // Cancel any pending engine restart
+  if (pyRestartTimer) {
+    clearTimeout(pyRestartTimer);
+    pyRestartTimer = null;
+  }
 
   if (pyProcess) {
     console.log('[Python] Killing engine process');
