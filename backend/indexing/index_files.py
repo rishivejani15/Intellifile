@@ -169,36 +169,43 @@ def index_files_incremental(root_folder=None, progress_cb=None, allow_protected=
             cur.execute(f"DELETE FROM chunks WHERE file_id IN ({ph})", batch)
         cur.executemany("UPDATE files SET modified_time=? WHERE id=?", modified_updates)
 
-    # Bulk-insert new file rows
+    # Bulk-insert new file rows in batches of 100, committing after each batch
     if new_files_data:
-        cur.executemany(
-            """INSERT INTO files(
-                   path, filename, filename_key, modified_time, created_time, folder_path, folder_name
-               ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            new_files_data,
-        )
-        # Retrieve assigned IDs for new files
-        new_paths = [d[0] for d in new_files_data]
-        for i in range(0, len(new_paths), 500):
-            batch = new_paths[i:i + 500]
-            ph = ",".join("?" * len(batch))
-            cur.execute(f"SELECT path, id FROM files WHERE path IN ({ph})", batch)
+        for i in range(0, len(new_files_data), 100):
+            batch_data = new_files_data[i:i + 100]
+            cur.executemany(
+                """INSERT INTO files(
+                       path, filename, filename_key, modified_time, created_time, folder_path, folder_name
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                batch_data,
+            )
+            # Retrieve assigned IDs for new files in this batch
+            batch_paths = [d[0] for d in batch_data]
+            ph = ",".join("?" * len(batch_paths))
+            cur.execute(f"SELECT path, id FROM files WHERE path IN ({ph})", batch_paths)
             path_to_id = {r[0]: r[1] for r in cur.fetchall()}
-            for p, _, _, mt, _, _, _ in new_files_data[i:i + 500]:
-                files_to_process.append((p, mt, path_to_id[p]))
+            for p, _, _, mt, _, _, _ in batch_data:
+                if p in path_to_id:
+                    files_to_process.append((p, mt, path_to_id[p]))
 
-        # Keep the separate ancestor catalog current for folder queries.  A
-        # file under ``Computer Networks\\Study Material`` registers both
-        # folders without changing its stored content or embedding.
-        upsert_folder_catalog(cur, new_paths)
+            # Keep the separate ancestor catalog current for folder queries.  A
+            # file under ``Computer Networks\\Study Material`` registers both
+            # folders without changing its stored content or embedding.
+            upsert_folder_catalog(cur, batch_paths)
+            conn.commit()
 
     new_files = len(new_files_data)
     modified_files = len(modified_fids)
     conn.commit()  # commit file-row inserts/updates before extraction
 
     t_extract = time.perf_counter()
-    _progress("extract", f"Extracting text from {len(files_to_process)} files…", pct=0)
-    print(f"Files to extract: {len(files_to_process)}", flush=True)
+    if unchanged_files > 0:
+        start_pct = int(unchanged_files / total_scanned * 100) if total_scanned else 0
+        _progress("extract", f"Resuming: {unchanged_files} already indexed, extracting remaining {len(files_to_process)} files…", pct=start_pct)
+        print(f"Resuming indexing: {unchanged_files} files already extracted, {len(files_to_process)} remaining to extract.", flush=True)
+    else:
+        _progress("extract", f"Extracting text from {len(files_to_process)} files…", pct=0)
+        print(f"Files to extract: {len(files_to_process)}", flush=True)
 
     # ── Extract text in parallel (ThreadPool) ───────────────
     # ThreadPool is safe on low-RAM systems — no extra process overhead
@@ -215,6 +222,10 @@ def index_files_incremental(root_folder=None, progress_cb=None, allow_protected=
     extractor = partial(_extract_one, allow_protected=allow_protected)
 
     chunk_count_updates = []
+    skipped_fids_to_purge = []
+    last_flush_time = time.time()
+    last_progress_emit = 0.0
+
     with concurrent.futures.ThreadPoolExecutor(max_workers=_EXTRACT_WORKERS) as pool:
         batch_data = []  # accumulate (file_id, idx, chunk_text)
 
@@ -223,50 +234,87 @@ def index_files_incremental(root_folder=None, progress_cb=None, allow_protected=
             if not chunks:
                 if reason in _SKIP_REASONS:
                     skipped.append((path, reason))
+                    if fid is not None:
+                        skipped_fids_to_purge.append(fid)
                     if reason:
                         skipped_by_reason[reason] = skipped_by_reason.get(reason, 0) + 1
                 else:
                     # Textless file (e.g. image with no OCR text) — mark completed with 0 chunks
                     chunk_count_updates.append((0, fid))
                 processed += 1
-                continue
+            else:
+                chunk_count_updates.append((len(chunks), fid))
+                for idx, chunk in enumerate(chunks):
+                    batch_data.append((fid, idx, chunk))
+                processed += 1
 
-            chunk_count_updates.append((len(chunks), fid))
-            for idx, chunk in enumerate(chunks):
-                batch_data.append((fid, idx, chunk))
+            now = time.time()
+            # Flush to DB frequently (every 5 files, 25 chunks, or 1.5s) to guarantee durability against app exit
+            if (
+                len(chunk_count_updates) >= 5
+                or len(batch_data) >= 25
+                or skipped_fids_to_purge
+                or ((chunk_count_updates or batch_data) and now - last_flush_time >= 1.5)
+            ):
+                if batch_data:
+                    cur.executemany(
+                        "INSERT INTO chunks (file_id, chunk_index, text) VALUES (?, ?, ?)",
+                        batch_data,
+                    )
+                    batch_data.clear()
+                if chunk_count_updates:
+                    cur.executemany(
+                        "UPDATE files SET chunk_count = ? WHERE id = ?",
+                        chunk_count_updates,
+                    )
+                    chunk_count_updates.clear()
+                if skipped_fids_to_purge:
+                    for s_start in range(0, len(skipped_fids_to_purge), 500):
+                        s_batch = skipped_fids_to_purge[s_start:s_start + 500]
+                        s_ph = ",".join("?" * len(s_batch))
+                        cur.execute(f"SELECT id FROM chunks WHERE file_id IN ({s_ph})", s_batch)
+                        affected_chunk_ids.extend(r[0] for r in cur.fetchall())
+                        cur.execute(f"DELETE FROM chunks WHERE file_id IN ({s_ph})", s_batch)
+                        cur.execute(f"DELETE FROM files WHERE id IN ({s_ph})", s_batch)
+                    skipped_fids_to_purge.clear()
+                conn.commit()
+                last_flush_time = now
 
-            processed += 1
+            if now - last_progress_emit >= 0.2 or processed == total_to_extract:
+                time.sleep(0.001)  # Yield CPU slice to OS and UI scheduler
+                overall_done = unchanged_files + processed
+                pct = int(overall_done / total_scanned * 100) if total_scanned else 100
+                if unchanged_files > 0:
+                    detail = f"Extracted {overall_done}/{total_scanned} files ({processed}/{total_to_extract} remaining)"
+                else:
+                    detail = f"Extracted {processed}/{total_to_extract} files"
+                _progress("extract", detail, pct=pct)
+                print(f"  … {detail}", flush=True)
+                last_progress_emit = now
 
-            # Flush to DB in batches to keep memory low & allow progress
-            if len(batch_data) >= _BATCH_SIZE * 5:
+        # Flush remaining chunks, chunk_count updates, and skipped files
+        if batch_data or chunk_count_updates or skipped_fids_to_purge:
+            if batch_data:
                 cur.executemany(
                     "INSERT INTO chunks (file_id, chunk_index, text) VALUES (?, ?, ?)",
                     batch_data,
                 )
-                conn.commit()
                 batch_data.clear()
-
-            if processed % 10 == 0 or processed == total_to_extract:
-                time.sleep(0.001)  # Yield CPU slice to OS and UI scheduler
-                pct = int(processed / total_to_extract * 100) if total_to_extract else 100
-                _progress("extract", f"Extracted {processed}/{total_to_extract} files", pct=pct)
-                print(f"  … extracted {processed}/{total_to_extract} files", flush=True)
-
-        # Flush remaining chunks
-        if batch_data:
-            cur.executemany(
-                "INSERT INTO chunks (file_id, chunk_index, text) VALUES (?, ?, ?)",
-                batch_data,
-            )
-            conn.commit()
-
-        # Update chunk_count for all processed files
-        if chunk_count_updates:
-            for i in range(0, len(chunk_count_updates), 500):
+            if chunk_count_updates:
                 cur.executemany(
                     "UPDATE files SET chunk_count = ? WHERE id = ?",
-                    chunk_count_updates[i:i + 500],
+                    chunk_count_updates,
                 )
+                chunk_count_updates.clear()
+            if skipped_fids_to_purge:
+                for s_start in range(0, len(skipped_fids_to_purge), 500):
+                    s_batch = skipped_fids_to_purge[s_start:s_start + 500]
+                    s_ph = ",".join("?" * len(s_batch))
+                    cur.execute(f"SELECT id FROM chunks WHERE file_id IN ({s_ph})", s_batch)
+                    affected_chunk_ids.extend(r[0] for r in cur.fetchall())
+                    cur.execute(f"DELETE FROM chunks WHERE file_id IN ({s_ph})", s_batch)
+                    cur.execute(f"DELETE FROM files WHERE id IN ({s_ph})", s_batch)
+                skipped_fids_to_purge.clear()
             conn.commit()
 
     if skipped:
@@ -289,6 +337,10 @@ def index_files_incremental(root_folder=None, progress_cb=None, allow_protected=
         placeholders = ",".join("?" * len(batch))
         cur.execute(f"SELECT id FROM chunks WHERE file_id IN ({placeholders})", batch)
         affected_chunk_ids.extend(r[0] for r in cur.fetchall())
+
+    # Also collect any un-embedded chunks (e.g. from an interrupted previous run)
+    cur.execute("SELECT id FROM chunks WHERE embedded = 0")
+    affected_chunk_ids.extend(r[0] for r in cur.fetchall())
 
     # ── Handle deleted files ────────────────────────────
     deleted_fids = []

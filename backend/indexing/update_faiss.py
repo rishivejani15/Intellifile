@@ -12,7 +12,11 @@ _SQL_BATCH    = 5000       # rows per SQL IN (…) query
 
 def update_faiss(chunk_ids, progress_cb=None):
     if chunk_ids is None:
-        chunk_ids = []
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT id FROM chunks WHERE embedded = 0")
+        chunk_ids = [r[0] for r in cur.fetchall()]
+        conn.close()
 
     t0 = time.perf_counter()
 
@@ -64,31 +68,43 @@ def update_faiss(chunk_ids, progress_cb=None):
     _progress("embed", f"Embedding {total} chunks…", pct=0)
     batch_t0 = time.perf_counter()
 
-    for i in range(0, total, _ENCODE_BATCH):
-        batch_texts = texts[i:i + _ENCODE_BATCH]
-        batch_ids   = ids_exist[i:i + _ENCODE_BATCH]
+    try:
+        for i in range(0, total, _ENCODE_BATCH):
+            batch_texts = texts[i:i + _ENCODE_BATCH]
+            batch_ids   = ids_exist[i:i + _ENCODE_BATCH]
 
-        embs = MODEL.encode(
-            batch_texts,
-            normalize_embeddings=True,
-            batch_size=_ENCODE_MINI,
-            show_progress_bar=False,
-        ).astype("float32")
+            embs = MODEL.encode(
+                batch_texts,
+                normalize_embeddings=True,
+                batch_size=_ENCODE_MINI,
+                show_progress_bar=False,
+            ).astype("float32")
 
-        index.add_with_ids(embs, batch_ids)
-        time.sleep(0.005)  # Yield CPU slice between embedding batches to keep UI fluid
+            index.add_with_ids(embs, batch_ids)
+            time.sleep(0.005)  # Yield CPU slice between embedding batches to keep UI fluid
 
-        done = min(i + _ENCODE_BATCH, total)
-        pct = int(done / total * 100)
-        elapsed = time.perf_counter() - batch_t0
-        speed = done / elapsed if elapsed > 0 else 0
-        eta = int((total - done) / speed) if speed > 0 else 0
-        eta_str = f"{eta // 60}m {eta % 60}s" if eta >= 60 else f"{eta}s"
-        detail = f"Embedded {done}/{total} chunks ({speed:.0f}/sec, ETA {eta_str})"
-        _progress("embed", detail, pct=pct)
-        print(f"  … {detail}", flush=True)
+            # Incremental checkpoint: save FAISS index and mark chunks as embedded
+            save_index(index)
+            batch_id_list = [int(bid) for bid in batch_ids]
+            for b_start in range(0, len(batch_id_list), 500):
+                b_slice = batch_id_list[b_start:b_start + 500]
+                ph = ",".join("?" * len(b_slice))
+                cur.execute(f"UPDATE chunks SET embedded = 1 WHERE id IN ({ph})", b_slice)
+            conn.commit()
 
-    save_index(index)
-    conn.close()
+            done = min(i + _ENCODE_BATCH, total)
+            pct = int(done / total * 100)
+            elapsed = time.perf_counter() - batch_t0
+            speed = done / elapsed if elapsed > 0 else 0
+            eta = int((total - done) / speed) if speed > 0 else 0
+            eta_str = f"{eta // 60}m {eta % 60}s" if eta >= 60 else f"{eta}s"
+            detail = f"Embedded {done}/{total} chunks ({speed:.0f}/sec, ETA {eta_str})"
+            _progress("embed", detail, pct=pct)
+            print(f"  … {detail}", flush=True)
+
+        save_index(index)
+    finally:
+        conn.close()
+
     embed_secs = time.perf_counter() - t0
     print(f"FAISS updated for {len(ids_exist)} chunks in {embed_secs:.1f}s.")

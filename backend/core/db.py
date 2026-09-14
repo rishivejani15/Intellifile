@@ -22,7 +22,9 @@ DEFAULT_SETTINGS = {
 
 # Resolve data directory relative to this file's location
 _BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_DB_PATH = os.path.join(os.getenv("IF_DATA_DIR", os.path.join(_BACKEND_DIR, 'data')), 'files.db')
+_DATA_DIR = os.getenv("IF_DATA_DIR", os.path.join(_BACKEND_DIR, 'data'))
+_DB_PATH = os.path.join(_DATA_DIR, 'files.db')
+_FAISS_PATH = os.path.join(_DATA_DIR, 'vectors.faiss')
 _FOLDER_CATALOG_VERSION = "v3"
 
 
@@ -127,6 +129,7 @@ def init_db():
                     file_id INTEGER,
                     chunk_index INTEGER,
                     text TEXT,
+                    embedded INTEGER DEFAULT 0,
                     FOREIGN KEY(file_id) REFERENCES files(id)
                 )
                 ''')
@@ -231,9 +234,23 @@ def init_db():
     except Exception:
         pass  # Column already exists
 
+    # Safe migration: add embedded flag column to chunks table
+    newly_added_embedded = False
+    try:
+        cur.execute("ALTER TABLE chunks ADD COLUMN embedded INTEGER DEFAULT 0")
+        newly_added_embedded = True
+    except Exception:
+        pass  # Column already exists
+
+    # Option (A): If column was newly added and FAISS index already exists on disk,
+    # mark existing chunks as embedded = 1 so we avoid re-embedding existing index on upgrade.
+    if newly_added_embedded and os.path.exists(_FAISS_PATH) and os.path.getsize(_FAISS_PATH) > 0:
+        cur.execute("UPDATE chunks SET embedded = 1")
+
     # Indexes for fast lookups during incremental indexing
     cur.execute('CREATE INDEX IF NOT EXISTS idx_files_path ON files(path)')
     cur.execute('CREATE INDEX IF NOT EXISTS idx_chunks_file_id ON chunks(file_id)')
+    cur.execute('CREATE INDEX IF NOT EXISTS idx_chunks_embedded ON chunks(embedded)')
     cur.execute('CREATE INDEX IF NOT EXISTS idx_files_created ON files(created_time)')
     cur.execute('CREATE INDEX IF NOT EXISTS idx_files_chunk_count ON files(chunk_count)')
     cur.execute('CREATE INDEX IF NOT EXISTS idx_files_folder_name ON files(folder_name COLLATE NOCASE)')

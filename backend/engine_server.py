@@ -176,9 +176,63 @@ def _background_indexer():
                 break
             
             _current_index_job = job
-            req_id = job['req_id']
-            folder = job['folder']
-            allow_protected = job['allow_protected']
+            req_id = job.get('req_id', '')
+            action_type = job.get('action')
+
+            if action_type == 'resume_faiss':
+                try:
+                    from indexing.update_faiss import update_faiss
+                    from core.faiss_manager import load_index, invalidate_cache
+                    import time as _time
+
+                    sys.stderr.write("[engine-bg] Resuming FAISS embedding for un-embedded chunks\n")
+                    sys.stderr.flush()
+                    _t_total = _time.perf_counter()
+                    _last_progress_emit = 0.0
+
+                    def emit_resume_progress(phase, detail="", pct=None):
+                        nonlocal _last_progress_emit
+                        now = _time.perf_counter()
+                        is_terminal = phase in ("done", "error") or pct == 100 or pct == 0
+                        if not is_terminal and (now - _last_progress_emit < 0.25):
+                            return
+                        _last_progress_emit = now
+                        payload = {
+                            "_id": req_id,
+                            "type": "progress",
+                            "phase": phase,
+                            "detail": detail,
+                        }
+                        if pct is not None:
+                            payload["pct"] = pct
+                        with _stdout_lock:
+                            print(json.dumps(payload), flush=True)
+
+                    update_faiss(None, progress_cb=emit_resume_progress)
+                    invalidate_cache()
+                    load_index(force_reload=True)
+                    total_secs = round(_time.perf_counter() - _t_total, 1)
+                    emit_resume_progress("done", f"FAISS resume complete in {total_secs}s", pct=100)
+                    with _stdout_lock:
+                        print(json.dumps({
+                            "_id": req_id,
+                            "status": "indexed",
+                            "action": "resume_faiss",
+                            "total_secs": total_secs,
+                        }), flush=True)
+                    sys.stderr.write(f"[engine-bg] Resumed FAISS embedding completed in {total_secs}s\n")
+                    sys.stderr.flush()
+                except Exception as e:
+                    sys.stderr.write(f"[engine-bg] Resuming FAISS embedding failed: {e}\n")
+                    sys.stderr.flush()
+                    with _stdout_lock:
+                        print(json.dumps({"_id": req_id, "error": f"FAISS resume failed: {e}"}), flush=True)
+                finally:
+                    _current_index_job = None
+                continue
+
+            folder = job.get('folder')
+            allow_protected = job.get('allow_protected', False)
             
             try:
                 from indexing.index_files import index_files_incremental
@@ -282,7 +336,43 @@ def _warm_faiss_index():
         sys.stderr.write(f"[engine] FAISS warmup skipped: {e}\n")
     sys.stderr.flush()
 
+def _startup_resume_check():
+    try:
+        import time as _time
+        _time.sleep(1.0)
+        # If an indexing job is already in progress or queued (e.g. from launch auto-indexing), skip
+        if _current_index_job is not None or not _index_queue.empty():
+            return
+        from core.db import get_connection
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*) FROM files WHERE chunk_count IS NULL")
+        unextracted_count = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM chunks WHERE embedded = 0")
+        unembedded_count = cur.fetchone()[0]
+        conn.close()
+
+        if unextracted_count > 0:
+            sys.stderr.write(f"[engine] Found {unextracted_count} unextracted files on startup; queueing resume indexing\n")
+            sys.stderr.flush()
+            _index_queue.put({
+                'req_id': 'startup-resume-index',
+                'folder': None,
+                'allow_protected': False,
+            })
+        elif unembedded_count > 0:
+            sys.stderr.write(f"[engine] Found {unembedded_count} un-embedded chunks on startup; queueing FAISS resume\n")
+            sys.stderr.flush()
+            _index_queue.put({
+                'req_id': 'startup-resume-faiss',
+                'action': 'resume_faiss',
+            })
+    except Exception as e:
+        sys.stderr.write(f"[engine] Startup resume check warning: {e}\n")
+        sys.stderr.flush()
+
 threading.Thread(target=_warm_faiss_index, daemon=True).start()
+threading.Thread(target=_startup_resume_check, daemon=True).start()
 
 
 while True:
@@ -418,6 +508,37 @@ while True:
                     print(json.dumps({"_id": req_id, "error": "Indexing queue full - another indexing job is in progress"}), flush=True)
             except Exception as e:
                 print(json.dumps({"_id": req_id, "error": f"Indexing submission failed: {e}"}), flush=True)
+
+        elif action in ("resume_indexing", "resume_index"):
+            try:
+                from core.db import get_connection
+                conn = get_connection()
+                cur = conn.cursor()
+                cur.execute("SELECT COUNT(*) FROM files WHERE chunk_count IS NULL")
+                unextracted_count = cur.fetchone()[0]
+                cur.execute("SELECT COUNT(*) FROM chunks WHERE embedded = 0")
+                unembedded_count = cur.fetchone()[0]
+                conn.close()
+
+                if unextracted_count > 0:
+                    _index_queue.put_nowait({
+                        'req_id': req_id,
+                        'folder': request.get("folder"),
+                        'allow_protected': bool(request.get("allow_protected")),
+                    })
+                    print(json.dumps({"_id": req_id, "type": "progress", "phase": "queued", "detail": f"Resume indexing queued ({unextracted_count} unextracted files)"}), flush=True)
+                elif unembedded_count > 0:
+                    _index_queue.put_nowait({
+                        'req_id': req_id,
+                        'action': 'resume_faiss',
+                    })
+                    print(json.dumps({"_id": req_id, "type": "progress", "phase": "queued", "detail": f"Resume FAISS queued ({unembedded_count} un-embedded chunks)"}), flush=True)
+                else:
+                    print(json.dumps({"_id": req_id, "status": "indexed", "detail": "Index is fully up to date, nothing to resume."}), flush=True)
+            except queue.Full:
+                print(json.dumps({"_id": req_id, "error": "Indexing queue full - another indexing job is in progress"}), flush=True)
+            except Exception as e:
+                print(json.dumps({"_id": req_id, "error": f"Resume indexing submission failed: {e}"}), flush=True)
 
         elif action == "index_file":
             try:

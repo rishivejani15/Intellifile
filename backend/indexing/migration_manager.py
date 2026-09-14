@@ -138,6 +138,15 @@ def upgrade_model_embeddings(target_version=EMBEDDING_PIPELINE_VERSION, progress
     invalidate_cache()
     load_index(force_reload=True)
 
+    # Mark all chunks as embedded since new index contains all vectors
+    try:
+        conn = get_connection()
+        conn.execute("UPDATE chunks SET embedded = 1")
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
     elapsed_total = time.perf_counter() - t0
     success_msg = f"Search engine upgrade complete! Re-embedded {total_chunks} chunks in {elapsed_total:.1f}s."
     _notify("done", success_msg, 100)
