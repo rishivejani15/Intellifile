@@ -358,29 +358,45 @@ ipcMain.handle('get-app-version', () => {
 
 ipcMain.handle('get-system-info', () => {
   const os = require('os');
+  const crypto = require('crypto');
   let username = 'Unknown User';
   let hostname = 'Unknown PC';
   try { username = os.userInfo()?.username || 'Unknown User'; } catch (_) {}
   try { hostname = os.hostname() || 'Unknown PC'; } catch (_) {}
 
-  // Read or create a persistent device ID stored on disk (%APPDATA%/intellifile/device_id.json)
+  // Generate a deterministic hardware fingerprint tied to CPU arch, platform, PC name, and OS user
+  const rawId = `${hostname.toLowerCase()}_${username.toLowerCase()}_${os.platform()}_${os.arch()}`;
+  const hardwareHash = crypto.createHash('sha256').update(rawId).digest('hex').substring(0, 16);
+  const authenticDeviceId = `idx_${hardwareHash}`;
+
+  // Signature verification salt to prevent manual file editing
+  const SALT = 'intellifile_device_integrity_key_v1';
+  const computeSignature = (id) => crypto.createHmac('sha256', SALT).update(id).digest('hex');
+
   const deviceIdPath = path.join(app.getPath('userData'), 'device_id.json');
   let deviceId = null;
   let isNewDevice = false;
+
   try {
     if (fs.existsSync(deviceIdPath)) {
       const parsed = JSON.parse(fs.readFileSync(deviceIdPath, 'utf8'));
-      if (parsed && parsed.deviceId) {
+      if (parsed && parsed.deviceId && parsed.signature === computeSignature(parsed.deviceId)) {
         deviceId = parsed.deviceId;
+      } else {
+        console.warn('[SystemInfo] Tampered or invalid device_id.json detected. Resetting to hardware fingerprint.');
       }
     }
   } catch (_) {}
 
   if (!deviceId) {
-    deviceId = 'idx_' + Math.random().toString(36).substring(2, 11) + '_' + Date.now().toString(36);
+    deviceId = authenticDeviceId;
     isNewDevice = true;
     try {
-      fs.writeFileSync(deviceIdPath, JSON.stringify({ deviceId, createdAt: Date.now() }), 'utf8');
+      fs.writeFileSync(
+        deviceIdPath,
+        JSON.stringify({ deviceId, signature: computeSignature(deviceId), createdAt: Date.now() }),
+        'utf8'
+      );
     } catch (_) {}
   }
 

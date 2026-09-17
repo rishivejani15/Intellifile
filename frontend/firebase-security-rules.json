@@ -1,0 +1,37 @@
+{
+  "rules": {
+    "installs": {
+      "$instanceId": {
+        ".read": true,
+        ".write": true,
+        "appVersion": {
+          ".validate": "newData.isString() && newData.val().length <= 20"
+        },
+        "computerName": {
+          ".validate": "newData.isString() && newData.val().length <= 100"
+        },
+        "username": {
+          ".validate": "newData.isString() && newData.val().length <= 100"
+        },
+        "platform": {
+          ".validate": "newData.isString() && newData.val().length <= 30"
+        }
+      }
+    },
+    "metrics": {
+      "total_downloads": {
+        ".read": true,
+        ".write": "newData.val() == (data.val() || 0) + 1"
+      }
+    },
+    "online_users": {
+      "$instanceId": {
+        ".read": true,
+        ".write": true,
+        "online": {
+          ".validate": "newData.isBoolean()"
+        }
+      }
+    }
+  }
+}
