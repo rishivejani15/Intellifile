@@ -362,6 +362,28 @@ ipcMain.handle('get-system-info', () => {
   let hostname = 'Unknown PC';
   try { username = os.userInfo()?.username || 'Unknown User'; } catch (_) {}
   try { hostname = os.hostname() || 'Unknown PC'; } catch (_) {}
+
+  // Read or create a persistent device ID stored on disk (%APPDATA%/intellifile/device_id.json)
+  const deviceIdPath = path.join(app.getPath('userData'), 'device_id.json');
+  let deviceId = null;
+  let isNewDevice = false;
+  try {
+    if (fs.existsSync(deviceIdPath)) {
+      const parsed = JSON.parse(fs.readFileSync(deviceIdPath, 'utf8'));
+      if (parsed && parsed.deviceId) {
+        deviceId = parsed.deviceId;
+      }
+    }
+  } catch (_) {}
+
+  if (!deviceId) {
+    deviceId = 'idx_' + Math.random().toString(36).substring(2, 11) + '_' + Date.now().toString(36);
+    isNewDevice = true;
+    try {
+      fs.writeFileSync(deviceIdPath, JSON.stringify({ deviceId, createdAt: Date.now() }), 'utf8');
+    } catch (_) {}
+  }
+
   return {
     hostname,
     username,
@@ -369,6 +391,8 @@ ipcMain.handle('get-system-info', () => {
     release: os.release(),
     arch: os.arch(),
     appVersion: app.getVersion() || '1.0.4',
+    deviceId,
+    isNewDevice,
   };
 });
 
