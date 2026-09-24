@@ -97,17 +97,16 @@ def _finish_document_preview(req_id, future):
         _preview_slots.release()
 
 def get_version_engine():
-    global _version_engine
-    if _version_engine is None:
-        try:
-            from core.versioning.version_engine import VersionEngine
-            _version_engine = VersionEngine()
-        except Exception as e:
-            sys.stderr.write(f"[engine] VersionEngine Lazy Init Error: {e}\n")
-            class MockVE:
-                def process_and_save(self, *args): return {"error": f"Init failed: {e}"}
-            _version_engine = MockVE()
-    return _version_engine
+    try:
+        import importlib
+        import core.versioning.version_engine as version_engine
+        version_engine = importlib.reload(version_engine)
+        return version_engine.VersionEngine()
+    except Exception as e:
+        sys.stderr.write(f"[engine] VersionEngine Init Error: {e}\n")
+        class MockVE:
+            def process_and_save(self, *args): return {"error": f"Init failed: {e}"}
+        return MockVE()
 
 # Background indexing queue and lock
 _index_queue = queue.Queue(maxsize=10)
@@ -846,8 +845,12 @@ while True:
                 import os
                 file_path = request.get("file_path")
                 
-                # Auto-sync external changes
-                if file_path and os.path.exists(file_path):
+                if not file_path or not os.path.isfile(file_path):
+                    print(json.dumps({"_id": req_id, "success": True, "data": []}), flush=True)
+                    continue
+
+                # Auto-sync external changes safely
+                try:
                     ext = os.path.splitext(file_path)[1].lower()
                     is_binary = ext in [".docx", ".doc", ".xlsx", ".xls", ".pdf", ".zip", ".pptx", ".pptm", ".ppt", ".odt", ".rtf"]
                     current_content = None
@@ -885,6 +888,8 @@ while True:
                                 ve.process_and_save(file_path, old_content, file_path)
                             else:
                                 ve.process_and_save(file_path, old_content, current_content)
+                except Exception as sync_err:
+                    print(f"[engine_server] get_versions auto-sync warning: {sync_err}", flush=True)
 
                 versions = list_versions(file_path)
                 print(json.dumps({"_id": req_id, "success": True, "data": versions}), flush=True)
@@ -917,11 +922,20 @@ while True:
             
         elif action == "compare_versions":
             try:
-                from core.versioning.snapshot_manager import compare_versions
+                import importlib
+                import parsers.word_parser as word_parser
+                import core.versioning.word_diff_engine as word_diff_engine
+                import core.versioning.version_engine as version_engine
+                import core.versioning.snapshot_manager as snapshot_manager
+                importlib.reload(word_parser)
+                importlib.reload(word_diff_engine)
+                importlib.reload(version_engine)
+                snapshot_manager = importlib.reload(snapshot_manager)
+
                 file_path = request.get("file_path")
                 version_a = request.get("version_a")
                 version_b = request.get("version_b")
-                result = compare_versions(file_path, version_a, version_b)
+                result = snapshot_manager.compare_versions(file_path, version_a, version_b)
                 print(json.dumps({"_id": req_id, "success": True, "data": result}), flush=True)
             except Exception as e:
                 print(json.dumps({"_id": req_id, "error": str(e)}), flush=True)

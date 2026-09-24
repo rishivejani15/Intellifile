@@ -196,55 +196,37 @@ const VersionTimeline = ({ filePath }) => {
     return null;
   }
 
-  // Block versioning for binary, image, system, and executable file types
-  const blockedExts = new Set([
-    '.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.ico', '.svg', '.tiff', '.heic', // images
-    '.exe', '.dll', '.sys', '.msi', '.com', '.scr',                                      // executables/system
-    '.lnk', '.url', '.shortcut',                                                          // shortcuts
-    '.mp4', '.mp3', '.avi', '.mkv', '.mov', '.wav', '.flac', '.aac',                     // media
-    '.zip', '.rar', '.7z', '.tar', '.gz', '.pak', '.bin', '.backup',                    // archives and application data
-    '.ppt', '.pptm',                                                                       // presentations (not .pptx)
+  // Supported file extensions for version control
+  const supportedExts = new Set([
+    // Text and Code files
+    '.txt', '.md', '.json', '.csv', '.py', '.js', '.jsx', '.ts', '.tsx',
+    '.html', '.htm', '.css', '.scss', '.less', '.java', '.c', '.cpp', '.h',
+    '.hpp', '.cs', '.go', '.rs', '.rb', '.php', '.sh', '.bash', '.yml',
+    '.yaml', '.xml', '.ini', '.cfg', '.conf', '.sql', '.bat', '.ps1',
+    '.log', '.env', '.gitignore', '.toml', '.vue', '.svelte', '.rtf',
+    // Word documents
+    '.docx', '.doc',
+    // Excel spreadsheets
+    '.xlsx', '.xls',
   ]);
+
+  const specialSupportedNames = new Set([
+    'dockerfile', 'makefile', 'license', 'readme', '.gitignore', '.env', '.dockerignore'
+  ]);
+
+  const comingSoonExts = new Set([
+    '.pptx', '.ppt', '.pptm', '.pps', '.ppsx'
+  ]);
+
   const getExt = (p) => {
     const idx = p.lastIndexOf('.');
     return idx >= 0 ? p.slice(idx).toLowerCase() : '';
   };
+
   const fileExt = getExt(filePath);
   const fileName = filePath.split(/[\\/]/).pop() || filePath;
+  const lowerFileName = fileName.toLowerCase();
 
-  const extIconMap = {
-    // Images
-    '.jpg': '🖼️', '.jpeg': '🖼️', '.png': '🖼️', '.gif': '🎞️', '.bmp': '🖼️',
-    '.webp': '🖼️', '.ico': '🖼️', '.svg': '🎨', '.tiff': '🖼️', '.heic': '🖼️',
-    // Executables
-    '.exe': '⚙️', '.dll': '⚙️', '.sys': '🔧', '.msi': '📦', '.com': '⚙️', '.scr': '🖥️',
-    // Shortcuts
-    '.lnk': '🔗', '.url': '🔗', '.shortcut': '🔗',
-    // Media
-    '.mp4': '🎬', '.avi': '🎬', '.mkv': '🎬', '.mov': '🎬',
-    '.mp3': '🎵', '.wav': '🎵', '.flac': '🎵', '.aac': '🎵',
-    // Archives
-    '.zip': '🗜️', '.rar': '🗜️', '.7z': '🗜️', '.tar': '🗜️', '.gz': '🗜️',
-    '.pak': '📦', '.bin': '📦', '.backup': '💾',
-    // Presentations
-    '.ppt': '📊', '.pptm': '📊',
-  };
-  const extLabelMap = {
-    '.jpg': 'JPEG Image', '.jpeg': 'JPEG Image', '.png': 'PNG Image', '.gif': 'GIF Image',
-    '.bmp': 'Bitmap Image', '.webp': 'WebP Image', '.ico': 'Icon File', '.svg': 'SVG Vector',
-    '.tiff': 'TIFF Image', '.heic': 'HEIC Image',
-    '.exe': 'Executable', '.dll': 'System Library', '.sys': 'System File', '.msi': 'Installer',
-    '.com': 'Executable', '.scr': 'Screensaver',
-    '.lnk': 'Windows Shortcut', '.url': 'URL Shortcut', '.shortcut': 'Shortcut',
-    '.mp4': 'MP4 Video', '.avi': 'AVI Video', '.mkv': 'MKV Video', '.mov': 'QuickTime Video',
-    '.mp3': 'MP3 Audio', '.wav': 'WAV Audio', '.flac': 'FLAC Audio', '.aac': 'AAC Audio',
-    '.zip': 'ZIP Archive', '.rar': 'RAR Archive', '.7z': '7-Zip Archive',
-    '.tar': 'TAR Archive', '.gz': 'GZip Archive',
-    '.pak': 'Package File', '.bin': 'Binary File', '.backup': 'Backup File',
-    '.ppt': 'PowerPoint', '.pptm': 'PowerPoint Macro',
-  };
-
-  const comingSoonExts = new Set(['.pptx', '.ppt', '.pptm']);
   if (comingSoonExts.has(fileExt)) {
     return (
       <div className="versioning-unavailable-wrapper">
@@ -272,9 +254,46 @@ const VersionTimeline = ({ filePath }) => {
     );
   }
 
-  if (blockedExts.has(fileExt)) {
-    const icon = extIconMap[fileExt] || '🚫';
-    const label = extLabelMap[fileExt] || fileExt.toUpperCase().replace('.', '') + ' File';
+  const isSupported = supportedExts.has(fileExt) || specialSupportedNames.has(lowerFileName);
+
+  if (!isSupported) {
+    const extIconMap = {
+      // Images
+      '.jpg': '🖼️', '.jpeg': '🖼️', '.png': '🖼️', '.gif': '🎞️', '.bmp': '🖼️',
+      '.webp': '🖼️', '.ico': '🖼️', '.svg': '🎨', '.tiff': '🖼️', '.heic': '🖼️',
+      // Executables
+      '.exe': '⚙️', '.dll': '⚙️', '.sys': '🔧', '.msi': '📦', '.com': '⚙️', '.scr': '🖥️',
+      // Shortcuts
+      '.lnk': '🔗', '.url': '🔗', '.shortcut': '🔗',
+      // Media
+      '.mp4': '🎬', '.avi': '🎬', '.mkv': '🎬', '.mov': '🎬',
+      '.mp3': '🎵', '.wav': '🎵', '.flac': '🎵', '.aac': '🎵',
+      // Archives
+      '.zip': '🗜️', '.rar': '🗜️', '.7z': '🗜️', '.tar': '🗜️', '.gz': '🗜️',
+      '.pak': '📦', '.bin': '📦', '.backup': '💾',
+      // PDF
+      '.pdf': '📄',
+    };
+    const extLabelMap = {
+      '.jpg': 'JPEG Image', '.jpeg': 'JPEG Image', '.png': 'PNG Image', '.gif': 'GIF Image',
+      '.bmp': 'Bitmap Image', '.webp': 'WebP Image', '.ico': 'Icon File', '.svg': 'SVG Vector',
+      '.tiff': 'TIFF Image', '.heic': 'HEIC Image',
+      '.exe': 'Executable', '.dll': 'System Library', '.sys': 'System File', '.msi': 'Installer',
+      '.com': 'Executable', '.scr': 'Screensaver',
+      '.lnk': 'Windows Shortcut', '.url': 'URL Shortcut', '.shortcut': 'Shortcut',
+      '.mp4': 'MP4 Video', '.avi': 'AVI Video', '.mkv': 'MKV Video', '.mov': 'QuickTime Video',
+      '.mp3': 'MP3 Audio', '.wav': 'WAV Audio', '.flac': 'FLAC Audio', '.aac': 'AAC Audio',
+      '.zip': 'ZIP Archive', '.rar': 'RAR Archive', '.7z': '7-Zip Archive',
+      '.tar': 'TAR Archive', '.gz': 'GZip Archive',
+      '.pak': 'Package File', '.bin': 'Binary File', '.backup': 'Backup File',
+      '.pdf': 'PDF Document',
+    };
+
+    const icon = extIconMap[fileExt] || (fileExt ? '🚫' : '📁');
+    const displayExtLabel = fileExt
+      ? (extLabelMap[fileExt] || `${fileExt.toUpperCase().replace('.', '')} File`)
+      : 'Folder / System Item';
+
     return (
       <div className="versioning-unavailable-wrapper">
         <div className="versioning-unavailable-card">
@@ -284,18 +303,18 @@ const VersionTimeline = ({ filePath }) => {
               <span>!</span>
             </div>
           </div>
-          <h3 className="versioning-unavailable-title">Versioning Unavailable</h3>
+          <h3 className="versioning-unavailable-title">No Version Control Available</h3>
           <p className="versioning-unavailable-subtitle">
-            <span className="versioning-unavailable-ext-chip">{label}</span>
+            <span className="versioning-unavailable-ext-chip">{displayExtLabel}</span>
           </p>
           <p className="versioning-unavailable-desc">
-            Version history is not supported for <strong>{fileName}</strong>.
+            No version control is available for <strong>{fileName}</strong>.
             <br />
-            Only text-based and document files can be tracked.
+            Version history is supported for text files, code, Word (.docx/.doc), and Excel (.xlsx/.xls) spreadsheets.
           </p>
           <div className="versioning-unavailable-supported-label">Supported types include</div>
           <div className="versioning-unavailable-supported-list">
-            {['.txt', '.js', '.py', '.md', '.json', '.csv', '.html', '.css', '.docx', '.xlsx'].map(ext => (
+            {['.txt', '.js', '.py', '.md', '.json', '.csv', '.docx', '.xlsx'].map(ext => (
               <span key={ext} className="versioning-supported-chip">{ext}</span>
             ))}
             <span className="versioning-supported-chip">and more…</span>

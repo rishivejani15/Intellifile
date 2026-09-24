@@ -3,8 +3,11 @@ import json
 from utils.file_hash import generate_sha256
 from core.paths import get_storage_dir
 
-BASE_VERSION_PATH = os.path.join(get_storage_dir(), "versions")
-BACKUP_STORAGE_PATH = os.path.join(get_storage_dir(), "backups")
+def get_base_version_path():
+    return os.path.join(get_storage_dir(), "versions")
+
+def get_backup_storage_path():
+    return os.path.join(get_storage_dir(), "backups")
 
 def restore_version(file_path: str, version_timestamp: str) -> dict:
     """
@@ -14,7 +17,7 @@ def restore_version(file_path: str, version_timestamp: str) -> dict:
     # Robust path normalization
     from core.versioning.snapshot_manager import get_file_id
     file_identifier = get_file_id(file_path)
-    file_dir = os.path.join(BASE_VERSION_PATH, file_identifier)
+    file_dir = os.path.join(get_base_version_path(), file_identifier)
 
     meta_file = os.path.join(file_dir, f"{version_timestamp}.json")
     if not os.path.exists(meta_file):
@@ -67,7 +70,7 @@ def restore_version(file_path: str, version_timestamp: str) -> dict:
             import shutil
             from datetime import datetime, timezone
 
-            backup_dir = os.path.join(BACKUP_STORAGE_PATH, file_identifier)
+            backup_dir = os.path.join(get_backup_storage_path(), file_identifier)
             os.makedirs(backup_dir, exist_ok=True)
 
             ts_str = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S%f")

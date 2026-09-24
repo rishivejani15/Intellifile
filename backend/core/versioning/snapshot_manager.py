@@ -7,8 +7,14 @@ from core.versioning.text_diff_engine import generate_diff
 from core.paths import get_storage_dir
 
 
-BASE_VERSION_PATH = os.path.join(get_storage_dir(), "versions")
-INDEX_VERSION_PATH = os.path.join(get_storage_dir(), "version_index")
+def get_base_version_path():
+    return os.path.join(get_storage_dir(), "versions")
+
+def get_index_version_dir():
+    return os.path.join(get_storage_dir(), "version_index")
+
+BASE_VERSION_PATH = get_base_version_path()
+INDEX_VERSION_PATH = get_index_version_dir()
 
 # Clear transient cache on startup to reclaim space
 CACHE_PATH = os.path.join(get_storage_dir(), "cache")
@@ -26,9 +32,12 @@ def get_file_id(file_path: str) -> str:
 
 def compute_file_hash(content_or_path: Any, is_binary: bool = False) -> str:
     if is_binary:
-        if os.path.exists(content_or_path):
-            with open(content_or_path, "rb") as f:
-                return generate_sha256(f.read().decode('latin-1', errors='ignore'))
+        if isinstance(content_or_path, str) and os.path.isfile(content_or_path):
+            try:
+                with open(content_or_path, "rb") as f:
+                    return generate_sha256(f.read().decode('latin-1', errors='ignore'))
+            except Exception:
+                return generate_sha256(str(content_or_path))
         else:
             return generate_sha256(str(content_or_path))
     else:
@@ -37,8 +46,9 @@ def compute_file_hash(content_or_path: Any, is_binary: bool = False) -> str:
 
 def get_version_index_path(file_path: str) -> str:
     file_id = get_file_id(file_path)
-    ensure_directory(INDEX_VERSION_PATH)
-    return os.path.join(INDEX_VERSION_PATH, f"{file_id}.json")
+    index_dir = get_index_version_dir()
+    ensure_directory(index_dir)
+    return os.path.join(index_dir, f"{file_id}.json")
 
 def update_version_index(file_path: str, version_data: dict, add_version=True):
     index_path = get_version_index_path(file_path)
@@ -148,7 +158,7 @@ def create_version(file_path: str, content_or_path: Any, metadata: dict):
         "storage_type": storage_type,
         "file_hash": metadata.get("file_hash", current_hash),
         "timestamp": actual_timestamp,
-        "snapshot_path": os.path.join(BASE_VERSION_PATH, get_file_id(file_path), f"{actual_timestamp}{ext}"),
+        "snapshot_path": os.path.join(get_base_version_path(), get_file_id(file_path), f"{actual_timestamp}{ext}"),
         "diff_path": None,
         "summary": metadata.get("summary", ""),
         "intent": metadata.get("intent", ""),
@@ -169,10 +179,8 @@ def save_snapshot(file_path: str, content_or_path: Any, metadata: dict, custom_t
     content_or_path: Can be string (text) or path to binary file.
     """
 
-    # Robust path normalization
-    norm_path = os.path.normpath(os.path.realpath(file_path)).lower()
-    file_identifier = generate_sha256(norm_path)
-    file_dir = os.path.join(BASE_VERSION_PATH, file_identifier)
+    file_identifier = get_file_id(file_path)
+    file_dir = os.path.join(get_base_version_path(), file_identifier)
 
     ensure_directory(file_dir)
 
@@ -260,10 +268,8 @@ def list_versions_legacy(file_path: str):
     Returns list of version metadata sorted by newest first.
     """
 
-    # Robust path normalization
-    norm_path = os.path.normpath(os.path.abspath(file_path)).lower()
-    file_identifier = generate_sha256(norm_path)
-    file_dir = os.path.join(BASE_VERSION_PATH, file_identifier)
+    file_identifier = get_file_id(file_path)
+    file_dir = os.path.join(get_base_version_path(), file_identifier)
 
     if not os.path.exists(file_dir):
         return []
@@ -310,10 +316,8 @@ def get_version_content(file_path: str, version_id: str):
     Returns content of specific version snapshot.
     Smartly detects extension from metadata or filesystem.
     """
-    # Robust path normalization
-    norm_path = os.path.normpath(os.path.abspath(file_path)).lower()
-    file_identifier = generate_sha256(norm_path)
-    file_dir = os.path.join(BASE_VERSION_PATH, file_identifier)
+    file_identifier = get_file_id(file_path)
+    file_dir = os.path.join(get_base_version_path(), file_identifier)
 
     # First try to find the extension from metadata (.json)
     meta_path = os.path.join(file_dir, f"{version_id}.json")

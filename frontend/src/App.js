@@ -316,17 +316,15 @@ function App() {
         }
 
         const canShowTour = await claimTour();
-        try { localStorage.setItem(TOUR_COMPLETED_KEY, 'true'); } catch (_) {}
         if (!canShowTour) {
+          try { localStorage.setItem(TOUR_COMPLETED_KEY, 'true'); } catch (_) {}
           if (active) setShowOnboardingTour(false);
           return;
         }
 
         if (active) setShowOnboardingTour(true);
       } catch (_) {
-        const canShowTour = await claimTour().catch(() => false);
-        try { localStorage.setItem(TOUR_COMPLETED_KEY, 'true'); } catch (_) {}
-        if (active) setShowOnboardingTour(Boolean(canShowTour));
+        if (active) setShowOnboardingTour(false);
       }
     };
 

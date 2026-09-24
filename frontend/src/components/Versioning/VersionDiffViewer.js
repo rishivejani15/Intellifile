@@ -46,11 +46,78 @@ const VersionDiffViewer = ({ diffText, versionA, versionB, onClose }) => {
                                         <div className={`stat-item tables ${diffText.table_delta < 0 ? 'removed' : 'added'}`}>
                                             {diffText.table_delta !== 0 ? `${diffText.table_delta > 0 ? '+' : ''}${diffText.table_delta} Tables` : 'No table changes'}
                                         </div>
+                                        {diffText.image_stats && (diffText.image_stats.added > 0 || diffText.image_stats.removed > 0 || diffText.image_stats.modified > 0) && (
+                                            <div className="stat-item images">
+                                                🖼️ {diffText.image_stats.added > 0 ? `+${diffText.image_stats.added} ` : ''}
+                                                {diffText.image_stats.removed > 0 ? `-${diffText.image_stats.removed} ` : ''}
+                                                {diffText.image_stats.modified > 0 ? `~${diffText.image_stats.modified} ` : ''}
+                                                Images
+                                            </div>
+                                        )}
                                     </div>
                                     <div className="diff-details scrollable">
                                         <h5>Document Flow:</h5>
                                         <div className="para-list">
                                             {diffText.para_diff?.map((p, idx) => {
+                                                const isImage = p.element_type === 'image' || Boolean(p.image?.data_url || p.data_url || p.old_image?.data_url);
+                                                if (isImage) {
+                                                    if (p.type === 'modified') {
+                                                        return (
+                                                            <div key={idx} className="para-item line-modified diff-image-comparison">
+                                                                <div className="diff-image-card old-image">
+                                                                    <div className="diff-image-badge removed">Previous Image</div>
+                                                                    {p.old_image?.data_url ? (
+                                                                        <img src={p.old_image.data_url} alt="Previous graphic" className="diff-img" />
+                                                                    ) : (
+                                                                        <div className="diff-img-placeholder">[Previous Image: {p.old_image?.image_name || 'graphic'}]</div>
+                                                                    )}
+                                                                </div>
+                                                                <div className="diff-image-arrow">➔</div>
+                                                                <div className="diff-image-card new-image">
+                                                                    <div className="diff-image-badge added">Updated Image</div>
+                                                                    {p.new_image?.data_url ? (
+                                                                        <img src={p.new_image.data_url} alt="Updated graphic" className="diff-img" />
+                                                                    ) : (
+                                                                        <div className="diff-img-placeholder">[Updated Image: {p.new_image?.image_name || 'graphic'}]</div>
+                                                                    )}
+                                                                </div>
+                                                            </div>
+                                                        );
+                                                    }
+                                                    if (p.type === 'added') {
+                                                        return (
+                                                            <div key={idx} className="para-item line-added diff-image-block">
+                                                                <div className="diff-image-badge added">+ Image Added</div>
+                                                                {p.image?.data_url || p.data_url ? (
+                                                                    <img src={p.image?.data_url || p.data_url} alt="Added graphic" className="diff-img" />
+                                                                ) : (
+                                                                    <div className="diff-img-placeholder">[Image Added: {p.image?.image_name || 'graphic'}]</div>
+                                                                )}
+                                                            </div>
+                                                        );
+                                                    }
+                                                    if (p.type === 'removed') {
+                                                        return (
+                                                            <div key={idx} className="para-item line-removed diff-image-block">
+                                                                <div className="diff-image-badge removed">- Image Removed</div>
+                                                                {p.image?.data_url || p.data_url ? (
+                                                                    <img src={p.image?.data_url || p.data_url} alt="Removed graphic" className="diff-img" />
+                                                                ) : (
+                                                                    <div className="diff-img-placeholder">[Image Removed: {p.image?.image_name || 'graphic'}]</div>
+                                                                )}
+                                                            </div>
+                                                        );
+                                                    }
+                                                    return (
+                                                        <div key={idx} className="para-item line-equal diff-image-block">
+                                                            {p.image?.data_url || p.data_url ? (
+                                                                <img src={p.image?.data_url || p.data_url} alt="Document graphic" className="diff-img diff-img-equal" />
+                                                            ) : (
+                                                                <div className="diff-img-placeholder">[IMAGE: {p.image?.image_name || 'graphic'}]</div>
+                                                            )}
+                                                        </div>
+                                                    );
+                                                }
                                                 if (p.type === 'modified') {
                                                     return (
                                                         <div key={idx} className="para-item line-modified">

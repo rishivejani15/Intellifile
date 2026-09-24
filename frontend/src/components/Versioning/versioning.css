@@ -1097,3 +1097,280 @@
   font-weight: 700;
   letter-spacing: 0.3px;
 }
+
+/* ───────────────────────────────────────────────────────
+   Word Document Diff Image & Infographic Display
+   ─────────────────────────────────────────────────────── */
+.diff-image-comparison {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: var(--sp-4, 16px);
+  padding: var(--sp-3, 12px);
+  background: var(--s-hover, rgba(255, 255, 255, 0.04));
+  border-radius: var(--rd-lg, 10px);
+  flex-wrap: wrap;
+}
+
+.diff-image-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  background: var(--s-elev, #181c24);
+  border: 1.5px solid var(--bo, rgba(255, 255, 255, 0.1));
+  border-radius: var(--rd-md, 8px);
+  padding: 10px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  max-width: 280px;
+}
+
+.diff-image-card.old-image {
+  border-color: rgba(239, 68, 68, 0.4);
+  background: rgba(239, 68, 68, 0.04);
+}
+
+.diff-image-card.new-image {
+  border-color: rgba(34, 197, 94, 0.4);
+  background: rgba(34, 197, 94, 0.04);
+}
+
+.diff-image-arrow {
+  font-size: 20px;
+  color: var(--t-muted, #888);
+  font-weight: 700;
+  padding: 0 6px;
+}
+
+.diff-image-badge {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 3px 8px;
+  border-radius: 4px;
+}
+
+.diff-image-badge.added {
+  background: rgba(34, 197, 94, 0.15);
+  color: #22c55e;
+  border: 1px solid rgba(34, 197, 94, 0.3);
+}
+
+.diff-image-badge.removed {
+  background: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.diff-image-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 14px;
+}
+
+.diff-img {
+  max-width: 100%;
+  max-height: 240px;
+  object-fit: contain;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.1);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+  transition: transform 0.2s ease;
+}
+
+.diff-img:hover {
+  transform: scale(1.02);
+}
+
+.diff-img-equal {
+  max-height: 160px;
+  opacity: 0.85;
+}
+
+.diff-img-placeholder {
+  font-size: 12px;
+  color: var(--t-muted, #888);
+  font-style: italic;
+  padding: 12px;
+  border: 1px dashed var(--bo, rgba(255, 255, 255, 0.15));
+  border-radius: 6px;
+  text-align: center;
+}
+
+.stat-item.images {
+  color: #a855f7;
+  background: rgba(168, 85, 247, 0.12);
+}
+
+/* ───────────────────────────────────────────────────────
+   PowerPoint (.pptx / .ppt / .pptm) Diff Styling
+   ─────────────────────────────────────────────────────── */
+.pptx-diff {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3, 12px);
+  width: 100%;
+}
+
+.pptx-diff-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.pptx-diff-title-row h4 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--t-primary, #fff);
+}
+
+.pptx-macro-badge {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: var(--rd-sm, 4px);
+  background: rgba(245, 158, 11, 0.15);
+  color: #f59e0b;
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.pptx-diff-slides {
+  max-height: 520px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.pptx-slide-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-top: 8px;
+}
+
+.pptx-slide-card {
+  background: var(--s-elev, #181c24);
+  border: 1px solid var(--bo, rgba(255, 255, 255, 0.1));
+  border-radius: var(--rd-md, 8px);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.pptx-slide-card:hover {
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.22);
+}
+
+.slide-card-added {
+  border-left: 4px solid #22c55e;
+  background: linear-gradient(90deg, rgba(34, 197, 94, 0.05) 0%, var(--s-elev, #181c24) 40%);
+}
+
+.slide-card-removed {
+  border-left: 4px solid #ef4444;
+  background: linear-gradient(90deg, rgba(239, 68, 68, 0.05) 0%, var(--s-elev, #181c24) 40%);
+}
+
+.slide-card-modified {
+  border-left: 4px solid #eab308;
+  background: linear-gradient(90deg, rgba(234, 179, 8, 0.05) 0%, var(--s-elev, #181c24) 40%);
+}
+
+.slide-card-equal {
+  border-left: 4px solid var(--bo-light, rgba(255, 255, 255, 0.15));
+}
+
+.pptx-slide-header {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--bo-light, rgba(255, 255, 255, 0.07));
+}
+
+.pptx-slide-badge-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pptx-slide-num {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--t-secondary, #94a3b8);
+  letter-spacing: 0.5px;
+}
+
+.pptx-type-tag {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 2px 7px;
+  border-radius: 4px;
+}
+
+.pptx-type-tag.tag-added {
+  background: rgba(34, 197, 94, 0.15);
+  color: #22c55e;
+  border: 1px solid rgba(34, 197, 94, 0.3);
+}
+
+.pptx-type-tag.tag-removed {
+  background: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.pptx-type-tag.tag-modified {
+  background: rgba(234, 179, 8, 0.15);
+  color: #eab308;
+  border: 1px solid rgba(234, 179, 8, 0.3);
+}
+
+.pptx-type-tag.tag-equal {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--t-muted, #888);
+}
+
+.pptx-slide-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--t-primary, #fff);
+}
+
+.pptx-title-change {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.pptx-slide-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pptx-bullets-container {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.pptx-images-container {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+}

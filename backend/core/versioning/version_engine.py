@@ -60,26 +60,39 @@ class VersionEngine:
             summary = self.ai.summarize(diff) # AI can still generate nice summaries or we fallback
         elif format_type == "word":
             from core.versioning.word_diff_engine import compare_word_structures
-            from parsers.word_parser import extract_word_structure
+            from parsers.word_parser import extract_word_structure, extract_docx_images
             
             old_struct = extract_word_structure(old_content) if isinstance(old_content, str) else (old_content or {})
             new_struct = extract_word_structure(new_content) if isinstance(new_content, str) else (new_content or {})
             
-            diff = compare_word_structures(old_struct, new_struct)
+            images_a = extract_docx_images(old_content) if (isinstance(old_content, str) and os.path.exists(old_content)) else {}
+            images_b = extract_docx_images(new_content) if (isinstance(new_content, str) and os.path.exists(new_content)) else {}
+
+            diff = compare_word_structures(old_struct, new_struct, images_a=images_a, images_b=images_b)
             diff["is_structured"] = True
             diff["format"] = "word"
             
+            # Clean structure representation for IWSD semantic analysis so image metadata JSON keys
+            # do not artificially distort line-by-line semantic risk and stability scores
+            def _clean_for_semantics(s):
+                if not isinstance(s, dict):
+                    return s
+                clean = dict(s)
+                if "paragraphs" in clean and isinstance(clean["paragraphs"], list):
+                    clean["paragraphs"] = [p.get("text", "[IMAGE / GRAPHIC]") if isinstance(p, dict) else str(p) for p in clean["paragraphs"]]
+                return clean
+
             # Stringify for IWSD (must use indent to allow line-by-line diff fallback)
-            old_str = json.dumps(old_struct, indent=2) if isinstance(old_struct, dict) else str(old_struct)
-            new_str = json.dumps(new_struct, indent=2) if isinstance(new_struct, dict) else str(new_struct)
+            old_str = json.dumps(_clean_for_semantics(old_struct), indent=2) if isinstance(old_struct, dict) else str(old_struct)
+            new_str = json.dumps(_clean_for_semantics(new_struct), indent=2) if isinstance(new_struct, dict) else str(new_struct)
             
             semantic_results = analyze_semantics(old_str, new_str)
             semantic_data = semantic_results
             intent = semantic_results["intent"]
             
-            added_count = len([p for p in diff.get('para_diff', []) if p.get('type') == 'added'])
-            removed_count = len([p for p in diff.get('para_diff', []) if p.get('type') == 'removed'])
-            modified_count = len([p for p in diff.get('para_diff', []) if p.get('type') == 'modified'])
+            added_count = len([p for p in diff.get('para_diff', []) if p.get('type') == 'added' and p.get('element_type') != 'image'])
+            removed_count = len([p for p in diff.get('para_diff', []) if p.get('type') == 'removed' and p.get('element_type') != 'image'])
+            modified_count = len([p for p in diff.get('para_diff', []) if p.get('type') == 'modified' and p.get('element_type') != 'image'])
             
             w_added = sum([p.get('words_added', 0) for p in diff.get('para_diff', [])])
             w_removed = sum([p.get('words_removed', 0) for p in diff.get('para_diff', [])])
@@ -96,6 +109,17 @@ class VersionEngine:
             if modified_count > 0: 
                 label = "paragraph" if modified_count == 1 else "paragraphs"
                 summary_parts.append(f"{modified_count} {label} modified")
+
+            img_stats = diff.get("image_stats", {})
+            img_added = img_stats.get("added", 0)
+            img_removed = img_stats.get("removed", 0)
+            img_modified = img_stats.get("modified", 0)
+            if img_added > 0:
+                summary_parts.append(f"{img_added} image{'s' if img_added > 1 else ''} added")
+            if img_removed > 0:
+                summary_parts.append(f"{img_removed} image{'s' if img_removed > 1 else ''} removed")
+            if img_modified > 0:
+                summary_parts.append(f"{img_modified} image{'s' if img_modified > 1 else ''} updated")
             
             # Show word detail ONLY if it's not the initial version
             detail = ""
@@ -107,7 +131,7 @@ class VersionEngine:
                 if w_removed > 0: detail_parts.append(f"{w_removed} {w_removed_label} removed")
                 detail = f" ({', '.join(detail_parts)})" if detail_parts else ""
             
-            summary = f"Word doc updated: {', '.join(summary_parts)}{detail}."
+            summary = f"Word doc updated: {', '.join(summary_parts) if summary_parts else 'Content modified'}{detail}."
             
             # Shield 3: Hidden Macros Detection
             if diff.get("has_macros"):

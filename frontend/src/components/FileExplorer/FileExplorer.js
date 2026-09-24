@@ -28,7 +28,7 @@ import './FileExplorer.css';
 
 
 const ipcRenderer = window.electron?.ipcRenderer;
-const VERSIONING_BLOCKED_EXTENSIONS = new Set(['.zip', '.ppt', '.pptx', '.pptm', '.pak', '.bin', '.backup']);
+const VERSIONING_BLOCKED_EXTENSIONS = new Set(['.zip', '.pak', '.bin', '.backup']);
 
 function FileExplorer({ onFileSelect, selectedFiles = {}, drives = [], onChatWithAI }) {
   // UI State: initialize from lastDirectoryCache so items are displayed on frame 0
